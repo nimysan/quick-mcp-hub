@@ -8,15 +8,15 @@ GOPROXY_URL ?= https://goproxy.cn,direct
 .PHONY: build all test vet selftest clean
 
 build:
-	$(GOFLAGS_ENV) go build -trimpath -ldflags="$(LDFLAGS)" -o dist/qqmail-mcp .
+	$(GOFLAGS_ENV) go build -trimpath -ldflags="$(LDFLAGS)" -o dist/mcp-channels .
 
 # 交叉编译：Windows 二进制直接在 macOS 上产出，目标机不需要 Node/Python。
 all:
-	$(GOFLAGS_ENV) GOOS=windows GOARCH=amd64 go build -trimpath -ldflags="$(LDFLAGS)" -o dist/qqmail-mcp-windows-amd64.exe .
-	$(GOFLAGS_ENV) GOOS=windows GOARCH=arm64 go build -trimpath -ldflags="$(LDFLAGS)" -o dist/qqmail-mcp-windows-arm64.exe .
-	$(GOFLAGS_ENV) GOOS=darwin  GOARCH=arm64 go build -trimpath -ldflags="$(LDFLAGS)" -o dist/qqmail-mcp-darwin-arm64 .
-	$(GOFLAGS_ENV) GOOS=darwin  GOARCH=amd64 go build -trimpath -ldflags="$(LDFLAGS)" -o dist/qqmail-mcp-darwin-amd64 .
-	$(GOFLAGS_ENV) GOOS=linux   GOARCH=amd64 go build -trimpath -ldflags="$(LDFLAGS)" -o dist/qqmail-mcp-linux-amd64 .
+	$(GOFLAGS_ENV) GOOS=windows GOARCH=amd64 go build -trimpath -ldflags="$(LDFLAGS)" -o dist/mcp-channels-windows-amd64.exe .
+	$(GOFLAGS_ENV) GOOS=windows GOARCH=arm64 go build -trimpath -ldflags="$(LDFLAGS)" -o dist/mcp-channels-windows-arm64.exe .
+	$(GOFLAGS_ENV) GOOS=darwin  GOARCH=arm64 go build -trimpath -ldflags="$(LDFLAGS)" -o dist/mcp-channels-darwin-arm64 .
+	$(GOFLAGS_ENV) GOOS=darwin  GOARCH=amd64 go build -trimpath -ldflags="$(LDFLAGS)" -o dist/mcp-channels-darwin-amd64 .
+	$(GOFLAGS_ENV) GOOS=linux   GOARCH=amd64 go build -trimpath -ldflags="$(LDFLAGS)" -o dist/mcp-channels-linux-amd64 .
 
 vet:
 	$(GOFLAGS_ENV) go vet ./...
@@ -24,9 +24,9 @@ vet:
 test:
 	$(GOFLAGS_ENV) go test ./...
 
-# 需要先 export QQMAIL_USER / QQMAIL_PASSWORD
+# 需要先 export CHANNELS_MAIL_USER（授权码用 -set-secret 存进密码管理器）
 selftest: build
-	./dist/qqmail-mcp -selftest
+	./dist/mcp-channels -selftest
 
 clean:
 	rm -rf dist

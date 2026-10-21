@@ -1,14 +1,14 @@
-// qqmail-mcp 是一个单文件可执行的 MCP 服务器，通过 IMAP/SMTP 访问
+// mcp-channels 是一个单文件可执行的 MCP 服务器，通过 IMAP/SMTP 访问
 // QQ 邮箱等国内邮箱，供 Amazon Quick、Claude Desktop 等 MCP 客户端调用。
 //
 // 凭据存在操作系统自己的密码管理器里（macOS 钥匙串 / Windows 凭据管理器 /
 // Linux Secret Service），按集成分段、惰性取用。
 //
-//	qqmail-mcp -set-secret                 把授权码写进系统密码管理器（不回显）
-//	qqmail-mcp -list-secrets               列出已配置的集成和账号（不打印凭据）
-//	qqmail-mcp -rm-secret                  删除一条凭据
-//	qqmail-mcp -selftest                   验证 IMAP/SMTP 能否登录，不发信
-//	qqmail-mcp                             跑 MCP 服务（stdio）
+//	mcp-channels -set-secret                 把授权码写进系统密码管理器（不回显）
+//	mcp-channels -list-secrets               列出已配置的集成和账号（不打印凭据）
+//	mcp-channels -rm-secret                  删除一条凭据
+//	mcp-channels -selftest                   验证 IMAP/SMTP 能否登录，不发信
+//	mcp-channels                             跑 MCP 服务（stdio）
 //
 // 关键约束：stdio 传输下 stdout 是 JSON-RPC 协议通道，只能出协议报文。
 // 本程序所有日志走 stderr（Go 标准库 log 的默认行为）；上面那些子命令是
@@ -30,10 +30,10 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"golang.org/x/term"
 
-	"github.com/nimysan/qqmail-mcp/internal/config"
-	"github.com/nimysan/qqmail-mcp/internal/credstore"
-	"github.com/nimysan/qqmail-mcp/internal/mailbox"
-	"github.com/nimysan/qqmail-mcp/internal/tools"
+	"github.com/nimysan/mcp-channels/internal/config"
+	"github.com/nimysan/mcp-channels/internal/credstore"
+	"github.com/nimysan/mcp-channels/internal/mailbox"
+	"github.com/nimysan/mcp-channels/internal/tools"
 )
 
 // version 由 -ldflags "-X main.version=..." 注入。
@@ -46,13 +46,13 @@ func main() {
 		listSecrets = flag.Bool("list-secrets", false, "列出已配置的凭据条目（不打印凭据内容）后退出")
 		rmSecret    = flag.Bool("rm-secret", false, "删除一条凭据后退出")
 		integration = flag.String("integration", config.IntegrationMail, "凭据所属集成名，默认 mail")
-		account     = flag.String("account", "", "凭据所属账号，默认取 QQMAIL_USER")
+		account     = flag.String("account", "", "凭据所属账号，默认取 CHANNELS_MAIL_USER")
 		showVersion = flag.Bool("version", false, "打印版本号后退出")
 	)
 	flag.Parse()
 
 	log.SetFlags(0)
-	log.SetPrefix("qqmail-mcp: ")
+	log.SetPrefix("mcp-channels: ")
 	log.SetOutput(os.Stderr) // 显式声明：绝不能是 os.Stdout
 	mailbox.Version = version
 
@@ -62,6 +62,13 @@ func main() {
 	}
 
 	store := credstore.New(config.Namespace)
+
+	// 项目改名前的凭据搬过来，一次性。旧索引文件不存在时这只是一次 stat。
+	if n, err := store.MigrateFrom(config.LegacyNamespace); err != nil {
+		log.Printf("旧凭据迁移未完成（已搬 %d 条）: %v", n, err)
+	} else if n > 0 {
+		log.Printf("已把 %d 条凭据从 %s 迁移到 %s", n, config.LegacyNamespace, config.Namespace)
+	}
 
 	// 凭据管理子命令不需要邮箱配置，先处理掉。
 	switch {
@@ -86,7 +93,7 @@ func main() {
 	defer stop()
 
 	server := mcp.NewServer(&mcp.Implementation{
-		Name:    "qqmail-mcp",
+		Name:    "mcp-channels",
 		Title:   "QQ 邮箱",
 		Version: version,
 	}, nil)
@@ -105,7 +112,7 @@ func resolveAccount(flagVal string) string {
 	if v := strings.TrimSpace(flagVal); v != "" {
 		return v
 	}
-	for _, k := range []string{"QQMAIL_USER", "EMAIL_USER"} {
+	for _, k := range []string{"CHANNELS_MAIL_USER", "QQMAIL_USER", "EMAIL_USER"} {
 		if v := strings.TrimSpace(os.Getenv(k)); v != "" {
 			return v
 		}
@@ -115,7 +122,7 @@ func resolveAccount(flagVal string) string {
 
 func runSetSecret(store *credstore.Store, integration, account string) int {
 	if account == "" {
-		fmt.Fprintln(os.Stderr, "需要账号：用 -account 指定，或设置 QQMAIL_USER")
+		fmt.Fprintln(os.Stderr, "需要账号：用 -account 指定，或设置 CHANNELS_MAIL_USER")
 		return 2
 	}
 	secret, err := readSecret(fmt.Sprintf("请输入 %s/%s 的凭据（QQ 邮箱填 16 位授权码，输入不回显）: ", integration, account))
@@ -133,7 +140,7 @@ func runSetSecret(store *credstore.Store, integration, account string) int {
 	}
 	fmt.Printf("已写入%s：%s/%s\n", credstore.BackendName(), integration, account)
 	fmt.Printf("索引文件：%s（只含集成名和账号，不含凭据）\n", store.IndexPath())
-	fmt.Println("现在可以把客户端配置里的 QQMAIL_PASSWORD 环境变量删掉了。")
+	fmt.Println("现在可以把客户端配置里的密码类环境变量删掉了。")
 	return 0
 }
 
@@ -158,7 +165,7 @@ func runListSecrets(store *credstore.Store) int {
 
 func runRemoveSecret(store *credstore.Store, integration, account string) int {
 	if account == "" {
-		fmt.Fprintln(os.Stderr, "需要账号：用 -account 指定，或设置 QQMAIL_USER")
+		fmt.Fprintln(os.Stderr, "需要账号：用 -account 指定，或设置 CHANNELS_MAIL_USER")
 		return 2
 	}
 	if err := store.Delete(credstore.Ref{Integration: integration, Account: account}); err != nil {
@@ -170,7 +177,7 @@ func runRemoveSecret(store *credstore.Store, integration, account string) int {
 }
 
 // readSecret 读取一行凭据。终端下关闭回显；被管道喂入时直接读一行，
-// 方便 `echo xxx | qqmail-mcp -set-secret`。
+// 方便 `echo xxx | mcp-channels -set-secret`。
 //
 // 凭据绝不从命令行参数接收：argv 对同机其他进程可见（ps），也会进 shell 历史。
 func readSecret(prompt string) (string, error) {

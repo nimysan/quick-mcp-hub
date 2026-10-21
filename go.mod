@@ -1,4 +1,4 @@
-module github.com/nimysan/qqmail-mcp
+module github.com/nimysan/mcp-channels
 
 go 1.26.4
 

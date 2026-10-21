@@ -60,12 +60,12 @@ type Store struct {
 	secrets map[Ref]*Secret
 }
 
-// New 创建一个 Store。namespace 建议用程序名，如 "qqmail-mcp"。
+// New 创建一个 Store。namespace 建议用程序名，如 "mcp-channels"。
 func New(namespace string) *Store {
 	return &Store{namespace: namespace, secrets: make(map[Ref]*Secret)}
 }
 
-// service 是写进钥匙串的 service 字段，形如 "qqmail-mcp:mail"。
+// service 是写进钥匙串的 service 字段，形如 "mcp-channels:mail"。
 // 按集成分段，这样 DeleteAll 能按集成清理，钥匙串里也看得出归属。
 func (s *Store) service(r Ref) string { return s.namespace + ":" + r.Integration }
 
