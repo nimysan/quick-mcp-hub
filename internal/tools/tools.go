@@ -8,8 +8,8 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
-	"github.com/nimysan/mcp-channels/internal/config"
-	"github.com/nimysan/mcp-channels/internal/mailbox"
+	"github.com/nimysan/mcp-hub/internal/config"
+	"github.com/nimysan/mcp-hub/internal/mailbox"
 )
 
 const dateLayout = "2006-01-02"
@@ -122,7 +122,7 @@ func Register(s *mcp.Server, cfg config.Config) {
 	})
 
 	if !cfg.AllowSend {
-		mailbox.Logf("send_mail 未注册：发信默认关闭，需设置 CHANNELS_MAIL_ALLOW_SEND=true 才启用")
+		mailbox.Logf("send_mail 未注册：发信默认关闭，需设置 MCPHUB_MAIL_ALLOW_SEND=true 才启用")
 		return
 	}
 

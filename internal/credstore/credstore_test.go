@@ -14,7 +14,7 @@ func newTestStore(t *testing.T) *Store {
 	keyring.MockInit()
 	t.Setenv("HOME", t.TempDir())            // darwin / linux 的 UserConfigDir 基准
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir()) // linux 优先读这个
-	return New("mcp-channels-test")
+	return New("mcp-hub-test")
 }
 
 func TestSecretIsLazy(t *testing.T) {
@@ -95,7 +95,7 @@ func TestValueCachedPerProcess(t *testing.T) {
 		t.Fatalf("缓存失效，second read = %q, want v1", v)
 	}
 	// 新 Store 才会看到新值。
-	if v, _ := New("mcp-channels-test").Secret(ref).Value(); v != "v2" {
+	if v, _ := New("mcp-hub-test").Secret(ref).Value(); v != "v2" {
 		t.Fatalf("新进程应读到 v2, got %q", v)
 	}
 }

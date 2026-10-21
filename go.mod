@@ -1,4 +1,4 @@
-module github.com/nimysan/mcp-channels
+module github.com/nimysan/mcp-hub
 
 go 1.26.4
 

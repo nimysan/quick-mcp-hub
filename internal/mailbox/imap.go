@@ -15,7 +15,7 @@ import (
 	"github.com/emersion/go-imap/v2"
 	"github.com/emersion/go-imap/v2/imapclient"
 	gomsgmail "github.com/emersion/go-message/mail"
-	"github.com/nimysan/mcp-channels/internal/config"
+	"github.com/nimysan/mcp-hub/internal/config"
 
 	// 导入即把 message.CharsetReader 设为 go-message 的全套字符集解码器。
 	// 国内邮件常用 GB2312/GBK/GB18030，不注册就是一片乱码。
@@ -79,12 +79,12 @@ func connect(cfg config.Config) (*session, error) {
 	}
 
 	if _, err := c.ID(&imap.IDData{
-		Name:      "mcp-channels",
+		Name:      "mcp-hub",
 		Version:   Version,
 		OS:        runtime.GOOS,
-		Vendor:    "mcp-channels",
+		Vendor:    "mcp-hub",
 		Address:   cfg.User,
-		Command:   "mcp-channels",
+		Command:   "mcp-hub",
 		Arguments: "mcp-stdio",
 	}).Wait(); err != nil {
 		// ID 失败不致命（服务器可能不支持该扩展），继续登录。

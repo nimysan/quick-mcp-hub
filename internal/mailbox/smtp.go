@@ -9,7 +9,7 @@ import (
 
 	gomail "github.com/wneessen/go-mail"
 
-	"github.com/nimysan/mcp-channels/internal/config"
+	"github.com/nimysan/mcp-hub/internal/config"
 )
 
 // Version 由构建时的 -ldflags 注入，缺省为 dev。

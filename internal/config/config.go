@@ -14,18 +14,18 @@ import (
 	"strings"
 	"time"
 
-	"github.com/nimysan/mcp-channels/internal/credstore"
+	"github.com/nimysan/mcp-hub/internal/credstore"
 )
 
 // Namespace 是写进系统密码管理器的 service 前缀。
-const Namespace = "mcp-channels"
+const Namespace = "mcp-hub"
 
-// LegacyNamespace 是项目改名前用过的前缀。启动时一次性迁移，
-// 让用户不必重新输入授权码。
-const LegacyNamespace = "qqmail-mcp"
+// LegacyNamespaces 是项目改名历史上用过的前缀，按时间倒序。
+// 启动时一次性迁移，让用户不必重新输入授权码。
+var LegacyNamespaces = []string{"mcp-channels", "qqmail-mcp"}
 
 // IntegrationMail 是邮件集成的名字。后续接别的系统时，各自用自己的常量，
-// 凭据在钥匙串里按 "mcp-channels:<集成名>" 分段存放。
+// 凭据在钥匙串里按 "mcp-hub:<集成名>" 分段存放。
 const IntegrationMail = "mail"
 
 // Provider 是一家邮件服务商的默认接入点。
@@ -39,7 +39,7 @@ type Provider struct {
 
 // providers 按邮箱域名给出默认接入点。
 // SMTP 一律用 465 直连 SSL：587(STARTTLS) 在部分网络/出口上不可达，
-// 而 465 在实测中稳定可用。需要 587 时用 CHANNELS_MAIL_SMTP_PORT 显式覆盖。
+// 而 465 在实测中稳定可用。需要 587 时用 MCPHUB_MAIL_SMTP_PORT 显式覆盖。
 var providers = map[string]Provider{
 	"qq.com":      {"QQ邮箱", "imap.qq.com", 993, "smtp.qq.com", 465},
 	"foxmail.com": {"Foxmail", "imap.qq.com", 993, "smtp.qq.com", 465},
@@ -66,7 +66,7 @@ type Config struct {
 	SMTPPort int
 
 	// AllowSend 控制 send_mail 是否可用。发信不可逆，默认关闭，
-	// 需显式设置 CHANNELS_MAIL_ALLOW_SEND=true 才注册该 tool。
+	// 需显式设置 MCPHUB_MAIL_ALLOW_SEND=true 才注册该 tool。
 	AllowSend bool
 
 	// MaxBodyBytes 限制 read_mail 返回的正文字节数，防止一封大信撑爆上下文。
@@ -97,25 +97,25 @@ func (c Config) SecretSource() string { return c.secret.Source() }
 func Load(store *credstore.Store) (Config, error) {
 	c := Config{
 		User:         firstEnv(mailEnv("USER")...),
-		MaxBodyBytes: envInt("CHANNELS_MAIL_MAX_BODY_BYTES", 32*1024),
-		AllowSend:    envBool("CHANNELS_MAIL_ALLOW_SEND", envBool("QQMAIL_ALLOW_SEND", false)),
-		Timeout:      time.Duration(envInt("CHANNELS_TIMEOUT_SECONDS", envInt("QQMAIL_TIMEOUT_SECONDS", 30))) * time.Second,
+		MaxBodyBytes: envIntAny(mailEnv("MAX_BODY_BYTES"), 32*1024),
+		AllowSend:    envBoolAny(mailEnv("ALLOW_SEND"), false),
+		Timeout:      time.Duration(envIntAny(timeoutEnv(), 30)) * time.Second,
 	}
 
 	if c.User == "" {
-		return c, fmt.Errorf("必须设置 CHANNELS_MAIL_USER 为完整邮箱地址")
+		return c, fmt.Errorf("必须设置 MCPHUB_MAIL_USER 为完整邮箱地址")
 	}
 
 	p, ok := providers[domainOf(c.User)]
 	if !ok {
 		p = providers["qq.com"]
-		p.Name = "未知服务商（按 QQ 默认值，建议显式设置 CHANNELS_MAIL_IMAP_HOST / CHANNELS_MAIL_SMTP_HOST）"
+		p.Name = "未知服务商（按 QQ 默认值，建议显式设置 MCPHUB_MAIL_IMAP_HOST / MCPHUB_MAIL_SMTP_HOST）"
 	}
 	c.Provider = p.Name
 	c.IMAPHost = firstEnvOr(p.IMAPHost, mailEnv("IMAP_HOST")...)
-	c.IMAPPort = envInt("CHANNELS_MAIL_IMAP_PORT", envInt("QQMAIL_IMAP_PORT", p.IMAPPort))
+	c.IMAPPort = envIntAny(mailEnv("IMAP_PORT"), p.IMAPPort)
 	c.SMTPHost = firstEnvOr(p.SMTPHost, mailEnv("SMTP_HOST")...)
-	c.SMTPPort = envInt("CHANNELS_MAIL_SMTP_PORT", envInt("QQMAIL_SMTP_PORT", p.SMTPPort))
+	c.SMTPPort = envIntAny(mailEnv("SMTP_PORT"), p.SMTPPort)
 
 	// 环境变量是兜底：钥匙串里有就优先用钥匙串，所以把凭据搬进钥匙串
 	// 只需 -set-secret 一次，不必同时去客户端面板里删环境变量。
@@ -124,11 +124,21 @@ func Load(store *credstore.Store) (Config, error) {
 	return c, nil
 }
 
-// mailEnv 返回一个配置项的环境变量候选名，按优先级排列：
-// 本项目的 CHANNELS_MAIL_* 在前，改名前的 QQMAIL_* 和 mcp-email 的 EMAIL_* 在后，
-// 这样旧配置不用动也还能跑。
+// mailEnv 返回邮件渠道某个配置项的环境变量候选名，按优先级排列：
+// 本项目的 MCPHUB_MAIL_* 在前，改名历史上用过的 CHANNELS_MAIL_* / QQMAIL_*
+// 和 mcp-email 的 EMAIL_* 在后，这样旧配置不用动也还能跑。
 func mailEnv(suffix string) []string {
-	return []string{"CHANNELS_MAIL_" + suffix, "QQMAIL_" + suffix, "EMAIL_" + suffix}
+	return []string{
+		"MCPHUB_MAIL_" + suffix,
+		"CHANNELS_MAIL_" + suffix,
+		"QQMAIL_" + suffix,
+		"EMAIL_" + suffix,
+	}
+}
+
+// timeoutEnv 是全局超时的候选名（不属于某个渠道）。
+func timeoutEnv() []string {
+	return []string{"MCPHUB_TIMEOUT_SECONDS", "CHANNELS_TIMEOUT_SECONDS", "QQMAIL_TIMEOUT_SECONDS"}
 }
 
 func domainOf(addr string) string {
@@ -157,6 +167,29 @@ func firstEnvOr(def string, keys ...string) string {
 func envInt(key string, def int) int {
 	if v, err := strconv.Atoi(strings.TrimSpace(os.Getenv(key))); err == nil && v > 0 {
 		return v
+	}
+	return def
+}
+
+// envIntAny 按顺序取第一个被设置且有效的候选环境变量。
+func envIntAny(keys []string, def int) int {
+	for _, k := range keys {
+		if v, err := strconv.Atoi(strings.TrimSpace(os.Getenv(k))); err == nil && v > 0 {
+			return v
+		}
+	}
+	return def
+}
+
+// envBoolAny 按顺序取第一个被显式设置的候选环境变量。
+func envBoolAny(keys []string, def bool) bool {
+	for _, k := range keys {
+		switch strings.ToLower(strings.TrimSpace(os.Getenv(k))) {
+		case "1", "true", "yes", "on":
+			return true
+		case "0", "false", "no", "off":
+			return false
+		}
 	}
 	return def
 }
