@@ -61,6 +61,12 @@ type session struct {
 // ID 命令（RFC 2971）必须发：163/126 不发 ID 会直接拒登（"Unsafe Login"），
 // QQ 目前宽容但不保证，无条件发代价为零。
 func connect(cfg config.Config) (*session, error) {
+	// 第一次走到这里才去系统密码管理器取授权码；之后整个进程复用缓存。
+	password, err := cfg.Password()
+	if err != nil {
+		return nil, err
+	}
+
 	opts := &imapclient.Options{
 		TLSConfig:   &tls.Config{ServerName: cfg.IMAPHost, MinVersion: tls.VersionTLS12},
 		Dialer:      &net.Dialer{Timeout: cfg.Timeout},
@@ -85,7 +91,7 @@ func connect(cfg config.Config) (*session, error) {
 		logf("IMAP ID 命令未被接受（服务器可能不支持），继续登录: %v", err)
 	}
 
-	if err := c.Login(cfg.User, cfg.Password).Wait(); err != nil {
+	if err := c.Login(cfg.User, password).Wait(); err != nil {
 		c.Close()
 		return nil, fmt.Errorf("IMAP 登录失败（QQ/163 需使用 16 位授权码而非登录密码）: %w", err)
 	}

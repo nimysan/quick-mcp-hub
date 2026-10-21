@@ -31,10 +31,32 @@ type SendRequest struct {
 	HTML    bool
 }
 
+// smtpOptions 组装 SMTP 客户端选项。授权码在这里第一次被取出（惰性）。
+func smtpOptions(cfg config.Config) ([]gomail.Option, error) {
+	password, err := cfg.Password()
+	if err != nil {
+		return nil, err
+	}
+	opts := []gomail.Option{
+		gomail.WithPort(cfg.SMTPPort),
+		gomail.WithUsername(cfg.User),
+		gomail.WithPassword(password),
+		gomail.WithSMTPAuth(gomail.SMTPAuthLogin),
+		gomail.WithTimeout(cfg.Timeout),
+		gomail.WithTLSConfig(&tls.Config{ServerName: cfg.SMTPHost, MinVersion: tls.VersionTLS12}),
+	}
+	// 465 是 implicit TLS（连上就是 TLS）；其他端口走 STARTTLS 且强制要求加密。
+	if cfg.SMTPPort == 465 {
+		opts = append(opts, gomail.WithSSL())
+	} else {
+		opts = append(opts, gomail.WithTLSPolicy(gomail.TLSMandatory))
+	}
+	return opts, nil
+}
+
 // Send 发送一封邮件。
 //
 // 用 465 直连 SSL（implicit TLS）：587 的 STARTTLS 在部分网络不可达。
-// 端口由配置决定，非 465 时走 STARTTLS 策略。
 func Send(ctx context.Context, cfg config.Config, req SendRequest) error {
 	if len(req.To) == 0 {
 		return fmt.Errorf("收件人不能为空")
@@ -62,20 +84,10 @@ func Send(ctx context.Context, cfg config.Config, req SendRequest) error {
 	}
 	msg.SetBodyString(ct, req.Body)
 
-	opts := []gomail.Option{
-		gomail.WithPort(cfg.SMTPPort),
-		gomail.WithUsername(cfg.User),
-		gomail.WithPassword(cfg.Password),
-		gomail.WithSMTPAuth(gomail.SMTPAuthLogin),
-		gomail.WithTimeout(cfg.Timeout),
-		gomail.WithTLSConfig(&tls.Config{ServerName: cfg.SMTPHost, MinVersion: tls.VersionTLS12}),
+	opts, err := smtpOptions(cfg)
+	if err != nil {
+		return err
 	}
-	if cfg.SMTPPort == 465 {
-		opts = append(opts, gomail.WithSSL())
-	} else {
-		opts = append(opts, gomail.WithTLSPolicy(gomail.TLSMandatory))
-	}
-
 	client, err := gomail.NewClient(cfg.SMTPHost, opts...)
 	if err != nil {
 		return fmt.Errorf("构建 SMTP 客户端失败: %w", err)
@@ -87,7 +99,7 @@ func Send(ctx context.Context, cfg config.Config, req SendRequest) error {
 }
 
 // SelfTest 分别验证 IMAP 登录和 SMTP 认证，供 CLI 的 -selftest 使用。
-// 它不发送任何邮件。
+// 它会强制取出凭据（因此会触发钥匙串授权），但不发送任何邮件。
 func SelfTest(ctx context.Context, cfg config.Config) (imapErr, smtpErr error) {
 	if s, err := connect(cfg); err != nil {
 		imapErr = err
@@ -98,18 +110,9 @@ func SelfTest(ctx context.Context, cfg config.Config) (imapErr, smtpErr error) {
 		s.close()
 	}
 
-	opts := []gomail.Option{
-		gomail.WithPort(cfg.SMTPPort),
-		gomail.WithUsername(cfg.User),
-		gomail.WithPassword(cfg.Password),
-		gomail.WithSMTPAuth(gomail.SMTPAuthLogin),
-		gomail.WithTimeout(cfg.Timeout),
-		gomail.WithTLSConfig(&tls.Config{ServerName: cfg.SMTPHost, MinVersion: tls.VersionTLS12}),
-	}
-	if cfg.SMTPPort == 465 {
-		opts = append(opts, gomail.WithSSL())
-	} else {
-		opts = append(opts, gomail.WithTLSPolicy(gomail.TLSMandatory))
+	opts, err := smtpOptions(cfg)
+	if err != nil {
+		return imapErr, err
 	}
 	client, err := gomail.NewClient(cfg.SMTPHost, opts...)
 	if err != nil {

@@ -1,7 +1,10 @@
-// Package config 从环境变量装配运行配置。
+// Package config 从环境变量和系统密码管理器装配运行配置。
 //
 // 约定：所有日志必须走 stderr。stdio 传输下 stdout 是 JSON-RPC 协议通道，
 // 任何非 JSON 字节都会让客户端握手失败（Amazon Quick 报 handshake_failed）。
+//
+// 凭据不在本结构里以明文长驻：Config 只持有 credstore 的惰性句柄，
+// 第一次真正需要时才去系统密码管理器取。
 package config
 
 import (
@@ -10,7 +13,16 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/nimysan/qqmail-mcp/internal/credstore"
 )
+
+// Namespace 是写进系统密码管理器的 service 前缀。
+const Namespace = "qqmail-mcp"
+
+// IntegrationMail 是邮件集成的名字。后续接别的系统时，各自用自己的常量，
+// 凭据在钥匙串里按 "qqmail-mcp:<集成名>" 分段存放。
+const IntegrationMail = "mail"
 
 // Provider 是一家邮件服务商的默认接入点。
 type Provider struct {
@@ -38,7 +50,10 @@ var providers = map[string]Provider{
 type Config struct {
 	Provider string
 	User     string
-	Password string // QQ/163 填 16 位授权码，不是登录密码
+
+	// secret 是授权码的惰性句柄。取得它不访问钥匙串，
+	// 第一次 Password() 才去读，之后整个进程复用。
+	secret *credstore.Secret
 
 	IMAPHost string
 	IMAPPort int
@@ -59,18 +74,32 @@ type Config struct {
 // IMAPAddr 返回 host:port 形式的 IMAP 地址。
 func (c Config) IMAPAddr() string { return fmt.Sprintf("%s:%d", c.IMAPHost, c.IMAPPort) }
 
-// Load 从环境变量读取配置。缺少账号或授权码时返回错误。
-func Load() (Config, error) {
+// MailRef 返回邮件凭据在密码管理器里的标识。
+func (c Config) MailRef() credstore.Ref {
+	return credstore.Ref{Integration: IntegrationMail, Account: c.User}
+}
+
+// Password 取出授权码。第一次调用会访问系统密码管理器，之后用缓存。
+func (c Config) Password() (string, error) { return c.secret.Value() }
+
+// SecretSource 返回凭据实际来自哪里（"keychain" 或 "env:XXX"），
+// 仅在已取过之后有意义。不含凭据本身。
+func (c Config) SecretSource() string { return c.secret.Source() }
+
+// Load 从环境变量读取非敏感配置，并为授权码建立惰性句柄。
+//
+// 这里不访问系统密码管理器：凭据缺失会在第一次调用 tool 时才报错，
+// 换来的是「用不到的集成不解密」。要立即验证就跑 -selftest。
+func Load(store *credstore.Store) (Config, error) {
 	c := Config{
 		User:         firstEnv("QQMAIL_USER", "EMAIL_USER"),
-		Password:     firstEnv("QQMAIL_PASSWORD", "EMAIL_PASSWORD"),
 		MaxBodyBytes: envInt("QQMAIL_MAX_BODY_BYTES", 32*1024),
 		AllowSend:    envBool("QQMAIL_ALLOW_SEND", false),
 		Timeout:      time.Duration(envInt("QQMAIL_TIMEOUT_SECONDS", 30)) * time.Second,
 	}
 
-	if c.User == "" || c.Password == "" {
-		return c, fmt.Errorf("必须设置 QQMAIL_USER 和 QQMAIL_PASSWORD（QQ 邮箱填 16 位授权码，不是登录密码）")
+	if c.User == "" {
+		return c, fmt.Errorf("必须设置 QQMAIL_USER 为完整邮箱地址")
 	}
 
 	p, ok := providers[domainOf(c.User)]
@@ -83,6 +112,10 @@ func Load() (Config, error) {
 	c.IMAPPort = envInt("QQMAIL_IMAP_PORT", p.IMAPPort)
 	c.SMTPHost = firstEnvOr(p.SMTPHost, "QQMAIL_SMTP_HOST", "EMAIL_SMTP_HOST")
 	c.SMTPPort = envInt("QQMAIL_SMTP_PORT", p.SMTPPort)
+
+	// 环境变量是兜底：钥匙串里有就优先用钥匙串，所以把凭据搬进钥匙串
+	// 只需 -set-secret 一次，不必同时去客户端面板里删环境变量。
+	c.secret = store.Secret(c.MailRef(), "QQMAIL_PASSWORD", "EMAIL_PASSWORD")
 
 	return c, nil
 }
