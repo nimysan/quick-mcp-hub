@@ -30,10 +30,12 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"golang.org/x/term"
 
+	"github.com/nimysan/mcp-hub/internal/channels"
 	"github.com/nimysan/mcp-hub/internal/config"
 	"github.com/nimysan/mcp-hub/internal/credstore"
 	"github.com/nimysan/mcp-hub/internal/mailbox"
 	"github.com/nimysan/mcp-hub/internal/tools"
+	"github.com/nimysan/mcp-hub/internal/webui"
 )
 
 // version 由 -ldflags "-X main.version=..." 注入。
@@ -45,6 +47,8 @@ func main() {
 		setSecret   = flag.Bool("set-secret", false, "把凭据写入系统密码管理器后退出")
 		listSecrets = flag.Bool("list-secrets", false, "列出已配置的凭据条目（不打印凭据内容）后退出")
 		rmSecret    = flag.Bool("rm-secret", false, "删除一条凭据后退出")
+		uiFlag      = flag.Bool("ui", false, "启动渠道配置页面（本机 127.0.0.1 web 服务）")
+		uiPort      = flag.Int("ui-port", 7801, "渠道配置页面端口，默认 7801")
 		integration = flag.String("integration", config.IntegrationMail, "凭据所属集成名，默认 mail")
 		account     = flag.String("account", "", "凭据所属账号，默认取 MCPHUB_MAIL_USER")
 		showVersion = flag.Bool("version", false, "打印版本号后退出")
@@ -80,6 +84,21 @@ func main() {
 		os.Exit(runSetSecret(store, *integration, resolveAccount(*account)))
 	case *rmSecret:
 		os.Exit(runRemoveSecret(store, *integration, resolveAccount(*account)))
+	}
+
+	chanStore, err := channels.NewStore(config.Namespace)
+	if err != nil {
+		log.Fatalf("渠道配置错误: %v", err)
+	}
+	mgr := channels.NewManager(chanStore, store)
+
+	if *uiFlag {
+		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+		defer stop()
+		if err := webui.New(mgr, version).Listen(ctx, *uiPort); err != nil {
+			log.Fatalf("渠道配置页面退出: %v", err)
+		}
+		return
 	}
 
 	cfg, err := config.Load(store)

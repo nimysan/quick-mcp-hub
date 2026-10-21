@@ -1,0 +1,264 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>mcp-hub · 渠道管理</title>
+<style>
+  :root{
+    --bg:#f6f7f9; --card:#fff; --text:#1c1e21; --muted:#6b7280;
+    --border:#e3e6ea; --accent:#2f6fed; --accent-fg:#fff;
+    --ok:#1a7f45; --ok-bg:#e7f5ec; --danger:#c0362c; --danger-bg:#fbeae8;
+    --warn:#9a6700; --warn-bg:#fff6e0;
+  }
+  @media (prefers-color-scheme: dark){
+    :root{
+      --bg:#17191c; --card:#22262b; --text:#e6e8ea; --muted:#9aa2ab;
+      --border:#343a41; --accent:#5b8def; --accent-fg:#0b0c0e;
+      --ok:#58c98a; --ok-bg:#16301f; --danger:#f0776b; --danger-bg:#2e1715;
+      --warn:#e0b049; --warn-bg:#2d2512;
+    }
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--text);
+    font:14px/1.5 -apple-system,"PingFang SC","Microsoft YaHei",sans-serif}
+  header{padding:14px 20px;background:var(--card);border-bottom:1px solid var(--border);
+    display:flex;align-items:center;gap:10px}
+  header .brand{font-weight:600}
+  header .tag{font-size:11px;padding:2px 7px;border-radius:5px;
+    background:color-mix(in srgb,var(--accent) 15%,transparent);color:var(--accent)}
+  header .right{margin-left:auto;font-size:12px;color:var(--muted)}
+  main{max-width:860px;margin:0 auto;padding:20px}
+  .row{display:flex;align-items:center;margin-bottom:14px}
+  .row h2{font-size:15px;margin:0}
+  .row .count{font-size:12px;color:var(--muted);font-weight:normal;margin-left:6px}
+  button{font:inherit;cursor:pointer;border-radius:7px;border:1px solid var(--border);
+    background:var(--card);color:var(--text);padding:6px 12px}
+  button.primary{background:var(--accent);color:var(--accent-fg);border-color:transparent}
+  button.link{border:none;background:none;color:var(--muted);padding:4px 6px}
+  button.link.danger{color:var(--danger)}
+  .empty{text-align:center;padding:48px 20px;background:var(--card);
+    border:1px solid var(--border);border-radius:12px}
+  .empty .ico{font-size:30px;opacity:.6}
+  .empty .t{font-weight:600;margin:8px 0 4px}
+  .empty .s{color:var(--muted);font-size:13px;margin-bottom:16px}
+  .chan{display:flex;align-items:center;gap:12px;background:var(--card);
+    border:1px solid var(--border);border-radius:10px;padding:12px 14px;margin-bottom:10px}
+  .chan .ico{font-size:20px}
+  .chan .meta{flex:1;min-width:0}
+  .chan .meta .name{font-weight:600}
+  .chan .meta .sub{font-size:12px;color:var(--muted);
+    overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .pill{font-size:11px;padding:2px 8px;border-radius:999px}
+  .pill.ok{background:var(--ok-bg);color:var(--ok)}
+  .pill.bad{background:var(--danger-bg);color:var(--danger)}
+  .pill.off{background:var(--warn-bg);color:var(--warn)}
+  /* modal */
+  .mask{position:fixed;inset:0;background:rgba(0,0,0,.4);display:none;
+    align-items:flex-start;justify-content:center;padding:40px 16px;overflow:auto}
+  .mask.show{display:flex}
+  .modal{background:var(--card);border:1px solid var(--border);border-radius:14px;
+    width:100%;max-width:520px;padding:20px}
+  .modal h3{margin:0 0 4px}
+  .modal .hint{color:var(--muted);font-size:12px;margin-bottom:14px}
+  .grid{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}
+  .ptype{border:1px solid var(--border);border-radius:9px;padding:10px;cursor:pointer}
+  .ptype.sel{border:2px solid var(--accent);background:color-mix(in srgb,var(--accent) 10%,transparent)}
+  .ptype.off{opacity:.45;cursor:not-allowed}
+  .ptype .n{font-weight:600}
+  .ptype .s{font-size:11px;color:var(--muted);margin-top:2px}
+  .field{margin-bottom:12px}
+  .field label{display:block;font-size:12px;font-weight:600;margin-bottom:4px}
+  .field .secret-tag{font-weight:400;font-size:10px;padding:1px 6px;border-radius:4px;
+    background:var(--warn-bg);color:var(--warn);margin-left:6px}
+  .field input[type=text],.field input[type=password],.field input[type=number]{
+    width:100%;padding:7px 9px;border:1px solid var(--border);border-radius:7px;
+    background:var(--bg);color:var(--text);font:inherit}
+  .field .help{font-size:11px;color:var(--muted);margin-top:4px}
+  .field.check{display:flex;align-items:center;gap:8px}
+  .field.check label{margin:0}
+  .adv-toggle{font-size:12px;color:var(--accent);cursor:pointer;margin:6px 0 12px}
+  .adv{display:none} .adv.show{display:block}
+  .foot{display:flex;align-items:center;gap:8px;margin-top:8px;
+    padding-top:14px;border-top:1px solid var(--border)}
+  .foot .status{margin-left:auto;font-size:12px}
+  .foot .status.ok{color:var(--ok)} .foot .status.bad{color:var(--danger)}
+  code{background:color-mix(in srgb,var(--text) 8%,transparent);padding:1px 5px;border-radius:4px;font-size:12px}
+</style>
+</head>
+<body>
+<header>
+  <span class="brand">mcp-hub</span>
+  <span class="tag" id="ver"></span>
+  <span class="right" id="cfgpath"></span>
+</header>
+<main>
+  <div class="row">
+    <h2>渠道 <span class="count" id="count"></span></h2>
+    <div style="margin-left:auto"><button class="primary" id="add">+ 添加渠道</button></div>
+  </div>
+  <div id="list"></div>
+</main>
+
+<div class="mask" id="mask">
+  <div class="modal" id="modal"></div>
+</div>
+
+<script>
+const $ = (s,el=document)=>el.querySelector(s);
+const api = async (url,opt)=>{const r=await fetch(url,opt);return r.json()};
+let DESCRIPTORS=[], CFGPATH="";
+
+async function boot(){
+  const d = await api("/api/descriptors");
+  DESCRIPTORS = d.descriptors; CFGPATH = d.configPath;
+  $("#ver").textContent = d.version;
+  $("#cfgpath").textContent = "配置：" + d.configPath;
+  await refresh();
+}
+
+async function refresh(){
+  const {channels=[]} = await api("/api/channels");
+  $("#count").textContent = channels.length ? channels.length+" 个" : "";
+  const list = $("#list");
+  if(!channels.length){
+    list.innerHTML = `<div class="empty">
+      <div class="ico">📭</div><div class="t">还没有任何渠道</div>
+      <div class="s">添加一个渠道后，对应的 MCP 工具才会注册给客户端</div>
+      <button class="primary" onclick="openAdd()">+ 添加渠道</button></div>`;
+    return;
+  }
+  list.innerHTML = channels.map(v=>{
+    const d=v.descriptor, i=v.instance;
+    const pill = !v.hasSecret ? `<span class="pill bad">● 缺少凭据</span>`
+      : !i.enabled ? `<span class="pill off">● 已停用</span>`
+      : `<span class="pill ok">● 已配置</span>`;
+    const tools = (d.tools||[]).join(" / ");
+    return `<div class="chan">
+      <span class="ico">${d.icon||"🔌"}</span>
+      <div class="meta">
+        <div class="name">${d.name} · ${esc(i.account)}</div>
+        <div class="sub">${tools?("工具 "+tools):""}</div>
+      </div>
+      ${pill}
+      <button class="link" onclick='testSaved(${attr(d.type)},${attr(i.account)})'>测试</button>
+      <button class="link" onclick='openEdit(${attr(d.type)},${attr(i.account)})'>编辑</button>
+      <button class="link danger" onclick='del(${attr(d.type)},${attr(i.account)})'>删除</button>
+    </div>`;
+  }).join("");
+}
+
+function esc(s){return String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]))}
+function attr(s){return JSON.stringify(String(s))}
+function close(){$("#mask").classList.remove("show")}
+
+function openAdd(){
+  const avail = DESCRIPTORS.filter(d=>d.available);
+  let sel = avail[0]?.type;
+  const render=()=>{
+    $("#modal").innerHTML = `
+      <h3>添加渠道</h3>
+      <div class="hint">选择渠道类型，后续可扩展更多系统</div>
+      <div class="grid">${DESCRIPTORS.map(d=>`
+        <div class="ptype ${d.available?(d.type===sel?'sel':''):'off'}"
+             ${d.available?`onclick="pick('${d.type}')"`:''}>
+          <div class="n">${d.icon} ${d.name}</div><div class="s">${esc(d.summary)}</div>
+        </div>`).join("")}</div>
+      <div class="foot"><button onclick="close()">取消</button>
+        <button class="primary" style="margin-left:auto" onclick="pickNext()">下一步</button></div>`;
+  };
+  window.pick=(t)=>{sel=t;render()};
+  window.pickNext=()=>openForm(sel,null);
+  render(); $("#mask").classList.add("show");
+}
+
+function openEdit(type,account){openForm(type,account)}
+
+async function openForm(type, account){
+  const d = DESCRIPTORS.find(x=>x.type===type);
+  let inst=null;
+  if(account){
+    const {channels=[]} = await api("/api/channels");
+    inst = channels.find(v=>v.descriptor.type===type && v.instance.account===account)?.instance;
+  }
+  const val=(f)=> inst ? (f.name===d.accountField?inst.account:(inst.settings?.[f.name]??f.default)) : f.default;
+  const basic = d.fields.filter(f=>!f.advanced);
+  const adv   = d.fields.filter(f=>f.advanced);
+  const fieldHTML=(f)=>{
+    const v = val(f)||"";
+    if(f.kind==="bool"){
+      const on=(v==="true"||v===true);
+      return `<div class="field check"><input type="checkbox" id="f_${f.name}" ${on?"checked":""}>
+        <label for="f_${f.name}">${f.label}</label></div>
+        ${f.help?`<div class="help" style="margin:-8px 0 12px 26px">${esc(f.help)}</div>`:""}`;
+    }
+    const tag = f.kind==="password"?`<span class="secret-tag">🔑 密码类</span>`:"";
+    const ph = f.kind==="password"&&account?"（留空表示不修改）":(f.placeholder||"");
+    const type = f.kind==="password"?"password":(f.kind==="number"?"number":"text");
+    return `<div class="field"><label>${f.label}${f.required?' <span style="color:var(--danger)">*</span>':""}${tag}</label>
+      <input type="${type}" id="f_${f.name}" value="${f.kind==="password"?"":esc(v)}" placeholder="${esc(ph)}">
+      ${f.help?`<div class="help">${esc(f.help)}</div>`:""}</div>`;
+  };
+  // 账号字段编辑时锁定（它是凭据键的一部分）
+  $("#modal").innerHTML = `
+    <h3>${d.icon} ${d.name}</h3>
+    <div class="hint">密码类字段只存进系统密码管理器，不写配置文件、不进日志</div>
+    ${basic.map(fieldHTML).join("")}
+    ${adv.length?`<div class="adv-toggle" onclick="document.getElementById('adv').classList.toggle('show')">▸ 高级设置（主机 / 端口）</div>
+      <div class="adv" id="adv">${adv.map(fieldHTML).join("")}</div>`:""}
+    <div class="foot">
+      <button class="primary" onclick="doSave('${type}',${account?attr(account):"null"})">测试并保存</button>
+      <button onclick="close()">取消</button>
+      <span class="status" id="st"></span>
+    </div>`;
+  if(account){const af=$("#f_"+d.accountField); if(af){af.readOnly=true; af.style.opacity=.6}}
+  $("#mask").classList.add("show");
+}
+
+function collect(type){
+  const d = DESCRIPTORS.find(x=>x.type===type);
+  const values={};
+  d.fields.forEach(f=>{
+    const el=document.getElementById("f_"+f.name); if(!el)return;
+    values[f.name] = f.kind==="bool" ? (el.checked?"true":"false") : el.value;
+  });
+  return {d,values};
+}
+
+async function doSave(type, account){
+  const {d,values} = collect(type);
+  const st=$("#st"); st.className="status"; st.textContent="测试连通中…";
+  const acc = account || values[d.accountField];
+  const t = await api("/api/channels/test",{method:"POST",
+    headers:{"Content-Type":"application/json"},
+    body:JSON.stringify({type,account:acc,values})});
+  if(!t.ok){ st.className="status bad"; st.textContent="连通失败：" + t.error; return; }
+  const r = await api("/api/channels",{method:"POST",
+    headers:{"Content-Type":"application/json"},
+    body:JSON.stringify({type,values})});
+  if(r.error){ st.className="status bad"; st.textContent="保存失败：" + r.error; return; }
+  st.className="status ok"; st.textContent="✅ 已连通并保存";
+  setTimeout(()=>{close();refresh();},600);
+}
+
+async function testSaved(type,account){
+  const r = await api("/api/channels/test",{method:"POST",
+    headers:{"Content-Type":"application/json"},
+    body:JSON.stringify({type,account,values:{}})});
+  alert(r.ok ? "✅ 连通正常" : "连通失败：\n"+r.error);
+}
+
+async function del(type,account){
+  if(!confirm(`删除渠道 ${type} / ${account}？\n会同时删除它在系统密码管理器里的凭据。`))return;
+  await api("/api/channels/delete",{method:"POST",
+    headers:{"Content-Type":"application/json"},
+    body:JSON.stringify({type,account})});
+  refresh();
+}
+
+$("#add").onclick=openAdd;
+$("#mask").onclick=(e)=>{if(e.target.id==="mask")close()};
+boot();
+</script>
+</body>
+</html>

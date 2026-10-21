@@ -55,9 +55,9 @@ type Config struct {
 	Provider string
 	User     string
 
-	// secret 是授权码的惰性句柄。取得它不访问钥匙串，
-	// 第一次 Password() 才去读，之后整个进程复用。
-	secret *credstore.Secret
+	// secret 是授权码的惰性句柄（接口，便于 channels 传入表单临时值）。
+	// 取得它不访问钥匙串，第一次 Password() 才去读，之后整个进程复用。
+	secret Secret
 
 	IMAPHost string
 	IMAPPort int

@@ -87,6 +87,15 @@ type Secret struct {
 // Ref 返回这份凭据的标识。
 func (s *Secret) Ref() Ref { return s.ref }
 
+// Literal 构造一个已持有明文的 Secret，不经过系统密码管理器。
+// 用于「测试尚未保存的表单」：页面刚填的密码还没入库，用它承载即可。
+// Source 报告为 "form"。
+func Literal(ref Ref, value string) *Secret {
+	s := &Secret{ref: ref, val: value, src: "form"}
+	s.once.Do(func() {}) // 标记为已加载，Value 直接返回
+	return s
+}
+
 // Source 返回凭据实际来自哪里（"keychain" 或 "env:XXX"），
 // 仅在 Value 成功后有意义。用于日志和 -selftest，不含凭据本身。
 func (s *Secret) Source() string { return s.src }
