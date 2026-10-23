@@ -1,9 +1,9 @@
 {
-  "type": "kingdee",
-  "name": "金蝶云星空",
+  "type": "k3cloud",
+  "name": "金蝶云·星空",
   "icon": "📒",
-  "summary": "K3Cloud WebAPI · 账号密码登录会话",
-  "integration": "kingdee",
+  "summary": "K/3 Cloud WebAPI · 账号密码登录会话",
+  "integration": "k3cloud",
   "helpUrl": "https://open.kingdee.com/K3CloudDoc/",
   "baseUrlField": "site",
   "account": {
@@ -23,7 +23,7 @@
       "label": "站点地址",
       "required": true,
       "placeholder": "https://你的域名/k3cloud",
-      "help": "到 /k3cloud 为止，不要带后面的接口路径；必须是 https"
+      "help": "金蝶云·星空（K/3 Cloud）的服务地址，到 /k3cloud 为止，必须是 https。注意金蝶云·苍穹 / 星瀚 / 星辰 / KIS / K3 WISE 不是这套接口，填它们的地址连不上"
     },
     {
       "name": "acctId",
@@ -60,7 +60,7 @@
   "postReads": true,
   "tools": [
     {
-      "name": "kingdee_query_bill",
+      "name": "k3cloud_query_bill",
       "title": "查询单据",
       "description": "按金蝶的单据过滤语法查询任意单据的字段值。formId 是表单标识（物料 BD_MATERIAL、客户 BD_Customer、销售订单 SAL_SaleOrder、采购订单 PUR_PurchaseOrder、应收单 AR_receivable）。fieldKeys 决定返回哪些列，必须明确列出——这个接口不支持「返回全部字段」。",
       "readOnly": true,
@@ -116,9 +116,9 @@
       }
     },
     {
-      "name": "kingdee_view_bill",
+      "name": "k3cloud_view_bill",
       "title": "读取单据详情",
-      "description": "按编码或内码读取一张单据的完整数据。number 和 id 给一个即可，编码更常用。要先知道有哪些单据用 kingdee_query_bill。",
+      "description": "按编码或内码读取一张单据的完整数据。number 和 id 给一个即可，编码更常用。要先知道有哪些单据用 k3cloud_query_bill。",
       "readOnly": true,
       "method": "POST",
       "path": "/Kingdee.BOS.WebApi.ServicesStub.DynamicFormService.View.common.kdsvc",
@@ -153,7 +153,7 @@
       ]
     },
     {
-      "name": "kingdee_save_bill",
+      "name": "k3cloud_save_bill",
       "title": "保存单据",
       "description": "新增或修改一张单据。model 是单据的完整数据对象，字段名用金蝶的标识（如 {\"FNumber\":\"001\",\"FName\":{\"FLocaleId\":2052,\"FValue\":\"测试\"}}）。这会真的写进 ERP：保存后的单据会出现在对方的业务流程里，撤销要走业务删除。",
       "method": "POST",

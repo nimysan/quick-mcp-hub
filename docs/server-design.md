@@ -55,6 +55,12 @@ Postgres + Prisma（都是写侧的低频数据，不需要 DynamoDB 的扩展�
 出问题走 `yanked`，不走原地修改——客户端缓存里已经有那份内容了，原地改等于
 两台机器跑着不同的「v3」。
 
+**渠道 id 不可改**：客户机上的 `channels.json` 和密码管理器条目都按 id 定位
+（`mcp-hub:<integration>` + 账号），改 id 等于让用户已配好的凭据失联。所以
+id 要一次命名对——按**具体那套接口**命名，不是按厂商（`k3cloud` 不是
+`kingdee`，金蝶有七八条产品线、接口彼此不通）。真要改名，目录里得带一张
+`renamedFrom` 映射、客户端据它迁移配置和凭据，这件事现在还没做。
+
 ## 接口
 
 **分发侧**（静态对象，无鉴权，可被 CDN 缓存）
@@ -71,7 +77,7 @@ GET /catalog/keys.json        验签公钥（含 kid，支持轮换）
   "schemaVersion": 1,
   "generatedAt": "2026-10-23T05:00:00Z",
   "connectors": [ { "type": "github", "version": 3, "spec": { ... } } ],
-  "revoked":    [ { "type": "kingdee", "version": 2, "reason": "接口变更" } ],
+  "revoked":    [ { "type": "k3cloud", "version": 2, "reason": "接口变更" } ],
   "signature":  { "kid": "2026-10", "alg": "ed25519", "sig": "base64…" }
 }
 ```

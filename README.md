@@ -206,7 +206,7 @@ GitHub 渠道自带 6 个工具：`github_whoami`、`github_list_my_repos`、
 
 ### 两种渠道形状
 
-GitHub 是 REST：Bearer 令牌、GET 读、字段裁剪。金蝶云星空是 RPC 风格，差别大到
+GitHub 是 REST：Bearer 令牌、GET 读、字段裁剪。金蝶云·星空（K/3 Cloud）是 RPC 风格，差别大到
 需要 spec 支持另外四件事：
 
 | K3Cloud 的做法 | 声明里怎么写 |
@@ -230,10 +230,25 @@ GitHub 是 REST：Bearer 令牌、GET 读、字段裁剪。金蝶云星空是 RP
 第二人批准。没有 POST 只读工具却声明它，校验会报错——免得它被顺手加到每份
 声明上而失去信号意义。
 
-### 金蝶云星空渠道
+### 金蝶云·星空渠道（`k3cloud`）
 
-三个工具：`kingdee_query_bill`（通用单据查询）、`kingdee_view_bill`（读单据详情）、
-写开关控制的 `kingdee_save_bill`。要填站点地址（到 `/k3cloud` 为止，必须 https）、
+**先对上系统**：金蝶有好几条产品线，接口彼此不通。这个渠道只对
+**金蝶云·星空（K/3 Cloud）**的 BOS WebAPI，也就是
+`Kingdee.BOS.WebApi.ServicesStub.*` 这组地址。
+
+| 金蝶产品 | 这个渠道能用吗 |
+|---|---|
+| 金蝶云·星空（K/3 Cloud） | ✅ 就是它 |
+| 金蝶云·苍穹（Cosmic） | ❌ 另一套 openapi |
+| 金蝶云·星瀚（Constellation） | ❌ 另一套 openapi |
+| 金蝶云·星辰 | ❌ 另一套接口 |
+| 金蝶 KIS / K/3 WISE / EAS | ❌ 老产品，不是 BOS WebAPI |
+
+所以渠道 id 是 `k3cloud` 而不是 `kingdee`，工具名也是 `k3cloud_*`：按产品线命名，
+而不是按厂商命名。以后接苍穹就是另一份声明 `cosmic.json`，两者可以并存。
+
+三个工具：`k3cloud_query_bill`（通用单据查询）、`k3cloud_view_bill`（读单据详情）、
+写开关控制的 `k3cloud_save_bill`。要填站点地址（到 `/k3cloud` 为止，必须 https）、
 账套 ID、账号、密码。
 
 **权限建在星空那一侧**：填进来的是能登录 ERP 的真人密码，权限完全等于该账号在
@@ -241,9 +256,21 @@ GitHub 是 REST：Bearer 令牌、GET 读、字段裁剪。金蝶云星空是 RP
 hub 的写开关只能决定「不把写工具给模型」，决定不了那个账号本身能做什么。
 
 **未经真实环境验证**：接口路径、登录判定（`LoginResultType == 1`）、失败响应形状
-都来自公开文档，执行器是对着一个仿真的 K3Cloud 服务测通的（登录换 cookie、
+都来自公开文档，执行器是对着一个仿真的 K/3 Cloud 服务测通的（登录换 cookie、
 嵌套 body、二维数组列名、业务失败、会话过期重登、写开关，8 个用例）。真实的
-字段标识和响应嵌套要用你自己的账套核一遍。
+字段标识和响应嵌套要用你自己的账套核一遍。金蝶没有公开的测试环境或测试账号，
+文档站 `open.kingdee.com/K3CloudDoc/` 对匿名访问也是 403。
+
+## 渠道命名规矩
+
+渠道 id 和工具名要对得上**具体那套接口**，不是厂商、也不是产品大类：
+
+- 厂商有多条产品线时，用产品线命名（`k3cloud` 不是 `kingdee`）
+- 同一产品的不同接口体系要分开（星空的 BOS WebAPI 和苍穹的 openapi 是两份声明）
+- 工具名必须以渠道 id 为前缀，这条由 `Spec.Validate` 强制
+- id 一旦发布就不该改：客户机上的 `channels.json` 和密码管理器条目都按它定位，
+  改名等于让用户已配好的渠道凭据失联（远端下发时这件事要靠目录里的改名映射
+  来兜，现在还没做）
 
 ## 已知限制
 

@@ -12,11 +12,11 @@ import (
 	"testing"
 )
 
-// 仿真的金蝶云星空 WebAPI：登录换 kdservice-sessionid cookie，
+// 仿真的金蝶云·星空（K/3 Cloud）WebAPI：登录换 kdservice-sessionid cookie，
 // 业务接口要带着它；业务失败回 HTTP 200 + 数组包着的 ResponseStatus。
 //
-// 用的是目录里那份真声明（ByType("kingdee")），不是为测试手搓的，
-// 所以这组用例同时在验 kingdee.json 本身。
+// 用的是目录里那份真声明（ByType("k3cloud")），不是为测试手搓的，
+// 所以这组用例同时在验 k3cloud.json 本身。
 type k3mock struct {
 	srv *httptest.Server
 
@@ -146,9 +146,9 @@ func (m *k3mock) lastBody() map[string]any {
 // runtime 按真声明装配一个运行态，站点指向仿真服务。
 func (m *k3mock) runtime(t *testing.T, password string, allowWrite bool) (Runtime, *Client) {
 	t.Helper()
-	spec, ok := ByType("kingdee")
+	spec, ok := ByType("k3cloud")
 	if !ok {
-		t.Fatal("目录里没有 kingdee 声明")
+		t.Fatal("目录里没有 k3cloud 声明")
 	}
 	settings := map[string]string{"site": m.srv.URL + "/k3cloud", "acctId": "6287abc"}
 	if allowWrite {
@@ -163,11 +163,11 @@ func (m *k3mock) runtime(t *testing.T, password string, allowWrite bool) (Runtim
 	return rt, &Client{HTTP: m.srv.Client()}
 }
 
-func TestKingdeeLoginThenQuery(t *testing.T) {
+func TestK3CloudLoginThenQuery(t *testing.T) {
 	m := newK3Mock(t, "pw-secret-1")
 	rt, c := m.runtime(t, "pw-secret-1", false)
 
-	out, err := c.Call(context.Background(), rt, "kingdee_query_bill", map[string]any{
+	out, err := c.Call(context.Background(), rt, "k3cloud_query_bill", map[string]any{
 		"formId":       "BD_MATERIAL",
 		"fieldKeys":    "FNumber,FName,FPrice",
 		"filterString": "FNumber like '00%'",
@@ -205,13 +205,13 @@ func TestKingdeeLoginThenQuery(t *testing.T) {
 }
 
 // 登录只能发生一次：MCP server 是常驻进程，每次调用都登一遍会被 ERP 当成攻击。
-func TestKingdeeLoginOnlyOnce(t *testing.T) {
+func TestK3CloudLoginOnlyOnce(t *testing.T) {
 	m := newK3Mock(t, "pw-secret-1")
 	rt, c := m.runtime(t, "pw-secret-1", false)
 	args := map[string]any{"formId": "BD_MATERIAL", "fieldKeys": "FNumber"}
 
 	for i := 0; i < 3; i++ {
-		if _, err := c.Call(context.Background(), rt, "kingdee_query_bill", args); err != nil {
+		if _, err := c.Call(context.Background(), rt, "k3cloud_query_bill", args); err != nil {
 			t.Fatalf("第 %d 次查询失败: %v", i+1, err)
 		}
 	}
@@ -222,12 +222,12 @@ func TestKingdeeLoginOnlyOnce(t *testing.T) {
 }
 
 // 会话过期要自动重登并重试一次，否则常驻进程「用一会儿就全挂」。
-func TestKingdeeReloginOnSessionLost(t *testing.T) {
+func TestK3CloudReloginOnSessionLost(t *testing.T) {
 	m := newK3Mock(t, "pw-secret-1")
 	m.dropFirst = true
 	rt, c := m.runtime(t, "pw-secret-1", false)
 
-	out, err := c.Call(context.Background(), rt, "kingdee_query_bill", map[string]any{
+	out, err := c.Call(context.Background(), rt, "k3cloud_query_bill", map[string]any{
 		"formId": "BD_MATERIAL", "fieldKeys": "FNumber,FName,FPrice",
 	})
 	if err != nil {
@@ -243,12 +243,12 @@ func TestKingdeeReloginOnSessionLost(t *testing.T) {
 }
 
 // HTTP 200 + 业务失败必须报错：当成成功的话模型会拿着空结果编结论。
-func TestKingdeeBusinessFailureIsError(t *testing.T) {
+func TestK3CloudBusinessFailureIsError(t *testing.T) {
 	m := newK3Mock(t, "pw-secret-1")
 	m.failQuery = true
 	rt, c := m.runtime(t, "pw-secret-1", false)
 
-	_, err := c.Call(context.Background(), rt, "kingdee_query_bill", map[string]any{
+	_, err := c.Call(context.Background(), rt, "k3cloud_query_bill", map[string]any{
 		"formId": "BD_MATERIAL", "fieldKeys": "FNoSuchField",
 	})
 	if err == nil {
@@ -259,11 +259,11 @@ func TestKingdeeBusinessFailureIsError(t *testing.T) {
 	}
 }
 
-func TestKingdeeBadPassword(t *testing.T) {
+func TestK3CloudBadPassword(t *testing.T) {
 	m := newK3Mock(t, "pw-secret-1")
 	rt, c := m.runtime(t, "wrong-password", false)
 
-	_, err := c.Call(context.Background(), rt, "kingdee_query_bill", map[string]any{
+	_, err := c.Call(context.Background(), rt, "k3cloud_query_bill", map[string]any{
 		"formId": "BD_MATERIAL", "fieldKeys": "FNumber",
 	})
 	if err == nil {
@@ -281,11 +281,11 @@ func TestKingdeeBadPassword(t *testing.T) {
 }
 
 // Save 是写入：写开关关着时必须在发请求之前就拒绝。
-func TestKingdeeSaveNeedsWriteSwitch(t *testing.T) {
+func TestK3CloudSaveNeedsWriteSwitch(t *testing.T) {
 	m := newK3Mock(t, "pw-secret-1")
 	rt, c := m.runtime(t, "pw-secret-1", false)
 
-	_, err := c.Call(context.Background(), rt, "kingdee_save_bill", map[string]any{
+	_, err := c.Call(context.Background(), rt, "k3cloud_save_bill", map[string]any{
 		"formId": "BD_MATERIAL", "model": map[string]any{"FNumber": "003"},
 	})
 	if err == nil || !strings.Contains(err.Error(), "写开关") {
@@ -297,7 +297,7 @@ func TestKingdeeSaveNeedsWriteSwitch(t *testing.T) {
 }
 
 // 测试连通对登录式渠道就是登录本身，并且每次都真登一遍。
-func TestKingdeeTestIsLogin(t *testing.T) {
+func TestK3CloudTestIsLogin(t *testing.T) {
 	m := newK3Mock(t, "pw-secret-1")
 	rt, c := m.runtime(t, "pw-secret-1", false)
 
@@ -316,11 +316,11 @@ func TestKingdeeTestIsLogin(t *testing.T) {
 }
 
 // View 的 formid 在 body 顶层、单据条件在 data 下 —— 和查询不是同一个形状。
-func TestKingdeeViewBodyShape(t *testing.T) {
+func TestK3CloudViewBodyShape(t *testing.T) {
 	m := newK3Mock(t, "pw-secret-1")
 	rt, c := m.runtime(t, "pw-secret-1", false)
 
-	if _, err := c.Call(context.Background(), rt, "kingdee_view_bill", map[string]any{
+	if _, err := c.Call(context.Background(), rt, "k3cloud_view_bill", map[string]any{
 		"formId": "BD_MATERIAL", "number": "001",
 	}); err != nil {
 		t.Fatalf("读取单据失败: %v", err)
