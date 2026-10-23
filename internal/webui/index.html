@@ -136,31 +136,39 @@ async function refresh(){
     list.innerHTML = `<div class="empty">
       <div class="ico">📭</div><div class="t">还没有任何渠道</div>
       <div class="s">添加一个渠道后，对应的 MCP 工具才会注册给客户端</div>
-      <button class="primary" onclick="openAdd()">+ 添加渠道</button></div>`;
+      <button class="primary" id="emptyadd">+ 添加渠道</button></div>`;
+    $("#emptyadd").onclick = openAdd;
     return;
   }
-  list.innerHTML = channels.map(v=>{
+  list.innerHTML = channels.map((v,idx)=>{
     const d=v.descriptor, i=v.instance;
     const pill = !v.hasSecret ? `<span class="pill bad">● 缺少凭据</span>`
       : !i.enabled ? `<span class="pill off">● 已停用</span>`
       : `<span class="pill ok">● 已配置</span>`;
     const tools = (d.tools||[]).join(" / ");
+    // 按钮不写内联 onclick：拼进 HTML 属性的参数一旦含引号就会把属性截断，
+    // 结果是按钮静默失效（点了什么都不发生）。统一在下面挂闭包。
     return `<div class="chan">
       <span class="ico">${d.icon||"🔌"}</span>
       <div class="meta">
-        <div class="name">${d.name} · ${esc(i.account)}</div>
-        <div class="sub">${tools?("工具 "+tools):""}</div>
+        <div class="name">${esc(d.name)} · ${esc(i.account)}</div>
+        <div class="sub">${tools?("工具 "+esc(tools)):""}</div>
       </div>
       ${pill}
-      <button class="link" onclick='testSaved(${attr(d.type)},${attr(i.account)})'>测试</button>
-      <button class="link" onclick='openEdit(${attr(d.type)},${attr(i.account)})'>编辑</button>
-      <button class="link danger" onclick='del(${attr(d.type)},${attr(i.account)})'>删除</button>
+      <button class="link" data-act="test" data-i="${idx}">测试</button>
+      <button class="link" data-act="edit" data-i="${idx}">编辑</button>
+      <button class="link danger" data-act="del" data-i="${idx}">删除</button>
     </div>`;
   }).join("");
+
+  list.querySelectorAll("button[data-act]").forEach(btn=>{
+    const v = channels[+btn.dataset.i];
+    const type = v.descriptor.type, account = v.instance.account;
+    btn.onclick = () => ({test:testSaved, edit:openEdit, del:del})[btn.dataset.act](type, account);
+  });
 }
 
 function esc(s){return String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]))}
-function attr(s){return JSON.stringify(String(s))}
 function close(){$("#mask").classList.remove("show")}
 
 // TAG_LABELS 把标签翻成中文显示；没列到的标签原样显示，
@@ -180,26 +188,36 @@ function openAdd(){
     $("#modal").innerHTML = `
       <h3>添加渠道</h3>
       <div class="tagbar">
-        <span class="tg ${tag?'':'on'}" onclick="filt('')">全部 ${DESCRIPTORS.length}</span>
-        ${allTags.map(t=>`<span class="tg ${tag===t?'on':''}" onclick="filt('${t}')">${esc(tagText(t))}</span>`).join("")}
+        <span class="tg ${tag?'':'on'}" data-tag="">全部 ${DESCRIPTORS.length}</span>
+        ${allTags.map(t=>`<span class="tg ${tag===t?'on':''}" data-tag="${esc(t)}">${esc(tagText(t))}</span>`).join("")}
       </div>
-      <div class="grid">${list.map(d=>`
+      <div class="grid">${list.map((d,idx)=>`
         <div class="ptype ${d.available?(d.type===sel?'sel':''):'off'}"
-             ${d.available?`onclick="pick('${d.type}')"`:''}>
+             ${d.available?`data-pick="${idx}"`:''}>
           <div class="n">${d.icon} ${esc(d.name)}
             ${d.version?`<span class="ver">v${d.version}</span>`:''}
             ${d.needsReview?'<span class="rv" title="这个系统的读操作也是 POST，声明需人工复核">复核</span>':''}</div>
           <div class="s">${esc(d.summary)}</div>
           <div class="s"><code>${esc(d.type)}</code></div>
         </div>`).join("")}</div>
-      <div class="foot"><button onclick="close()">取消</button>
-        <button class="primary" style="margin-left:auto" onclick="pickNext()"
+      <div class="foot"><button id="cancelbtn">取消</button>
+        <button class="primary" style="margin-left:auto" id="nextbtn"
                 ${sel?'':'disabled title="这个分类下还没有可用的渠道"'}>下一步</button></div>`;
+
+    $("#modal").querySelectorAll("[data-tag]").forEach(el=>{
+      el.onclick = () => {
+        tag = el.dataset.tag;
+        const l = tag ? DESCRIPTORS.filter(d=>(d.tags||[]).includes(tag)) : DESCRIPTORS;
+        if(!l.some(d=>d.type===sel && d.available)) sel = l.find(d=>d.available)?.type;
+        render();
+      };
+    });
+    $("#modal").querySelectorAll("[data-pick]").forEach(el=>{
+      el.onclick = () => { sel = list[+el.dataset.pick].type; render(); };
+    });
+    $("#cancelbtn").onclick = close;
+    $("#nextbtn").onclick = () => sel && openForm(sel, null);
   };
-  window.filt=(t)=>{tag=t; const l=t?DESCRIPTORS.filter(d=>(d.tags||[]).includes(t)):DESCRIPTORS;
-                    if(!l.some(d=>d.type===sel&&d.available)) sel=l.find(d=>d.available)?.type; render()};
-  window.pick=(t)=>{sel=t;render()};
-  window.pickNext=()=>sel&&openForm(sel,null);
   render(); $("#mask").classList.add("show");
 }
 
@@ -232,16 +250,22 @@ async function openForm(type, account){
   };
   // 账号字段编辑时锁定（它是凭据键的一部分）
   $("#modal").innerHTML = `
-    <h3>${d.icon} ${d.name}</h3>
+    <h3>${d.icon} ${esc(d.name)}</h3>
     <div class="hint">密码类字段只存进系统密码管理器，不写配置文件、不进日志</div>
     ${basic.map(fieldHTML).join("")}
-    ${adv.length?`<div class="adv-toggle" onclick="document.getElementById('adv').classList.toggle('show')">▸ 高级设置（主机 / 端口）</div>
+    ${adv.length?`<div class="adv-toggle" id="advtoggle">▸ 高级设置（主机 / 端口）</div>
       <div class="adv" id="adv">${adv.map(fieldHTML).join("")}</div>`:""}
     <div class="foot">
-      <button class="primary" onclick="doSave('${type}',${account?attr(account):"null"})">测试并保存</button>
-      <button onclick="close()">取消</button>
+      <button class="primary" id="savebtn">测试并保存</button>
+      <button id="cancelbtn">取消</button>
       <span class="status" id="st"></span>
     </div>`;
+  // 挂闭包而不是拼内联 onclick：account 里出现引号会把 HTML 属性截断，
+  // 按钮就变成点了没反应 —— 这个 bug 曾让「编辑」整个静默失效。
+  $("#savebtn").onclick = () => doSave(type, account);
+  $("#cancelbtn").onclick = close;
+  const advToggle = $("#advtoggle");
+  if(advToggle) advToggle.onclick = () => $("#adv").classList.toggle("show");
   if(account){const af=$("#f_"+d.accountField); if(af){af.readOnly=true; af.style.opacity=.6}}
   $("#mask").classList.add("show");
 }

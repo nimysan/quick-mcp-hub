@@ -80,6 +80,9 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	// 页面是编译进二进制的，升级程序后浏览器必须拿到新的那份：没有这个头
+	// 浏览器会按启发式缓存，用户换了新版本却还在用旧页面。
+	w.Header().Set("Cache-Control", "no-store")
 	w.Write(data)
 }
 
