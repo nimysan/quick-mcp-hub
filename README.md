@@ -344,13 +344,30 @@ hub 的写开关只能决定「不把写工具给模型」，决定不了那个�
 [API Token](https://id.atlassian.com/manage-profile/security/api-tokens)，认证是
 Basic(邮箱:Token)。Jira Server / Data Center 自建版接口不完全相同，这份声明没覆盖。
 
-八个工具：`jira_whoami`、`jira_list_projects`、`jira_search_issues`（JQL）、
-`jira_list_issue_types`、`jira_get_issue`、`jira_list_comments`，以及写开关控制的
-`jira_create_issue` 和 `jira_add_comment`。
+十三个工具，读写分开：
 
-`jira_list_issue_types` 是 `jira_create_issue` 的前置：事项类型是**按项目配置**的，
-通用习惯里的 Story / Bug 不一定存在（实测一个新建的 Scrum 项目只有
-Epic / Subtask / Feature / Task），类型名写错 Jira 会直接拒。
+| 读 | 写（要开写开关） |
+|---|---|
+| `jira_whoami` 当前身份 | `jira_create_issue` 建事项 |
+| `jira_list_projects` 列项目 | `jira_update_issue` 改标题/描述/优先级 |
+| `jira_search_issues` JQL 搜索 | `jira_assign_issue` 指派负责人 |
+| `jira_list_issue_types` 列事项类型 | `jira_transition_issue` 流转状态 |
+| `jira_search_users` 找人拿 accountId | `jira_add_comment` 加评论 |
+| `jira_list_transitions` 列可用流转 | |
+| `jira_get_issue` 读详情 | |
+| `jira_list_comments` 读评论 | |
+
+左边三个「查 id」的工具是右边写操作的前置，Jira 的三个坑决定了它们必须存在：
+
+- **事项类型按项目配置**，通用习惯里的 Story / Bug 不一定有（实测一个新建的
+  Scrum 项目只有 Epic / Subtask / Feature / Task），类型名写错直接拒
+  → `jira_list_issue_types`
+- **指派要 accountId**，不是显示名也不是邮箱 → `jira_search_users`
+- **可用流转取决于当前状态和项目工作流**，不是固定几个，而且流转要传 id
+  不是状态名 → `jira_list_transitions`（它把目标状态名一起带出来，
+  否则模型只看到一串 id，不知道哪个是「完成」）
+
+这三条模型都推不出来，所以写在了对应工具的描述里。
 
 两个决定值得记下来，它们都来自 Atlassian 的接口现状：
 

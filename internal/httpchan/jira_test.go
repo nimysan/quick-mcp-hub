@@ -24,14 +24,17 @@ import (
 type jiraMock struct {
 	srv *httptest.Server
 
-	mu       sync.Mutex
-	email    string
-	token    string
-	gotAuth  string
-	gotQuery map[string]string
-	gotPaths []string
-	comment  map[string]any
-	created  map[string]any
+	mu         sync.Mutex
+	email      string
+	token      string
+	gotAuth    string
+	gotQuery   map[string]string
+	gotPaths   []string
+	comment    map[string]any
+	created    map[string]any
+	updated    map[string]any
+	assignee   map[string]any
+	transition map[string]any
 }
 
 func newJiraMock(t *testing.T, email, token string) *jiraMock {
@@ -101,6 +104,16 @@ func newJiraMock(t *testing.T, email, token string) *jiraMock {
 
 	mux.HandleFunc("/rest/api/2/issue/ENG-123", func(w http.ResponseWriter, r *http.Request) {
 		if !guard(w, r) {
+			return
+		}
+		if r.Method == http.MethodPut {
+			raw, _ := io.ReadAll(r.Body)
+			var body map[string]any
+			json.Unmarshal(raw, &body)
+			m.mu.Lock()
+			m.updated = body
+			m.mu.Unlock()
+			w.WriteHeader(http.StatusNoContent)
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
@@ -182,6 +195,55 @@ func newJiraMock(t *testing.T, email, token string) *jiraMock {
 		json.NewEncoder(w).Encode(map[string]any{
 			"id": "10050", "key": "ENG-456", "self": "https://x/rest/api/2/issue/10050",
 		})
+	})
+
+	// 找人：这个接口的响应根就是一个数组，不是对象
+	mux.HandleFunc("/rest/api/3/user/search", func(w http.ResponseWriter, r *http.Request) {
+		if !guard(w, r) {
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode([]any{
+			map[string]any{"accountId": "630db2", "displayName": "小王",
+				"emailAddress": "wang@example.com", "active": true,
+				"avatarUrls": map[string]any{"48x48": "https://noise"}},
+		})
+	})
+
+	mux.HandleFunc("/rest/api/2/issue/ENG-123/transitions", func(w http.ResponseWriter, r *http.Request) {
+		if !guard(w, r) {
+			return
+		}
+		if r.Method == http.MethodPost {
+			raw, _ := io.ReadAll(r.Body)
+			var body map[string]any
+			json.Unmarshal(raw, &body)
+			m.mu.Lock()
+			m.transition = body
+			m.mu.Unlock()
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]any{"transitions": []any{
+			map[string]any{"id": "31", "name": "开始处理", "isAvailable": true,
+				"to": map[string]any{"name": "In Progress", "id": "3"}},
+			map[string]any{"id": "41", "name": "完成", "isAvailable": true,
+				"to": map[string]any{"name": "Done", "id": "10001"}},
+		}})
+	})
+
+	mux.HandleFunc("/rest/api/2/issue/ENG-123/assignee", func(w http.ResponseWriter, r *http.Request) {
+		if !guard(w, r) {
+			return
+		}
+		raw, _ := io.ReadAll(r.Body)
+		var body map[string]any
+		json.Unmarshal(raw, &body)
+		m.mu.Lock()
+		m.assignee = body
+		m.mu.Unlock()
+		w.WriteHeader(http.StatusNoContent)
 	})
 
 	m.srv = httptest.NewTLSServer(mux)
@@ -463,5 +525,131 @@ func TestJiraCreateIssueNeedsWriteSwitch(t *testing.T) {
 	}
 	if m.created != nil {
 		t.Fatal("被拒绝的调用不该真的发出请求")
+	}
+}
+
+// /rest/api/3/user/search 的响应根就是一个数组。没有 Path 声明时整个响应
+// 就是列表，裁剪规则照样生效。
+func TestJiraSearchUsersTopLevelArray(t *testing.T) {
+	m := newJiraMock(t, "you@example.com", "tok-abc-123456")
+	rt, c := m.runtime(t, "tok-abc-123456", false)
+
+	out, _, err := c.Call(context.Background(), rt, "jira_search_users", map[string]any{"query": "wang"})
+	if err != nil {
+		t.Fatalf("找人失败: %v", err)
+	}
+	rows, ok := out.([]any)
+	if !ok || len(rows) != 1 {
+		t.Fatalf("顶层数组响应应当直接变成列表: %#v", out)
+	}
+	u := rows[0].(map[string]any)
+	if u["accountId"] != "630db2" || u["displayName"] != "小王" {
+		t.Errorf("用户内容不对: %v", u)
+	}
+	if _, leaked := u["avatarUrls"]; leaked {
+		t.Error("avatarUrls 应当被裁掉")
+	}
+	if m.gotQuery["maxResults"] != "20" {
+		t.Errorf("maxResults 默认值没发出去: %q", m.gotQuery["maxResults"])
+	}
+}
+
+// 可用流转取决于当前状态和项目工作流，所以必须先查 id 再流转；
+// 目标状态名要跟着出来，否则模型只看到一串 id 不知道哪个是「完成」。
+func TestJiraListTransitions(t *testing.T) {
+	m := newJiraMock(t, "you@example.com", "tok-abc-123456")
+	rt, c := m.runtime(t, "tok-abc-123456", false)
+
+	out, _, err := c.Call(context.Background(), rt, "jira_list_transitions",
+		map[string]any{"issueKey": "ENG-123"})
+	if err != nil {
+		t.Fatalf("查流转失败: %v", err)
+	}
+	rows := out.([]any)
+	if len(rows) != 2 {
+		t.Fatalf("应当有 2 个流转，实际 %d", len(rows))
+	}
+	first := rows[0].(map[string]any)
+	if first["id"] != "31" || first["name"] != "开始处理" || first["to.name"] != "In Progress" {
+		t.Errorf("流转内容不对（目标状态名必须在）: %v", first)
+	}
+}
+
+func TestJiraTransitionIssue(t *testing.T) {
+	m := newJiraMock(t, "you@example.com", "tok-abc-123456")
+	rt, c := m.runtime(t, "tok-abc-123456", true)
+
+	out, _, err := c.Call(context.Background(), rt, "jira_transition_issue", map[string]any{
+		"issueKey": "ENG-123", "transitionId": "41",
+	})
+	if err != nil {
+		t.Fatalf("流转失败: %v", err)
+	}
+	tr, ok := m.transition["transition"].(map[string]any)
+	if !ok || tr["id"] != "41" {
+		t.Errorf(`body 应当是 {"transition":{"id":"41"}}: %v`, m.transition)
+	}
+	// 204 无响应体时要给一个明确的成功结果，不能是 null
+	if res, ok := out.(map[string]any); !ok || res["ok"] != true {
+		t.Errorf("204 应当回一个成功对象: %#v", out)
+	}
+}
+
+// 改事项只发传了的字段：把没传的也发出去（哪怕是空值）会把原有内容清掉。
+func TestJiraUpdateIssueOnlySendsGivenFields(t *testing.T) {
+	m := newJiraMock(t, "you@example.com", "tok-abc-123456")
+	rt, c := m.runtime(t, "tok-abc-123456", true)
+
+	if _, _, err := c.Call(context.Background(), rt, "jira_update_issue", map[string]any{
+		"issueKey": "ENG-123", "summary": "改过的标题",
+	}); err != nil {
+		t.Fatalf("改事项失败: %v", err)
+	}
+	fields := m.updated["fields"].(map[string]any)
+	if fields["summary"] != "改过的标题" {
+		t.Errorf("summary 没发出去: %v", fields)
+	}
+	for _, k := range []string{"description", "priority"} {
+		if v, present := fields[k]; present {
+			t.Errorf("没传的 %s 不该出现（会清掉原内容）: %#v", k, v)
+		}
+	}
+}
+
+func TestJiraAssignIssue(t *testing.T) {
+	m := newJiraMock(t, "you@example.com", "tok-abc-123456")
+	rt, c := m.runtime(t, "tok-abc-123456", true)
+
+	if _, _, err := c.Call(context.Background(), rt, "jira_assign_issue", map[string]any{
+		"issueKey": "ENG-123", "accountId": "630db2",
+	}); err != nil {
+		t.Fatalf("指派失败: %v", err)
+	}
+	if m.assignee["accountId"] != "630db2" {
+		t.Errorf(`body 应当是 {"accountId":"630db2"}: %v`, m.assignee)
+	}
+}
+
+// 五个新工具里三个是写操作，写开关关着时一个都不能发出去。
+func TestJiraWriteToolsAllGated(t *testing.T) {
+	m := newJiraMock(t, "you@example.com", "tok-abc-123456")
+	rt, c := m.runtime(t, "tok-abc-123456", false)
+
+	cases := []struct {
+		tool string
+		args map[string]any
+	}{
+		{"jira_update_issue", map[string]any{"issueKey": "ENG-123", "summary": "x"}},
+		{"jira_assign_issue", map[string]any{"issueKey": "ENG-123", "accountId": "630db2"}},
+		{"jira_transition_issue", map[string]any{"issueKey": "ENG-123", "transitionId": "31"}},
+	}
+	for _, tc := range cases {
+		if _, _, err := c.Call(context.Background(), rt, tc.tool, tc.args); err == nil ||
+			!strings.Contains(err.Error(), "写开关") {
+			t.Errorf("%s 应当被写开关拦下，实际: %v", tc.tool, err)
+		}
+	}
+	if m.updated != nil || m.assignee != nil || m.transition != nil {
+		t.Error("被拒绝的调用一个都不该发出请求")
 	}
 }

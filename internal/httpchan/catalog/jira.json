@@ -1,7 +1,7 @@
 {
   "id": "jira",
   "name": "Jira",
-  "version": 2,
+  "version": 3,
   "icon": "🎫",
   "summary": "Jira Cloud REST API · 邮箱 + API Token",
   "tags": [
@@ -173,6 +173,64 @@
       }
     },
     {
+      "name": "jira_search_users",
+      "title": "找人",
+      "description": "按姓名或邮箱片段搜 Jira 用户，返回每个人的 accountId。Jira 里指派负责人要的是 accountId，不是显示名也不是邮箱，所以指派给别人之前必须先用它查；指派给自己用 jira_whoami。",
+      "readOnly": true,
+      "method": "GET",
+      "path": "/rest/api/3/user/search",
+      "params": [
+        {
+          "name": "query",
+          "in": "query",
+          "required": true,
+          "description": "姓名或邮箱的片段，如 zhang 或 @example.com"
+        },
+        {
+          "name": "maxResults",
+          "in": "query",
+          "type": "number",
+          "default": "20",
+          "description": "返回几个，最大 50"
+        }
+      ],
+      "result": {
+        "limit": 50,
+        "fields": [
+          "accountId",
+          "displayName",
+          "emailAddress",
+          "active"
+        ]
+      }
+    },
+    {
+      "name": "jira_list_transitions",
+      "title": "列出可用流转",
+      "description": "列出一条事项当前能流转到哪些状态，返回每个流转的 id 和目标状态名。改状态必须先用它查 —— 可用流转取决于事项当前状态和项目工作流，不是固定的几个，而 jira_transition_issue 要的是这里的 id。",
+      "readOnly": true,
+      "method": "GET",
+      "path": "/rest/api/2/issue/{issueKey}/transitions",
+      "params": [
+        {
+          "name": "issueKey",
+          "in": "path",
+          "required": true,
+          "description": "事项键，如 SCRUM-1"
+        }
+      ],
+      "result": {
+        "path": "transitions",
+        "limit": 50,
+        "fields": [
+          "id",
+          "name",
+          "to.name",
+          "isAvailable"
+        ]
+      }
+    },
+    {
       "name": "jira_get_issue",
       "title": "读取事项详情",
       "description": "读取一条 Jira 事项的完整内容：标题、描述正文、状态、负责人、报告人、优先级、标签和时间。事项键从 jira_search_issues 来，用户直接给了键（如 ENG-123）也可以。",
@@ -302,6 +360,86 @@
           "id"
         ]
       }
+    },
+    {
+      "name": "jira_update_issue",
+      "title": "修改事项",
+      "description": "改一条已有事项的标题、描述或优先级。只会改你传了的字段，没传的保持原样，所以至少要传一个要改的字段。改动对团队可见并触发通知。改状态不要用这个，用 jira_transition_issue；改负责人用 jira_assign_issue。",
+      "method": "PUT",
+      "path": "/rest/api/2/issue/{issueKey}",
+      "params": [
+        {
+          "name": "issueKey",
+          "in": "path",
+          "required": true,
+          "description": "事项键，如 SCRUM-1"
+        },
+        {
+          "name": "summary",
+          "in": "body",
+          "bodyPath": "fields.summary",
+          "description": "新标题；不改就不要传"
+        },
+        {
+          "name": "description",
+          "in": "body",
+          "bodyPath": "fields.description",
+          "description": "新的描述正文，纯文本；会整段替换原描述，不是追加"
+        },
+        {
+          "name": "priorityName",
+          "in": "body",
+          "bodyPath": "fields.priority.name",
+          "description": "新优先级名，如 High；项目没启用优先级字段时不要填"
+        }
+      ],
+      "result": {}
+    },
+    {
+      "name": "jira_assign_issue",
+      "title": "指派负责人",
+      "description": "把一条事项指派给某个人。accountId 从 jira_search_users 查（指给自己用 jira_whoami 返回的 accountId）。被指派的人会收到通知。",
+      "method": "PUT",
+      "path": "/rest/api/2/issue/{issueKey}/assignee",
+      "params": [
+        {
+          "name": "issueKey",
+          "in": "path",
+          "required": true,
+          "description": "事项键，如 SCRUM-1"
+        },
+        {
+          "name": "accountId",
+          "in": "body",
+          "bodyPath": "accountId",
+          "required": true,
+          "description": "负责人的 Atlassian 账号 ID，从 jira_search_users 或 jira_whoami 来"
+        }
+      ],
+      "result": {}
+    },
+    {
+      "name": "jira_transition_issue",
+      "title": "流转事项状态",
+      "description": "把一条事项推进到另一个状态（比如开始处理、标记完成）。transitionId 必须来自 jira_list_transitions —— 直接猜 id 或传状态名都会被拒。状态变更会触发团队通知，并可能触发项目里配置的自动化规则，所以执行前应当把事项和目标状态给用户确认。",
+      "method": "POST",
+      "path": "/rest/api/2/issue/{issueKey}/transitions",
+      "params": [
+        {
+          "name": "issueKey",
+          "in": "path",
+          "required": true,
+          "description": "事项键，如 SCRUM-1"
+        },
+        {
+          "name": "transitionId",
+          "in": "body",
+          "bodyPath": "transition.id",
+          "required": true,
+          "description": "流转 id，来自 jira_list_transitions"
+        }
+      ],
+      "result": {}
     },
     {
       "name": "jira_add_comment",
