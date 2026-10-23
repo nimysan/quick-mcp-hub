@@ -28,7 +28,7 @@ func readOnly() *mcp.ToolAnnotations {
 }
 
 type listRecentIn struct {
-	Account string `json:"channel_account,omitempty" jsonschema:"用哪个邮箱账号；只配了一个时可不填"`
+	Account string `json:"channel_account,omitempty" jsonschema:"用哪个邮箱，填完整邮箱地址；只配了一个邮箱时可以不填"`
 	Limit   int    `json:"limit,omitempty" jsonschema:"返回最近几封，默认 10，最大 50"`
 	Mailbox string `json:"mailbox,omitempty" jsonschema:"邮箱文件夹，默认 INBOX"`
 }
@@ -40,7 +40,7 @@ type listOut struct {
 }
 
 type searchIn struct {
-	Account string `json:"channel_account,omitempty" jsonschema:"用哪个邮箱账号；只配了一个时可不填"`
+	Account string `json:"channel_account,omitempty" jsonschema:"用哪个邮箱，填完整邮箱地址；只配了一个邮箱时可以不填"`
 	From    string `json:"from,omitempty" jsonschema:"按发件人过滤，可填地址片段"`
 	Keyword string `json:"keyword,omitempty" jsonschema:"全文关键词，匹配主题与正文"`
 	Since   string `json:"since,omitempty" jsonschema:"起始日期，格式 YYYY-MM-DD"`
@@ -51,13 +51,13 @@ type searchIn struct {
 }
 
 type readIn struct {
-	Account string `json:"channel_account,omitempty" jsonschema:"用哪个邮箱账号；只配了一个时可不填"`
+	Account string `json:"channel_account,omitempty" jsonschema:"用哪个邮箱，填完整邮箱地址；只配了一个邮箱时可以不填"`
 	UID     int    `json:"uid" jsonschema:"邮件 UID，来自 list_recent 或 search_mail 的结果"`
 	Mailbox string `json:"mailbox,omitempty" jsonschema:"邮箱文件夹，默认 INBOX"`
 }
 
 type sendIn struct {
-	Account string   `json:"channel_account,omitempty" jsonschema:"用哪个邮箱账号发；只配了一个时可不填"`
+	Account string   `json:"channel_account,omitempty" jsonschema:"用哪个邮箱发，填完整邮箱地址；只配了一个邮箱时可以不填"`
 	To      []string `json:"to" jsonschema:"收件人地址列表"`
 	Cc      []string `json:"cc,omitempty" jsonschema:"抄送地址列表"`
 	Subject string   `json:"subject" jsonschema:"邮件主题"`
@@ -96,18 +96,20 @@ func RegisterMail(s *mcp.Server, cfgs []config.Config) int {
 	pick := func(account string) (config.Config, error) {
 		return pickMail(byAccount, accounts, account)
 	}
-	// 描述里点明账号情况，模型才分得清调的是哪个邮箱。
+	// 描述里点明账号情况。写成一句能据以行动的话，而不是括号里的备注：
+	// 模型要能直接读出「要不要传账号、可选哪几个」。
 	suffix := func() string {
 		if len(accounts) == 1 {
-			return fmt.Sprintf("（邮箱 %s）", accounts[0])
+			return fmt.Sprintf(" 当前邮箱是 %s。", accounts[0])
 		}
-		return fmt.Sprintf("（用 channel_account 选邮箱：%s）", strings.Join(accounts, " / "))
+		return fmt.Sprintf(" 配了 %d 个邮箱，必须用 channel_account 指定一个：%s。",
+			len(accounts), strings.Join(accounts, "、"))
 	}()
 
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "list_recent",
 		Title:       "列出最近邮件",
-		Description: "列出邮箱里最近的若干封邮件，只返回 UID、发件人、主题、时间、大小等信头摘要，不含正文。要读正文用 read_mail。" + suffix,
+		Description: "查看邮箱里最近收到的邮件，按时间从新到旧。每封返回发件人、主题、时间、是否未读和一个 UID，不含正文；要看某封写了什么，拿这个 UID 调 read_mail。用它回答「我最近有什么邮件」这类问题；已经知道要找谁或找什么内容时用 search_mail 更快。" + suffix,
 		Annotations: readOnly(),
 	}, func(_ context.Context, _ *mcp.CallToolRequest, in listRecentIn) (*mcp.CallToolResult, listOut, error) {
 		cfg, err := pick(in.Account)
@@ -125,7 +127,7 @@ func RegisterMail(s *mcp.Server, cfgs []config.Config) int {
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "search_mail",
 		Title:       "检索邮件",
-		Description: "按发件人、关键词、日期范围、未读状态检索邮件，返回信头摘要。多个条件之间是「且」关系。" + suffix,
+		Description: "在邮箱里找特定的邮件。可以按发件人、关键词（同时匹配主题和正文）、日期范围、是否未读来筛，给多个条件时取交集。返回的是邮件列表（含 UID），不是正文——要正文再用 read_mail。" + suffix,
 		Annotations: readOnly(),
 	}, func(_ context.Context, _ *mcp.CallToolRequest, in searchIn) (*mcp.CallToolResult, listOut, error) {
 		cfg, err := pick(in.Account)
@@ -150,7 +152,7 @@ func RegisterMail(s *mcp.Server, cfgs []config.Config) int {
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "read_mail",
 		Title:       "读取邮件正文",
-		Description: "按 UID 读取一封邮件的纯文本正文（自动做 GB2312/GBK 等字符集解码），并列出附件文件名。用 BODY.PEEK 读取，不会把邮件标记为已读。" + suffix,
+		Description: "读取一封邮件的正文内容和附件文件名。需要 UID，从 list_recent 或 search_mail 的结果里取。只读取不下载附件，也不会把邮件变成已读。正文过长会被截断。" + suffix,
 		Annotations: readOnly(),
 	}, func(_ context.Context, _ *mcp.CallToolRequest, in readIn) (*mcp.CallToolResult, *mailbox.Message, error) {
 		cfg, err := pick(in.Account)
@@ -172,9 +174,9 @@ func RegisterMail(s *mcp.Server, cfgs []config.Config) int {
 		return 3
 	}
 
-	desc := "用当前账号发送一封邮件。这是不可逆动作：邮件一旦发出无法撤回。" + suffix
+	desc := "发一封邮件出去。这是不可逆动作：发出后无法撤回、无法修改，所以发送前应当先把收件人、主题和正文给用户确认。" + suffix
 	if len(sendable) < len(accounts) {
-		desc += fmt.Sprintf("注意：只有这些邮箱打开了发信开关：%s。", strings.Join(sendable, " / "))
+		desc += fmt.Sprintf(" 其中只有 %s 允许发信，其他邮箱会被拒绝。", strings.Join(sendable, "、"))
 	}
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "send_mail",

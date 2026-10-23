@@ -114,17 +114,21 @@ func pickRuntime(byAccount map[string]httpchan.Runtime, accounts []string, args 
 	return rt, nil
 }
 
-// describe 在声明的描述后面补上账号情况，模型才分得清调的是哪个。
+// describe 在声明的描述后面补上账号情况。
+//
+// 写成模型能据以行动的句子，而不是括号里的开发备注：它要能直接读出
+// 「要不要传账号、可选哪几个、哪些账号会被拒」。
 func describe(spec httpchan.Spec, t httpchan.Tool, accounts, writable []string) string {
 	var b strings.Builder
 	b.WriteString(t.Description)
 	if len(accounts) == 1 {
-		fmt.Fprintf(&b, "（%s 账号 %s）", spec.Name, accounts[0])
+		fmt.Fprintf(&b, " 当前 %s 账号是 %s。", spec.Name, accounts[0])
 	} else {
-		fmt.Fprintf(&b, "（%s，用 %s 选账号：%s）", spec.Name, accountParam, strings.Join(accounts, " / "))
+		fmt.Fprintf(&b, " 配了 %d 个 %s 账号，必须用 %s 指定一个：%s。",
+			len(accounts), spec.Name, accountParam, strings.Join(accounts, "、"))
 	}
 	if !t.ReadOnly && len(writable) < len(accounts) {
-		fmt.Fprintf(&b, "注意：只有这些账号打开了写入开关：%s。", strings.Join(writable, " / "))
+		fmt.Fprintf(&b, " 其中只有 %s 允许写入，其他账号会被拒绝。", strings.Join(writable, "、"))
 	}
 	return b.String()
 }

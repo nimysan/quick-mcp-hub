@@ -103,11 +103,17 @@ func TestDescribeNamesWritableAccounts(t *testing.T) {
 	spec := httpchan.Spec{ID: "demo", Name: "Demo"}
 	tool := httpchan.Tool{Name: "demo_create", Description: "建一条。"}
 	got := describe(spec, tool, []string{"a", "b"}, []string{"b"})
-	if !strings.Contains(got, "只有这些账号打开了写入开关：b") {
+	if !strings.Contains(got, "只有 b 允许写入") {
 		t.Errorf("描述里没点出可写账号: %s", got)
 	}
 	ro := describe(spec, httpchan.Tool{Description: "查一条。", ReadOnly: true}, []string{"a"}, nil)
-	if strings.Contains(ro, "写入开关") {
-		t.Errorf("只读工具不该提写入开关: %s", ro)
+	if strings.Contains(ro, "允许写入") {
+		t.Errorf("只读工具不该提写入权限: %s", ro)
+	}
+	// 描述是写给模型的：实现细节不该出现在里面。
+	for _, bad := range []string{"开关", "字段", "参数名"} {
+		if strings.Contains(ro, bad) {
+			t.Errorf("只读工具的描述里混进了开发视角的词 %q: %s", bad, ro)
+		}
 	}
 }
