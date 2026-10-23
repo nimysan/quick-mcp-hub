@@ -136,15 +136,23 @@ func main() {
 	for _, err := range httpchan.Errors() {
 		log.Printf("渠道目录里有一条声明无效，已跳过: %v", err)
 	}
-	runtimes, err := mgr.HTTPRuntimes()
+	runtimes, err := mgr.HTTPGroups()
 	if err != nil {
 		log.Printf("读取渠道配置失败: %v", err)
 	}
-	for _, rt := range runtimes {
-		n := tools.RegisterHTTP(server, rt)
+	for _, g := range runtimes {
+		n := tools.RegisterHTTP(server, g.Runtimes)
 		registered += n
-		log.Printf("%s 渠道：账号 %s，注册 %d 个工具，写入%s",
-			rt.Spec.Name, rt.Account, n, enabledText(rt.AllowWrite()))
+		accounts := make([]string, 0, len(g.Runtimes))
+		for _, rt := range g.Runtimes {
+			label := rt.Account
+			if rt.AllowWrite() {
+				label += "(可写)"
+			}
+			accounts = append(accounts, label)
+		}
+		log.Printf("%s 渠道：%d 个账号 [%s]，注册 %d 个工具",
+			g.Spec.Name, len(g.Runtimes), strings.Join(accounts, " "), n)
 	}
 
 	if registered == 0 {

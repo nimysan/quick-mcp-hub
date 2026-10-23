@@ -145,6 +145,10 @@ type Spec struct {
 // 描述符就会自动长出这个开关，默认关。
 const AllowWriteField = "allowWrite"
 
+// ReservedAccountParam 是多实例时由工具层自动加上的参数名，
+// 渠道声明里不能用它做业务参数，否则账号分派会被业务值顶掉。
+const ReservedAccountParam = "channel_account"
+
 // HasWriteTools 报告这个 spec 是否含会改动外部系统的工具。
 func (s Spec) HasWriteTools() bool {
 	for _, t := range s.Tools {
@@ -260,6 +264,9 @@ func (s Spec) Validate() error {
 		for _, p := range t.Params {
 			if !paramNameRe.MatchString(p.Name) {
 				return fmt.Errorf("%s/%s: 参数名 %q 不合法", s.Type, t.Name, p.Name)
+			}
+			if p.Name == ReservedAccountParam {
+				return fmt.Errorf("%s/%s: 参数名 %s 是保留名（多账号分派用）", s.Type, t.Name, p.Name)
 			}
 			if pseen[p.Name] {
 				return fmt.Errorf("%s/%s: 参数 %q 重复", s.Type, t.Name, p.Name)

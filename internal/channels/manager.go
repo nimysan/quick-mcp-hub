@@ -153,13 +153,24 @@ func (m *Manager) Identify(ctx context.Context, typ, account string, values map[
 	return new(httpchan.Client).Test(ctx, rt)
 }
 
-// HTTPRuntimes 把所有已启用的声明式渠道装配成运行态，供 MCP 启动时注册工具用。
-func (m *Manager) HTTPRuntimes() ([]httpchan.Runtime, error) {
+// HTTPGroup 是同一个声明式渠道类型下的全部已启用实例。
+//
+// 按类型分组是为了工具注册：两个 GitHub 账号不应该变成两套同名工具
+// （后注册的会覆盖前一个），而是一套工具加一个 account 参数。
+type HTTPGroup struct {
+	Spec     httpchan.Spec
+	Runtimes []httpchan.Runtime
+}
+
+// HTTPGroups 把所有已启用的声明式渠道按类型分组，供 MCP 启动时注册工具用。
+// 分组顺序和每组内的实例顺序都来自 store 的排序，所以是稳定的。
+func (m *Manager) HTTPGroups() ([]HTTPGroup, error) {
 	views, err := m.List()
 	if err != nil {
 		return nil, err
 	}
-	var out []httpchan.Runtime
+	var order []string
+	byType := map[string][]httpchan.Runtime{}
 	for _, v := range views {
 		if v.Descriptor.Kind != KindHTTP || !v.Instance.Enabled {
 			continue
@@ -168,7 +179,15 @@ func (m *Manager) HTTPRuntimes() ([]httpchan.Runtime, error) {
 		if err != nil {
 			return nil, err
 		}
-		out = append(out, rt)
+		if _, seen := byType[v.Instance.Type]; !seen {
+			order = append(order, v.Instance.Type)
+		}
+		byType[v.Instance.Type] = append(byType[v.Instance.Type], rt)
+	}
+	out := make([]HTTPGroup, 0, len(order))
+	for _, typ := range order {
+		rts := byType[typ]
+		out = append(out, HTTPGroup{Spec: rts[0].Spec, Runtimes: rts})
 	}
 	return out, nil
 }
