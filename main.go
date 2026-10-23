@@ -124,12 +124,41 @@ func main() {
 	}, nil)
 
 	registered := 0
+
+	// 邮件渠道：以页面里保存的配置为准，环境变量只作兜底 —— 老的 Quick
+	// connector 配置是靠 MCPHUB_MAIL_* 跑的，不能因为改成读配置文件就把
+	// 它们弄坏。同一个邮箱两边都有时，页面配置优先。
+	mailCfgs, err := mgr.MailConfigs()
+	if err != nil {
+		log.Printf("读取邮件渠道配置失败: %v", err)
+	}
 	if mailErr == nil {
-		tools.Register(server, cfg)
-		registered++
-		log.Printf("邮件渠道：%s，账号 %s，发信%s", cfg.Provider, cfg.User, enabledText(cfg.AllowSend))
+		dup := false
+		for _, c := range mailCfgs {
+			if c.User == cfg.User {
+				dup = true
+				break
+			}
+		}
+		if !dup {
+			mailCfgs = append(mailCfgs, cfg)
+			log.Printf("邮件渠道（来自环境变量）：账号 %s", cfg.User)
+		}
+	}
+	if n := tools.RegisterMail(server, mailCfgs); n > 0 {
+		registered += n
+		labels := make([]string, 0, len(mailCfgs))
+		for _, c := range mailCfgs {
+			label := c.User
+			if c.AllowSend {
+				label += "(可发信)"
+			}
+			labels = append(labels, label)
+		}
+		log.Printf("邮件渠道：%d 个账号 [%s]，注册 %d 个工具",
+			len(mailCfgs), strings.Join(labels, " "), n)
 	} else {
-		log.Printf("邮件渠道未注册：%v", mailErr)
+		log.Printf("邮件渠道未注册：页面里没有邮件渠道，也没有 MCPHUB_MAIL_USER（%v）", mailErr)
 	}
 
 	// 声明式 HTTPS 渠道来自渠道配置（页面里保存的），凭据在系统密码管理器里。

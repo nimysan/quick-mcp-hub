@@ -109,7 +109,27 @@ export MCPHUB_MAIL_USER='12345@qq.com'
 输出会报凭据来自哪里（`keychain` 还是 `env:XXX`），以及 IMAP 登录和 SMTP 认证的
 结果，全通返回 0。
 
-## 接入 Amazon Quick（本地 connector）
+## 接到 MCP 客户端
+
+渠道在页面上配好之后，客户端那边**只需要一个二进制路径**：没有环境变量、
+没有密码。账号在 `channels.json` 里，凭据在系统密码管理器里，一个 server
+把所有渠道的工具一起暴露出去。
+
+```json
+{
+  "mcpServers": {
+    "mcp-hub": {
+      "command": "/绝对路径/mcp-hub",
+      "args": []
+    }
+  }
+}
+```
+
+这份 `mcpServers` 片段适用于 Claude Desktop、Cursor、Cline、Kiro
+（`~/.kiro/settings/mcp.json`）等任何读这个格式的客户端。
+
+### Amazon Quick（本地 connector）
 
 Desktop App → Customize → Connectors → Create local connector → Local：
 
@@ -117,29 +137,21 @@ Desktop App → Customize → Connectors → Create local connector → Local：
 |---|---|
 | Command | 二进制的绝对路径，如 `C:\Tools\mcp-hub.exe` |
 | Arguments | 留空 |
-| Environment variables | `MCPHUB_MAIL_USER`（授权码走密码管理器，不填这里） |
+| Environment variables | 留空 |
 
-或用 Import 导入配置文件：
-
-```json
-{
-  "mcpServers": {
-    "channels": {
-      "command": "C:\\Tools\\mcp-hub.exe",
-      "args": [],
-      "env": {
-        "MCPHUB_MAIL_USER": "12345@qq.com"
-      }
-    }
-  }
-}
-```
+也可以用同一个对话框的 Import 导入上面那段 JSON。
 
 Windows 上**不需要** `cmd /c` 包一层 —— 那是 `npx` 这类 `.cmd` 垫片才需要的，
 这里 Command 直接就是一个 PE 可执行文件。
 
 Quick 的代码沙箱没有公网出口，所有对外访问都必须走 connector；
 本程序是独立 OS 进程，不在那个沙箱里，所以 IMAP/SMTP 直连可用。
+注意 Quick 不会自动刷新工具列表：页面上新增渠道后要手动点一次 Sync。
+
+### 环境变量兜底（可选）
+
+`MCPHUB_MAIL_*` 那套环境变量仍然有效，用于还没迁到页面配置的老 connector。
+同一个邮箱两边都有时，页面配置优先。
 
 ## 声明式 HTTPS 渠道
 
@@ -302,9 +314,10 @@ hub 的写开关只能决定「不把写工具给模型」，决定不了那个�
 - Windows 控制台代码页可能让 stderr 上的中文日志显示成乱码，不影响功能。
 - 渠道目录只有内置一层（`go:embed`）。远端下发 + 验签、用户私有目录这两层还没做，
   但 `Parse` / `Validate` 已经是三层共用的入口，设计见 `docs/server-design.md`。
-- 邮件渠道仍从环境变量读配置，页面里保存的邮件渠道还没接到 MCP 注册链路上，
-  也还没有多账号分派；声明式 HTTPS 渠道两件都已具备。
 - 客户端不会自动刷新工具列表：在页面里新增渠道后，Amazon Quick 那边要手动点一次 Sync。
+- 邮件工具的 `channel_account` 参数在只配了一个邮箱时也会出现在 schema 里（可不填）：
+  邮件工具走的是泛型 `AddTool`，schema 由结构体推断，没法按账号数量动态增删。
+  声明式渠道是动态生成 schema 的，单账号时不会出现这个参数。
 
 ## 依赖
 
