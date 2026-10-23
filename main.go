@@ -26,10 +26,12 @@ import (
 	"os/signal"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"golang.org/x/term"
 
+	"github.com/nimysan/mcp-hub/internal/catalog"
 	"github.com/nimysan/mcp-hub/internal/channels"
 	"github.com/nimysan/mcp-hub/internal/config"
 	"github.com/nimysan/mcp-hub/internal/credstore"
@@ -52,6 +54,9 @@ func main() {
 		uiPort      = flag.Int("ui-port", 7801, "渠道配置页面端口，默认 7801")
 		integration = flag.String("integration", config.IntegrationMail, "凭据所属集成名，默认 mail")
 		account     = flag.String("account", "", "凭据所属账号，默认取 MCPHUB_MAIL_USER")
+		catList     = flag.Bool("catalog-list", false, "列出当前生效的渠道声明及其来源层后退出")
+		catValidate = flag.String("catalog-validate", "", "校验一份渠道声明文件（JSON）后退出")
+		catSync     = flag.String("catalog-sync", "", "从该 https 地址抓取并验签远端渠道目录，写入本地缓存后退出")
 		showVersion = flag.Bool("version", false, "打印版本号后退出")
 	)
 	flag.Parse()
@@ -75,6 +80,16 @@ func main() {
 		} else if n > 0 {
 			log.Printf("已把 %d 条凭据从 %s 迁移到 %s", n, old, config.Namespace)
 		}
+	}
+
+	// 目录子命令不碰凭据，也不联网（除 -catalog-sync），先处理掉。
+	switch {
+	case *catList:
+		os.Exit(runCatalogList())
+	case *catValidate != "":
+		os.Exit(runCatalogValidate(*catValidate))
+	case *catSync != "":
+		os.Exit(runCatalogSync(*catSync))
 	}
 
 	// 凭据管理子命令不需要邮箱配置，先处理掉。
@@ -195,6 +210,107 @@ func main() {
 	if err := server.Run(ctx, &mcp.StdioTransport{}); err != nil {
 		log.Fatalf("服务退出: %v", err)
 	}
+}
+
+func runCatalogList() int {
+	c := catalog.Load(config.Namespace)
+	dir, _ := catalog.Dir(config.Namespace)
+	fmt.Printf("本地目录文件夹：%s\n", dir)
+	if len(catalog.TrustedKeys) == 0 {
+		fmt.Println("验签公钥：未内置 —— 这个构建会拒绝一切远端目录")
+	} else {
+		fmt.Printf("验签公钥：已内置 %d 个\n", len(catalog.TrustedKeys))
+	}
+	fmt.Println()
+
+	entries := c.Entries()
+	fmt.Printf("%-12s %-4s %-9s %-16s %s\n", "渠道", "版本", "来源", "文件", "名称")
+	for _, e := range entries {
+		shadow := ""
+		if len(e.Shadowed) > 0 {
+			parts := make([]string, 0, len(e.Shadowed))
+			for _, l := range e.Shadowed {
+				parts = append(parts, string(l))
+			}
+			shadow = "（压住了 " + strings.Join(parts, "/") + "）"
+		}
+		fmt.Printf("%-12s v%-3d %-9s %-16s %s%s\n",
+			e.Spec.ID, e.Spec.Version, e.Layer, e.File, e.Spec.Name, shadow)
+	}
+	fmt.Printf("\n共 %d 个渠道\n", len(entries))
+
+	for _, n := range c.Notes() {
+		fmt.Printf("提示：%s\n", n)
+	}
+	for _, err := range c.Errors() {
+		fmt.Fprintf(os.Stderr, "跳过：%v\n", err)
+	}
+	if len(c.Errors()) > 0 {
+		return 1
+	}
+	return 0
+}
+
+func runCatalogValidate(path string) int {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "读取失败: %v\n", err)
+		return 2
+	}
+	// 和内置层、远端下发走的是同一个入口，所以这里过了那边也会过。
+	s, err := httpchan.Parse(data)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "不合法: %v\n", err)
+		return 1
+	}
+	fmt.Printf("✅ %s v%d（%s）\n", s.ID, s.Version, s.Name)
+	fmt.Printf("   标签：%s\n", strings.Join(s.Tags, " "))
+	fmt.Printf("   凭据：%s/%s（账号字段 %s，密码字段 %s）\n",
+		config.Namespace, s.Integration, s.Account.Name, s.Secret.Name)
+	if s.BaseURL != "" {
+		fmt.Printf("   接入点：%s\n", s.BaseURL)
+	} else {
+		fmt.Printf("   接入点：由用户填写字段 %s\n", s.BaseURLField)
+	}
+	if s.PostReads {
+		fmt.Printf("   ⚠ 声明了 postReads：有只读工具是 POST，方法本身不能作证，需人工复核\n")
+	}
+	fmt.Printf("   工具 %d 个：\n", len(s.Tools))
+	for _, t := range s.Tools {
+		kind := "读"
+		if !t.ReadOnly {
+			kind = "写"
+		}
+		fmt.Printf("     [%s] %-24s %-5s %s\n", kind, t.Name, t.Method, t.Path)
+	}
+	return 0
+}
+
+func runCatalogSync(url string) int {
+	dir, err := catalog.Dir(config.Namespace)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "%v\n", err)
+		return 2
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	doc, path, err := catalog.Sync(ctx, url, dir)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "同步失败: %v\n", err)
+		return 1
+	}
+	specs := 0
+	for range doc.Connectors {
+		specs++
+	}
+	fmt.Printf("已同步 %d 个渠道声明到 %s\n", specs, path)
+	fmt.Printf("目录生成时间：%s，签名密钥 %s\n",
+		doc.GeneratedAt.Local().Format("2006-01-02 15:04:05"), doc.Signature.KeyID)
+	if len(doc.Revoked) > 0 {
+		fmt.Printf("其中 %d 条下架记录\n", len(doc.Revoked))
+	}
+	fmt.Println("用 -catalog-list 看合并后的结果。")
+	return 0
 }
 
 func resolveAccount(flagVal string) string {

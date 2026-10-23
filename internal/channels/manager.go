@@ -194,7 +194,7 @@ func (m *Manager) HTTPGroups() ([]HTTPGroup, error) {
 
 // httpRuntime 把一个声明式渠道（已保存实例或表单临时值）变成 httpchan.Runtime。
 func (m *Manager) httpRuntime(d Descriptor, account string, values map[string]string) (httpchan.Runtime, error) {
-	spec, ok := httpchan.ByID(d.Type)
+	spec, ok := SpecByID(d.Type)
 	if !ok {
 		return httpchan.Runtime{}, fmt.Errorf("渠道 %s 的声明已不在目录里", d.Type)
 	}

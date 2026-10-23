@@ -9,9 +9,24 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/nimysan/mcp-hub/internal/catalog"
+	"github.com/nimysan/mcp-hub/internal/config"
 	"github.com/nimysan/mcp-hub/internal/httpchan"
 	"github.com/nimysan/mcp-hub/internal/mailprovider"
 )
+
+// specs 返回当前生效的声明式渠道。来源是 catalog 的三层合并结果
+// （本地 > 远端 > 内置），而不是只有编译进来的那层 —— 远端下发的渠道
+// 必须和内置的一样出现在页面上。
+//
+// 每次调用都重读磁盘：配置页面是常驻进程，用户往 catalog 目录里放一份声明
+// 后应当刷新页面就能看到，不该要求重启。
+func specs() []httpchan.Spec { return catalog.Load(config.Namespace).Specs() }
+
+// SpecByID 按渠道标识取生效的声明。
+func SpecByID(id string) (httpchan.Spec, bool) {
+	return catalog.Load(config.Namespace).ByID(id)
+}
 
 // FieldKind 决定页面上渲染成什么控件，以及值怎么存。
 type FieldKind string
@@ -272,7 +287,7 @@ var planned = []Descriptor{
 
 // All 返回全部渠道描述符，可用的在前。
 func All() []Descriptor {
-	specs := httpchan.All()
+	specs := specs()
 	out := make([]Descriptor, 0, len(mailprovider.All)+len(specs)+len(planned))
 	for _, p := range mailprovider.All {
 		out = append(out, mailDescriptor(p))
