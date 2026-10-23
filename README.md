@@ -344,8 +344,13 @@ hub 的写开关只能决定「不把写工具给模型」，决定不了那个�
 [API Token](https://id.atlassian.com/manage-profile/security/api-tokens)，认证是
 Basic(邮箱:Token)。Jira Server / Data Center 自建版接口不完全相同，这份声明没覆盖。
 
-六个工具：`jira_whoami`、`jira_list_projects`、`jira_search_issues`（JQL）、
-`jira_get_issue`、`jira_list_comments`，以及写开关控制的 `jira_add_comment`。
+八个工具：`jira_whoami`、`jira_list_projects`、`jira_search_issues`（JQL）、
+`jira_list_issue_types`、`jira_get_issue`、`jira_list_comments`，以及写开关控制的
+`jira_create_issue` 和 `jira_add_comment`。
+
+`jira_list_issue_types` 是 `jira_create_issue` 的前置：事项类型是**按项目配置**的，
+通用习惯里的 Story / Bug 不一定存在（实测一个新建的 Scrum 项目只有
+Epic / Subtask / Feature / Task），类型名写错 Jira 会直接拒。
 
 两个决定值得记下来，它们都来自 Atlassian 的接口现状：
 

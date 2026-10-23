@@ -31,6 +31,7 @@ type jiraMock struct {
 	gotQuery map[string]string
 	gotPaths []string
 	comment  map[string]any
+	created  map[string]any
 }
 
 func newJiraMock(t *testing.T, email, token string) *jiraMock {
@@ -144,6 +145,42 @@ func newJiraMock(t *testing.T, email, token string) *jiraMock {
 				"created": "2026-10-21T09:00:00.000+0800",
 				"updated": "2026-10-21T09:00:00.000+0800",
 			}},
+		})
+	})
+
+	mux.HandleFunc("/rest/api/2/issue/createmeta/SCRUM/issuetypes", func(w http.ResponseWriter, r *http.Request) {
+		if !guard(w, r) {
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]any{
+			"total":      2,
+			"maxResults": 50,
+			"issueTypes": []any{
+				map[string]any{"id": "10004", "name": "Task", "subtask": false,
+					"description": "Tasks track small, distinct pieces of work.",
+					"iconUrl":     "https://noise/avatar"},
+				map[string]any{"id": "10002", "name": "Subtask", "subtask": true,
+					"description": "Subtasks track small pieces of work."},
+			},
+		})
+	})
+
+	// 建事项：POST /rest/api/2/issue
+	mux.HandleFunc("/rest/api/2/issue", func(w http.ResponseWriter, r *http.Request) {
+		if !guard(w, r) {
+			return
+		}
+		raw, _ := io.ReadAll(r.Body)
+		var body map[string]any
+		json.Unmarshal(raw, &body)
+		m.mu.Lock()
+		m.created = body
+		m.mu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusCreated)
+		json.NewEncoder(w).Encode(map[string]any{
+			"id": "10050", "key": "ENG-456", "self": "https://x/rest/api/2/issue/10050",
 		})
 	})
 
@@ -336,5 +373,95 @@ func TestJiraSiteURL(t *testing.T) {
 	got, err := rt.BaseURL()
 	if err != nil || got != "https://demo.atlassian.net" {
 		t.Fatalf("站点地址处理不对: %q %v", got, err)
+	}
+}
+
+func TestJiraListIssueTypes(t *testing.T) {
+	m := newJiraMock(t, "you@example.com", "tok-abc-123456")
+	rt, c := m.runtime(t, "tok-abc-123456", false)
+
+	out, meta, err := c.Call(context.Background(), rt, "jira_list_issue_types",
+		map[string]any{"projectKey": "SCRUM"})
+	if err != nil {
+		t.Fatalf("读类型失败: %v", err)
+	}
+	rows := out.([]any)
+	if len(rows) != 2 {
+		t.Fatalf("应当返回 2 个类型，实际 %d", len(rows))
+	}
+	first := rows[0].(map[string]any)
+	if first["name"] != "Task" || first["subtask"] != false {
+		t.Errorf("类型内容不对: %v", first)
+	}
+	if _, leaked := first["iconUrl"]; leaked {
+		t.Error("iconUrl 这类噪音应当被裁掉")
+	}
+	if meta["total"] != float64(2) {
+		t.Errorf("total 没带出来: %v", meta)
+	}
+}
+
+// 建事项的 body 是三层嵌套（fields.project.key / fields.issuetype.name），
+// 拼错一层 Jira 就会拒；而没填的可选字段绝不能变成空对象 —— Jira 会把
+// {"priority":{}} 当成非法值。
+func TestJiraCreateIssueBodyShape(t *testing.T) {
+	m := newJiraMock(t, "you@example.com", "tok-abc-123456")
+	rt, c := m.runtime(t, "tok-abc-123456", true)
+
+	out, _, err := c.Call(context.Background(), rt, "jira_create_issue", map[string]any{
+		"projectKey":  "SCRUM",
+		"summary":     "登录偶发 500",
+		"description": "重现步骤：\n1. 连续登录 5 次",
+	})
+	if err != nil {
+		t.Fatalf("建事项失败: %v", err)
+	}
+
+	fields, ok := m.created["fields"].(map[string]any)
+	if !ok {
+		t.Fatalf("body 应当是 {\"fields\":{…}}: %v", m.created)
+	}
+	proj, ok := fields["project"].(map[string]any)
+	if !ok || proj["key"] != "SCRUM" {
+		t.Errorf("project.key 没拼对: %#v", fields["project"])
+	}
+	it, ok := fields["issuetype"].(map[string]any)
+	if !ok || it["name"] != "Task" {
+		t.Errorf("issuetype.name 应当落到默认值 Task: %#v", fields["issuetype"])
+	}
+	if fields["summary"] != "登录偶发 500" {
+		t.Errorf("summary 不对: %v", fields["summary"])
+	}
+	// v2 的 description 是纯文本字符串，不是 ADF 文档对象
+	if _, isStr := fields["description"].(string); !isStr {
+		t.Errorf("description 应当是纯文本字符串: %#v", fields["description"])
+	}
+	// 没填的可选字段不该出现，更不该是空对象
+	for _, k := range []string{"priority", "assignee"} {
+		if v, present := fields[k]; present {
+			t.Errorf("没填的 %s 不该出现在 body 里: %#v", k, v)
+		}
+	}
+	res := out.(map[string]any)
+	if res["key"] != "ENG-456" {
+		t.Errorf("返回的事项键不对: %v", res)
+	}
+	if _, leaked := res["self"]; leaked {
+		t.Error("self 应当被裁掉")
+	}
+}
+
+func TestJiraCreateIssueNeedsWriteSwitch(t *testing.T) {
+	m := newJiraMock(t, "you@example.com", "tok-abc-123456")
+	rt, c := m.runtime(t, "tok-abc-123456", false)
+
+	_, _, err := c.Call(context.Background(), rt, "jira_create_issue", map[string]any{
+		"projectKey": "SCRUM", "summary": "x",
+	})
+	if err == nil || !strings.Contains(err.Error(), "写开关") {
+		t.Fatalf("应当被写开关拦下，实际: %v", err)
+	}
+	if m.created != nil {
+		t.Fatal("被拒绝的调用不该真的发出请求")
 	}
 }

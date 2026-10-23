@@ -1,7 +1,7 @@
 {
   "id": "jira",
   "name": "Jira",
-  "version": 1,
+  "version": 2,
   "icon": "🎫",
   "summary": "Jira Cloud REST API · 邮箱 + API Token",
   "tags": [
@@ -144,6 +144,35 @@
       }
     },
     {
+      "name": "jira_list_issue_types",
+      "title": "列出事项类型",
+      "description": "列出某个项目能建哪些类型的事项（Task、Story、Bug、Epic…）。建事项之前先用它确认类型名怎么拼——类型是按项目配置的，别的项目有的类型这个项目不一定有，名字写错 jira_create_issue 会被拒。",
+      "readOnly": true,
+      "method": "GET",
+      "path": "/rest/api/2/issue/createmeta/{projectKey}/issuetypes",
+      "params": [
+        {
+          "name": "projectKey",
+          "in": "path",
+          "required": true,
+          "description": "项目键，如 SCRUM"
+        }
+      ],
+      "result": {
+        "path": "issueTypes",
+        "limit": 50,
+        "fields": [
+          "id",
+          "name",
+          "description",
+          "subtask"
+        ],
+        "meta": [
+          "total"
+        ]
+      }
+    },
+    {
       "name": "jira_get_issue",
       "title": "读取事项详情",
       "description": "读取一条 Jira 事项的完整内容：标题、描述正文、状态、负责人、报告人、优先级、标签和时间。事项键从 jira_search_issues 来，用户直接给了键（如 ENG-123）也可以。",
@@ -217,6 +246,60 @@
         ],
         "meta": [
           "total"
+        ]
+      }
+    },
+    {
+      "name": "jira_create_issue",
+      "title": "新建事项",
+      "description": "在 Jira 项目里新建一条事项（Task / Story / Bug 等）。这会生成一条团队里所有人都看得见的工单并触发通知，删除要去 Jira 界面操作，所以提交前应当把项目、类型、标题和描述给用户确认。项目键用 jira_list_projects 查，类型名用 jira_list_issue_types 查。不同项目的必填字段不一样，缺字段时 Jira 会在报错里列出缺了哪个。",
+      "method": "POST",
+      "path": "/rest/api/2/issue",
+      "params": [
+        {
+          "name": "projectKey",
+          "in": "body",
+          "bodyPath": "fields.project.key",
+          "required": true,
+          "description": "项目键，如 SCRUM"
+        },
+        {
+          "name": "summary",
+          "in": "body",
+          "bodyPath": "fields.summary",
+          "required": true,
+          "description": "标题，一句话说清要做什么"
+        },
+        {
+          "name": "issueType",
+          "in": "body",
+          "bodyPath": "fields.issuetype.name",
+          "default": "Task",
+          "description": "事项类型名，如 Task / Story / Bug；必须是该项目里存在的类型"
+        },
+        {
+          "name": "description",
+          "in": "body",
+          "bodyPath": "fields.description",
+          "description": "描述正文，纯文本；换行直接用换行符"
+        },
+        {
+          "name": "priorityName",
+          "in": "body",
+          "bodyPath": "fields.priority.name",
+          "description": "优先级名，如 High / Medium；项目没启用优先级字段时不要填"
+        },
+        {
+          "name": "assigneeAccountId",
+          "in": "body",
+          "bodyPath": "fields.assignee.accountId",
+          "description": "负责人的 Atlassian 账号 ID（不是显示名也不是邮箱）。指给自己时用 jira_whoami 返回的 accountId"
+        }
+      ],
+      "result": {
+        "fields": [
+          "key",
+          "id"
         ]
       }
     },
