@@ -1,0 +1,241 @@
+{
+  "id": "jira",
+  "name": "Jira",
+  "version": 1,
+  "icon": "🎫",
+  "summary": "Jira Cloud REST API · 邮箱 + API Token",
+  "tags": [
+    "project",
+    "devtools"
+  ],
+  "integration": "jira",
+  "helpUrl": "https://id.atlassian.com/manage-profile/security/api-tokens",
+  "baseUrlField": "site",
+  "account": {
+    "name": "email",
+    "label": "Atlassian 账号邮箱",
+    "placeholder": "you@example.com",
+    "help": "API Token 的持有人邮箱，和下面的 Token 一起做 Basic 认证"
+  },
+  "secret": {
+    "name": "token",
+    "label": "API Token",
+    "help": "id.atlassian.com → Security → Create and manage API tokens。权限等于这个账号在 Jira 里的权限"
+  },
+  "fields": [
+    {
+      "name": "site",
+      "label": "站点地址",
+      "required": true,
+      "placeholder": "https://你的站点.atlassian.net",
+      "help": "到站点根为止，不要带 /rest/...；Jira Server/Data Center 自建版的接口不完全相同，这份声明针对 Jira Cloud"
+    }
+  ],
+  "auth": {
+    "kind": "basic"
+  },
+  "test": {
+    "method": "GET",
+    "path": "/rest/api/3/myself",
+    "result": {
+      "fields": [
+        "displayName",
+        "emailAddress",
+        "accountId"
+      ]
+    }
+  },
+  "tools": [
+    {
+      "name": "jira_whoami",
+      "title": "当前身份",
+      "description": "确认现在在以谁的身份操作 Jira：返回显示名、邮箱和账号 ID。不确定有没有权限、或者用户问「我是谁」时用它。",
+      "readOnly": true,
+      "method": "GET",
+      "path": "/rest/api/3/myself",
+      "result": {
+        "fields": [
+          "displayName",
+          "emailAddress",
+          "accountId",
+          "timeZone"
+        ]
+      }
+    },
+    {
+      "name": "jira_list_projects",
+      "title": "列出项目",
+      "description": "列出当前身份能看到的 Jira 项目，返回项目键（如 ENG）和名称。写 JQL 之前用它确认项目键怎么拼——JQL 里的 project= 要的是项目键，不是项目名。",
+      "readOnly": true,
+      "method": "GET",
+      "path": "/rest/api/3/project/search",
+      "params": [
+        {
+          "name": "query",
+          "in": "query",
+          "description": "按项目名或项目键过滤，留空列出全部"
+        },
+        {
+          "name": "maxResults",
+          "in": "query",
+          "type": "number",
+          "default": "50",
+          "description": "返回几个，最大 50"
+        }
+      ],
+      "result": {
+        "path": "values",
+        "limit": 50,
+        "fields": [
+          "key",
+          "name",
+          "projectTypeKey"
+        ]
+      }
+    },
+    {
+      "name": "jira_search_issues",
+      "title": "搜索事项",
+      "description": "用 JQL 查 Jira 事项，这是找工单的主要方式。常用写法：`project = ENG AND status != Done ORDER BY updated DESC`、`assignee = currentUser() AND status = \"In Progress\"`、`created >= -7d`。返回的是列表（含事项键如 ENG-123），不含描述正文和评论；要看某条的内容，拿事项键调 jira_get_issue。不知道项目键怎么拼就先调 jira_list_projects。",
+      "readOnly": true,
+      "method": "GET",
+      "path": "/rest/api/3/search/jql",
+      "params": [
+        {
+          "name": "jql",
+          "in": "query",
+          "required": true,
+          "description": "JQL 查询语句，例如 project = ENG AND status != Done ORDER BY updated DESC"
+        },
+        {
+          "name": "fields",
+          "in": "query",
+          "default": "summary,status,assignee,priority,issuetype,updated",
+          "description": "要返回哪些字段，逗号分隔。不传会只回事项 ID，所以通常保留默认值"
+        },
+        {
+          "name": "maxResults",
+          "in": "query",
+          "type": "number",
+          "default": "25",
+          "description": "返回几条，最大 100"
+        },
+        {
+          "name": "nextPageToken",
+          "in": "query",
+          "description": "翻页用，取上一次响应里的 nextPageToken"
+        }
+      ],
+      "result": {
+        "path": "issues",
+        "limit": 100,
+        "fields": [
+          "key",
+          "fields"
+        ]
+      }
+    },
+    {
+      "name": "jira_get_issue",
+      "title": "读取事项详情",
+      "description": "读取一条 Jira 事项的完整内容：标题、描述正文、状态、负责人、报告人、优先级、标签和时间。事项键从 jira_search_issues 来，用户直接给了键（如 ENG-123）也可以。",
+      "readOnly": true,
+      "method": "GET",
+      "path": "/rest/api/2/issue/{issueKey}",
+      "params": [
+        {
+          "name": "issueKey",
+          "in": "path",
+          "required": true,
+          "description": "事项键，如 ENG-123"
+        }
+      ],
+      "result": {
+        "fields": [
+          "key",
+          "fields.summary",
+          "fields.description",
+          "fields.status.name",
+          "fields.issuetype.name",
+          "fields.priority.name",
+          "fields.assignee.displayName",
+          "fields.reporter.displayName",
+          "fields.labels",
+          "fields.created",
+          "fields.updated"
+        ]
+      }
+    },
+    {
+      "name": "jira_list_comments",
+      "title": "读取事项评论",
+      "description": "按时间顺序读取一条事项上的评论，返回作者、正文和时间。事项的讨论过程在这里，描述正文用 jira_get_issue 读。",
+      "readOnly": true,
+      "method": "GET",
+      "path": "/rest/api/2/issue/{issueKey}/comment",
+      "params": [
+        {
+          "name": "issueKey",
+          "in": "path",
+          "required": true,
+          "description": "事项键，如 ENG-123"
+        },
+        {
+          "name": "maxResults",
+          "in": "query",
+          "type": "number",
+          "default": "20",
+          "description": "返回几条，最大 100"
+        },
+        {
+          "name": "orderBy",
+          "in": "query",
+          "default": "-created",
+          "enum": [
+            "created",
+            "-created"
+          ],
+          "description": "created 是从旧到新，-created 是从新到旧"
+        }
+      ],
+      "result": {
+        "path": "comments",
+        "limit": 100,
+        "fields": [
+          "author.displayName",
+          "body",
+          "created",
+          "updated"
+        ]
+      }
+    },
+    {
+      "name": "jira_add_comment",
+      "title": "给事项加评论",
+      "description": "在一条 Jira 事项下留一条评论。评论会立刻对项目里所有人可见并触发通知，删除要去 Jira 界面操作，所以提交前应当把事项键和评论内容给用户确认。",
+      "method": "POST",
+      "path": "/rest/api/2/issue/{issueKey}/comment",
+      "params": [
+        {
+          "name": "issueKey",
+          "in": "path",
+          "required": true,
+          "description": "事项键，如 ENG-123"
+        },
+        {
+          "name": "body",
+          "in": "body",
+          "required": true,
+          "description": "评论正文，纯文本；换行直接用换行符"
+        }
+      ],
+      "result": {
+        "fields": [
+          "id",
+          "created",
+          "author.displayName"
+        ]
+      }
+    }
+  ]
+}

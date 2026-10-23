@@ -266,8 +266,6 @@ func httpDescriptor(s httpchan.Spec) Descriptor {
 //
 // Version 留 0：0 表示「还没有任何一版声明」，页面上也就不显示版本角标。
 var planned = []Descriptor{
-	{Type: "jira", Name: "Jira", Icon: "🎫", Summary: "待实现 · 工单读取与检索",
-		Integration: "jira", Tags: []string{"project", "devtools"}},
 	{Type: "feishu", Name: "飞书", Icon: "💬", Summary: "待实现 · 消息与文档",
 		Integration: "feishu", Tags: []string{"im"}},
 }

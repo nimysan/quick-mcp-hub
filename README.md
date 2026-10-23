@@ -328,6 +328,26 @@ hub 的写开关只能决定「不把写工具给模型」，决定不了那个�
 字段标识和响应嵌套要用你自己的账套核一遍。金蝶没有公开的测试环境或测试账号，
 文档站 `open.kingdee.com/K3CloudDoc/` 对匿名访问也是 403。
 
+### Jira 渠道（`jira`）
+
+针对 **Jira Cloud**（`xxx.atlassian.net`）。要填站点地址、Atlassian 账号邮箱和
+[API Token](https://id.atlassian.com/manage-profile/security/api-tokens)，认证是
+Basic(邮箱:Token)。Jira Server / Data Center 自建版接口不完全相同，这份声明没覆盖。
+
+六个工具：`jira_whoami`、`jira_list_projects`、`jira_search_issues`（JQL）、
+`jira_get_issue`、`jira_list_comments`，以及写开关控制的 `jira_add_comment`。
+
+两个决定值得记下来，它们都来自 Atlassian 的接口现状：
+
+- **搜索必须用 `/rest/api/3/search/jql`**，旧的 `/rest/api/3/search` 已被完全
+  下线。新端点**不传 `fields` 就只回事项 ID**，所以声明里给了默认值
+  `summary,status,assignee,priority,issuetype,updated`；翻页也从 `startAt`
+  换成了 `nextPageToken`。
+- **读详情和写评论走 `/rest/api/2/`，不是 v3。** v2 和 v3 的操作集一样，差别
+  是富文本：v3 的 `description` 和评论 `body` 是 ADF（深层嵌套的 JSON 文档），
+  v2 是纯文本字符串。模型读不了 ADF，也没法可靠地构造 ADF，所以这两个工具
+  刻意用 v2。搜索用 v3 是因为它只返回标量字段，不碰富文本。
+
 ## 渠道命名规矩
 
 渠道 `id` 和工具名要对得上**具体那套接口**，不是厂商、也不是产品大类：
