@@ -74,6 +74,11 @@ type Descriptor struct {
 	// （见 httpchan.Spec.PostReads），页面上要标出来。
 	NeedsReview bool     `json:"needsReview,omitempty"`
 	Tools       []string `json:"tools,omitempty"`
+	// WriteTools 是 Tools 里会改动外部系统的那些，WriteSwitch 是控制它们的
+	// 开关字段名。页面靠这两样算出「客户端实际能看到几个工具」—— 开关关着
+	// 的工具不会注册，面板上的数字必须和真实状态对得上。
+	WriteTools  []string `json:"writeTools,omitempty"`
+	WriteSwitch string   `json:"writeSwitch,omitempty"`
 	HelpURL     string   `json:"helpUrl,omitempty"`
 	Fields      []Field  `json:"fields"`
 }
@@ -148,6 +153,8 @@ func mailDescriptor(p mailprovider.Provider) Descriptor {
 		SecretField:  "password",
 		Available:    true,
 		Tools:        []string{"list_recent", "search_mail", "read_mail", "send_mail"},
+		WriteTools:   []string{"send_mail"},
+		WriteSwitch:  "allowSend",
 		Fields: []Field{
 			{
 				Name: "user", Label: "邮箱地址", Kind: KindText, Required: true,
@@ -220,8 +227,16 @@ func httpDescriptor(s httpchan.Spec) Descriptor {
 	}
 
 	tools := make([]string, 0, len(s.Tools))
+	var writeTools []string
 	for _, t := range s.Tools {
 		tools = append(tools, t.Name)
+		if !t.ReadOnly {
+			writeTools = append(writeTools, t.Name)
+		}
+	}
+	writeSwitch := ""
+	if len(writeTools) > 0 {
+		writeSwitch = httpchan.AllowWriteField
 	}
 
 	return Descriptor{
@@ -238,6 +253,8 @@ func httpDescriptor(s httpchan.Spec) Descriptor {
 		Available:    true,
 		NeedsReview:  s.PostReads,
 		Tools:        tools,
+		WriteTools:   writeTools,
+		WriteSwitch:  writeSwitch,
 		HelpURL:      s.HelpURL,
 		Fields:       fields,
 	}

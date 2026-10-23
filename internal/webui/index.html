@@ -28,7 +28,10 @@
   header .tag{font-size:11px;padding:2px 7px;border-radius:5px;
     background:color-mix(in srgb,var(--accent) 15%,transparent);color:var(--accent)}
   header .right{margin-left:auto;font-size:12px;color:var(--muted)}
-  main{max-width:860px;margin:0 auto;padding:20px}
+  main{max-width:900px;margin:0 auto;padding:20px}
+  .sec{margin-bottom:28px}
+  .sec.market{padding-top:20px;border-top:1px solid var(--border)}
+  .hint-inline{margin-left:auto;font-size:12px;color:var(--muted)}
   .row{display:flex;align-items:center;margin-bottom:14px}
   .row h2{font-size:15px;margin:0}
   .row .count{font-size:12px;color:var(--muted);font-weight:normal;margin-left:6px}
@@ -62,7 +65,19 @@
     width:100%;max-width:520px;padding:20px}
   .modal h3{margin:0 0 4px}
   .modal .hint{color:var(--muted);font-size:12px;margin-bottom:14px}
-  .grid{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}
+  .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(270px,1fr));gap:10px}
+  .mk{background:var(--card);border:1px solid var(--border);border-radius:10px;
+      padding:12px 14px;display:flex;flex-direction:column;gap:6px}
+  .mk.has{border-color:color-mix(in srgb,var(--ok) 45%,var(--border))}
+  .mk.soon{opacity:.5}
+  .mk .top{display:flex;align-items:center;gap:7px}
+  .mk .nm{font-weight:600}
+  .mk .sm{font-size:12px;color:var(--muted);flex:1}
+  .mk .tl{font-size:11px;color:var(--muted);font-family:ui-monospace,monospace;
+          overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .mk .act{display:flex;align-items:center;gap:8px;margin-top:2px}
+  .mk .act .mine{font-size:11px;color:var(--ok);margin-right:auto}
+  .mk button{padding:4px 10px;font-size:12px}
   .ptype{border:1px solid var(--border);border-radius:9px;padding:10px;cursor:pointer}
   .ptype.sel{border:2px solid var(--accent);background:color-mix(in srgb,var(--accent) 10%,transparent)}
   .ptype.off{opacity:.45;cursor:not-allowed}
@@ -104,11 +119,22 @@
   <span class="right" id="cfgpath"></span>
 </header>
 <main>
-  <div class="row">
-    <h2>渠道 <span class="count" id="count"></span></h2>
-    <div style="margin-left:auto"><button class="primary" id="add">+ 添加渠道</button></div>
-  </div>
-  <div id="list"></div>
+  <section class="sec">
+    <div class="row">
+      <h2>🔌 已集成渠道 <span class="count" id="count"></span></h2>
+      <div class="hint-inline" id="toolsum"></div>
+    </div>
+    <div id="list"></div>
+  </section>
+
+  <section class="sec market">
+    <div class="row">
+      <h2>🏪 渠道市场</h2>
+      <div class="hint-inline" id="srcinfo"></div>
+    </div>
+    <div class="tagbar" id="tagbar"></div>
+    <div class="grid" id="grid"></div>
+  </section>
 </main>
 
 <div class="mask" id="mask">
@@ -125,27 +151,64 @@ async function boot(){
   DESCRIPTORS = d.descriptors; CFGPATH = d.configPath;
   $("#ver").textContent = d.version;
   $("#cfgpath").textContent = "配置：" + d.configPath;
+  $("#srcinfo").textContent = `${DESCRIPTORS.filter(x=>x.available).length} 个可用 · 内置目录`;
   await refresh();
 }
 
+// TAG_LABELS 把标签翻成中文显示；没列到的标签原样显示，
+// 这样下发的目录带来新分类时页面不用跟着改。
+const TAG_LABELS = {email:"邮件", erp:"ERP", finance:"财务", devtools:"开发",
+                    project:"项目", im:"协作", crm:"客户", hr:"人事",
+                    storage:"存储", other:"其他"};
+const tagText = t => TAG_LABELS[t] || t;
+
+let CHANNELS = [];
+
+// activeTools 算出一条实例真正注册给客户端的工具。写开关关着时，写类工具
+// 根本不会注册 —— 页面上的数字必须和客户端看到的一致，否则用户会以为
+// 工具没生效是 hub 的问题。
+function activeTools(v){
+  const d=v.descriptor, all=d.tools||[], w=d.writeTools||[];
+  if(!w.length) return {on:all, off:[]};
+  const sw = d.writeSwitch ? v.instance.settings?.[d.writeSwitch] : null;
+  if(sw==="true"||sw===true) return {on:all, off:[]};
+  return {on:all.filter(t=>!w.includes(t)), off:w};
+}
+let TAG = "";   // 市场的分类筛选，空串 = 全部
+
 async function refresh(){
   const {channels=[]} = await api("/api/channels");
-  $("#count").textContent = channels.length ? channels.length+" 个" : "";
+  CHANNELS = channels;
+  renderMine();
+  renderMarket();
+}
+
+// ---------- 已集成渠道 ----------
+function renderMine(){
+  $("#count").textContent = CHANNELS.length ? CHANNELS.length+" 个" : "";
+  const on = new Set(), off = new Set();
+  CHANNELS.forEach(v => {
+    const a = activeTools(v);
+    a.on.forEach(t=>on.add(t)); a.off.forEach(t=>off.add(t));
+  });
+  $("#toolsum").textContent = on.size
+    ? `注册 ${on.size} 个工具给客户端` + (off.size?`，${off.size} 个因开关关闭未注册`:"")
+    : "";
+
   const list = $("#list");
-  if(!channels.length){
+  if(!CHANNELS.length){
     list.innerHTML = `<div class="empty">
-      <div class="ico">📭</div><div class="t">还没有任何渠道</div>
-      <div class="s">添加一个渠道后，对应的 MCP 工具才会注册给客户端</div>
-      <button class="primary" id="emptyadd">+ 添加渠道</button></div>`;
-    $("#emptyadd").onclick = openAdd;
+      <div class="ico">📭</div><div class="t">还没有集成任何渠道</div>
+      <div class="s">在下面的渠道市场里挑一个，填上账号就能用</div></div>`;
     return;
   }
-  list.innerHTML = channels.map((v,idx)=>{
+  list.innerHTML = CHANNELS.map((v,idx)=>{
     const d=v.descriptor, i=v.instance;
     const pill = !v.hasSecret ? `<span class="pill bad">● 缺少凭据</span>`
       : !i.enabled ? `<span class="pill off">● 已停用</span>`
       : `<span class="pill ok">● 已配置</span>`;
-    const tools = (d.tools||[]).join(" / ");
+    const a = activeTools(v);
+    const tools = a.on.join(" / ") + (a.off.length?`　（${a.off.join(" / ")} 未启用）`:"");
     // 按钮不写内联 onclick：拼进 HTML 属性的参数一旦含引号就会把属性截断，
     // 结果是按钮静默失效（点了什么都不发生）。统一在下面挂闭包。
     return `<div class="chan">
@@ -162,64 +225,62 @@ async function refresh(){
   }).join("");
 
   list.querySelectorAll("button[data-act]").forEach(btn=>{
-    const v = channels[+btn.dataset.i];
+    const v = CHANNELS[+btn.dataset.i];
     const type = v.descriptor.type, account = v.instance.account;
     btn.onclick = () => ({test:testSaved, edit:openEdit, del:del})[btn.dataset.act](type, account);
   });
 }
 
+// ---------- 渠道市场 ----------
+function renderMarket(){
+  const allTags = [...new Set(DESCRIPTORS.flatMap(d=>d.tags||[]))].sort();
+  $("#tagbar").innerHTML =
+    `<span class="tg ${TAG?'':'on'}" data-tag="">全部 ${DESCRIPTORS.length}</span>` +
+    allTags.map(t=>{
+      const n = DESCRIPTORS.filter(d=>(d.tags||[]).includes(t)).length;
+      return `<span class="tg ${TAG===t?'on':''}" data-tag="${esc(t)}">${esc(tagText(t))} ${n}</span>`;
+    }).join("");
+  $("#tagbar").querySelectorAll("[data-tag]").forEach(el=>{
+    el.onclick = () => { TAG = el.dataset.tag; renderMarket(); };
+  });
+
+  const list = TAG ? DESCRIPTORS.filter(d=>(d.tags||[]).includes(TAG)) : DESCRIPTORS;
+  // 同一个渠道可以配多个账号，所以这里统计的是实例数而不是「有没有」
+  const mine = t => CHANNELS.filter(v=>v.descriptor.type===t).length;
+
+  $("#grid").innerHTML = list.map((d,idx)=>{
+    const n = mine(d.type);
+    const cls = !d.available ? "soon" : (n ? "has" : "");
+    const tools = (d.tools||[]).join(" ");
+    const wn = (d.writeTools||[]).length;
+    return `<div class="mk ${cls}">
+      <div class="top">
+        <span>${d.icon||"🔌"}</span>
+        <span class="nm">${esc(d.name)}</span>
+        ${d.version?`<span class="ver">v${d.version}</span>`:''}
+        ${d.needsReview?'<span class="rv" title="这个系统的读操作也是 POST，声明需人工复核">复核</span>':''}
+        <code style="margin-left:auto">${esc(d.type)}</code>
+      </div>
+      <div class="sm">${esc(d.summary)}</div>
+      ${tools?`<div class="tl" title="${esc(tools)}">${esc(tools)}</div>`:''}
+      ${wn?`<div class="tl" style="color:var(--warn)">其中 ${wn} 个写操作，默认不启用</div>`:''}
+      <div class="act">
+        ${n?`<span class="mine">✓ 已集成 ${n} 个账号</span>`:'<span class="mine"></span>'}
+        ${d.available
+          ? `<button class="${n?'':'primary'}" data-add="${idx}">${n?'再加一个账号':'添加'}</button>`
+          : '<button disabled>待实现</button>'}
+      </div>
+    </div>`;
+  }).join("");
+
+  $("#grid").querySelectorAll("[data-add]").forEach(btn=>{
+    const d = list[+btn.dataset.add];
+    btn.onclick = () => openForm(d.type, null);
+  });
+}
+
 function esc(s){return String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]))}
 function close(){$("#mask").classList.remove("show")}
-
-// TAG_LABELS 把标签翻成中文显示；没列到的标签原样显示，
-// 这样下发的目录带来新分类时页面不用跟着改。
-const TAG_LABELS = {email:"邮件", erp:"ERP", finance:"财务", devtools:"开发",
-                    project:"项目", im:"协作", crm:"客户", hr:"人事",
-                    storage:"存储", other:"其他"};
-const tagText = t => TAG_LABELS[t] || t;
-
-function openAdd(){
-  const avail = DESCRIPTORS.filter(d=>d.available);
-  let sel = avail[0]?.type;
-  let tag = "";   // 空串 = 全部
-  const allTags = [...new Set(DESCRIPTORS.flatMap(d=>d.tags||[]))].sort();
-  const render=()=>{
-    const list = tag ? DESCRIPTORS.filter(d=>(d.tags||[]).includes(tag)) : DESCRIPTORS;
-    $("#modal").innerHTML = `
-      <h3>添加渠道</h3>
-      <div class="tagbar">
-        <span class="tg ${tag?'':'on'}" data-tag="">全部 ${DESCRIPTORS.length}</span>
-        ${allTags.map(t=>`<span class="tg ${tag===t?'on':''}" data-tag="${esc(t)}">${esc(tagText(t))}</span>`).join("")}
-      </div>
-      <div class="grid">${list.map((d,idx)=>`
-        <div class="ptype ${d.available?(d.type===sel?'sel':''):'off'}"
-             ${d.available?`data-pick="${idx}"`:''}>
-          <div class="n">${d.icon} ${esc(d.name)}
-            ${d.version?`<span class="ver">v${d.version}</span>`:''}
-            ${d.needsReview?'<span class="rv" title="这个系统的读操作也是 POST，声明需人工复核">复核</span>':''}</div>
-          <div class="s">${esc(d.summary)}</div>
-          <div class="s"><code>${esc(d.type)}</code></div>
-        </div>`).join("")}</div>
-      <div class="foot"><button id="cancelbtn">取消</button>
-        <button class="primary" style="margin-left:auto" id="nextbtn"
-                ${sel?'':'disabled title="这个分类下还没有可用的渠道"'}>下一步</button></div>`;
-
-    $("#modal").querySelectorAll("[data-tag]").forEach(el=>{
-      el.onclick = () => {
-        tag = el.dataset.tag;
-        const l = tag ? DESCRIPTORS.filter(d=>(d.tags||[]).includes(tag)) : DESCRIPTORS;
-        if(!l.some(d=>d.type===sel && d.available)) sel = l.find(d=>d.available)?.type;
-        render();
-      };
-    });
-    $("#modal").querySelectorAll("[data-pick]").forEach(el=>{
-      el.onclick = () => { sel = list[+el.dataset.pick].type; render(); };
-    });
-    $("#cancelbtn").onclick = close;
-    $("#nextbtn").onclick = () => sel && openForm(sel, null);
-  };
-  render(); $("#mask").classList.add("show");
-}
 
 function openEdit(type,account){openForm(type,account)}
 
@@ -311,7 +372,6 @@ async function del(type,account){
   refresh();
 }
 
-$("#add").onclick=openAdd;
 $("#mask").onclick=(e)=>{if(e.target.id==="mask")close()};
 boot();
 </script>
