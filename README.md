@@ -204,6 +204,47 @@ GitHub 渠道自带 6 个工具：`github_whoami`、`github_list_my_repos`、
 写开关是**每个实例各自**的：A 账号可写、B 账号只读是成立的。工具只要有一个
 账号可写就注册，调用时再按选中的账号校一次，工具描述里也会列出哪些账号可写。
 
+### 两种渠道形状
+
+GitHub 是 REST：Bearer 令牌、GET 读、字段裁剪。金蝶云星空是 RPC 风格，差别大到
+需要 spec 支持另外四件事：
+
+| K3Cloud 的做法 | 声明里怎么写 |
+|---|---|
+| 先 POST `ValidateUser` 换 `kdservice-sessionid` cookie，后续请求带着它 | `auth.kind: "login"` + `login.body`（只认 `{{account}}` / `{{secret}}` / `{{field:名字}}` 三个标记）|
+| body 是 `{"data":{"FormId":…}}`，而 View/Save 的 formid 在顶层 | 参数的 `bodyPath: "data.FormId"`；写死的部分放 `bodyConst` |
+| 业务失败也回 HTTP 200，错误在 `Result.ResponseStatus` 里（还被数组包着）| 渠道级 `failWhen` |
+| `ExecuteBillQuery` 回二维数组，列名在请求的 `FieldKeys` 里 | `result.columnsFromParam: "fieldKeys"` |
+
+会话是**每实例一份、惰性登录、整进程复用**的：不是每次调用都登一遍（ERP 会把那
+当成攻击），但会话过期时自动重登并重试一次（`login.reloginOn` 列出判断字样）。
+
+#### `postReads`：方法不能作证的时候
+
+`readOnly` 默认只能给 GET，因为它决定客户端是否免确认直接调、以及工具是否绕过
+写开关。对 REST 接口，GET 本身就是证据；对金蝶这类接口，`ExecuteBillQuery` 和
+`Save` 都是 POST，校验器区分不了。
+
+所以 spec 顶层的 `postReads: true` **不是关掉检查**，而是把「方法不能作证」记录
+下来交给人：页面上该渠道会带一个「复核」标记，目录服务器上这类声明的发布要求
+第二人批准。没有 POST 只读工具却声明它，校验会报错——免得它被顺手加到每份
+声明上而失去信号意义。
+
+### 金蝶云星空渠道
+
+三个工具：`kingdee_query_bill`（通用单据查询）、`kingdee_view_bill`（读单据详情）、
+写开关控制的 `kingdee_save_bill`。要填站点地址（到 `/k3cloud` 为止，必须 https）、
+账套 ID、账号、密码。
+
+**权限建在星空那一侧**：填进来的是能登录 ERP 的真人密码，权限完全等于该账号在
+星空里的权限。建议单建一个只分配查询权限的集成账号，而不是用你本人的账号——
+hub 的写开关只能决定「不把写工具给模型」，决定不了那个账号本身能做什么。
+
+**未经真实环境验证**：接口路径、登录判定（`LoginResultType == 1`）、失败响应形状
+都来自公开文档，执行器是对着一个仿真的 K3Cloud 服务测通的（登录换 cookie、
+嵌套 body、二维数组列名、业务失败、会话过期重登、写开关，8 个用例）。真实的
+字段标识和响应嵌套要用你自己的账套核一遍。
+
 ## 已知限制
 
 - 只处理 `text/plain`（没有就退回 `text/html` 原文，不做 HTML 转纯文本）。

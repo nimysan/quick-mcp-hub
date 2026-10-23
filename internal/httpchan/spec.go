@@ -33,7 +33,44 @@ const (
 	AuthBasic AuthKind = "basic"
 	// AuthQuery: ?<auth.name>=<secret>，少数老接口用
 	AuthQuery AuthKind = "query"
+	// AuthLogin: 先 POST 一个登录接口换会话 cookie，后续请求带着 cookie。
+	// 金蝶云星空（ValidateUser -> kdservice-sessionid）这类老派企业系统用这个。
+	AuthLogin AuthKind = "login"
 )
+
+// Login 描述「先登录换会话」的流程。
+//
+// Body 的值里只允许三个取值标记，别的都当字面量：
+//
+//	{{account}}        账号字段的值
+//	{{secret}}         密码字段的值（必须且只能出现一次）
+//	{{field:名字}}     某个附加字段的值
+//
+// 刻意不做成通用模板：能被下发的内容拼出来的东西越少越好，
+// 主机名尤其不能，它只来自 baseUrl 或用户自己填的站点字段。
+type Login struct {
+	Path string         `json:"path"`
+	Body map[string]any `json:"body"`
+	// SuccessPath/SuccessEquals 判断登录响应是否成功。很多企业接口登录失败
+	// 也回 HTTP 200，不看响应内容就会拿着没登上的会话去调业务接口。
+	SuccessPath   string `json:"successPath,omitempty"`
+	SuccessEquals any    `json:"successEquals,omitempty"`
+	// ReloginOn 列出响应里出现哪些字样就认为会话过期，重新登录并重试一次。
+	ReloginOn []string `json:"reloginOn,omitempty"`
+}
+
+// FailWhen 描述「HTTP 200 但业务失败」的判定。
+//
+// 金蝶这类接口无论成败都回 200，错误藏在响应体里。不声明这个判定，
+// 一次失败的查询会被当成成功，模型拿到一个空结果然后编出结论。
+type FailWhen struct {
+	Path   string `json:"path"`
+	Equals any    `json:"equals,omitempty"`
+	// Exists 为真时表示「这个路径存在就算失败」（比如 errcode 字段）。
+	Exists bool `json:"exists,omitempty"`
+	// MessagePath 指出错误说明在哪，用于拼报错信息。
+	MessagePath string `json:"messagePath,omitempty"`
+}
 
 // ParamIn 决定参数放在请求的哪个位置。
 type ParamIn string
@@ -68,6 +105,8 @@ type Auth struct {
 	Kind AuthKind `json:"kind"`
 	// Name 是 header 或 query 方式下的键名，bearer/basic 不用填。
 	Name string `json:"name,omitempty"`
+	// Login 只在 kind=login 时有意义。
+	Login *Login `json:"login,omitempty"`
 }
 
 // Endpoint 是一次 HTTP 调用的形状。
@@ -88,17 +127,26 @@ type Result struct {
 	Fields []string `json:"fields,omitempty"`
 	// Limit 是数组结果的最大条数，0 表示不限。
 	Limit int `json:"limit,omitempty"`
+	// Columns 给「二维数组」形式的结果命名列，把 [[1,"A"],[2,"B"]] 变成
+	// [{"id":1,"name":"A"},…]。金蝶 ExecuteBillQuery 就是这种返回。
+	Columns []string `json:"columns,omitempty"`
+	// ColumnsFromParam 指出列名来自哪个参数（逗号分隔的字段列表）。
+	// 通用查询工具的列名由调用方决定，没法写死在声明里。
+	ColumnsFromParam string `json:"columnsFromParam,omitempty"`
 }
 
 // Param 是一个工具参数。
 type Param struct {
 	Name        string   `json:"name"`
 	In          ParamIn  `json:"in"`
-	Type        string   `json:"type,omitempty"` // string | number | boolean，默认 string
+	Type        string   `json:"type,omitempty"` // string | number | boolean | object，默认 string
 	Required    bool     `json:"required,omitempty"`
 	Default     string   `json:"default,omitempty"`
 	Description string   `json:"description,omitempty"`
 	Enum        []string `json:"enum,omitempty"`
+	// BodyPath 让 body 参数落到嵌套位置，如 "data.FilterString"。
+	// 留空则放在 body 顶层，键名就是 Name。
+	BodyPath string `json:"bodyPath,omitempty"`
 }
 
 // Tool 是一个声明出来的 MCP 工具。
@@ -112,7 +160,11 @@ type Tool struct {
 	Method   string  `json:"method"`
 	Path     string  `json:"path"`
 	Params   []Param `json:"params,omitempty"`
-	Result   Result  `json:"result,omitempty"`
+	// BodyConst 是写死在声明里的 body 片段，参数再合并到它上面。
+	// 用于把一个工具钉死在某张单据上（FormId=BD_MATERIAL），
+	// 这样「查物料」是一个工具，而不是让模型自己填表单标识。
+	BodyConst map[string]any `json:"bodyConst,omitempty"`
+	Result    Result         `json:"result,omitempty"`
 }
 
 // Spec 是一个渠道的完整声明。
@@ -135,6 +187,20 @@ type Spec struct {
 	Auth    Auth              `json:"auth"`
 	Headers map[string]string `json:"headers,omitempty"`
 	Fields  []Field           `json:"fields,omitempty"`
+
+	// FailWhen 判定「HTTP 200 但业务失败」，对本渠道所有调用生效。
+	FailWhen *FailWhen `json:"failWhen,omitempty"`
+
+	// PostReads 声明「这个系统的读操作也是 POST」，从而允许 readOnly 的 POST 工具。
+	//
+	// 默认不允许，因为 readOnly 决定两件事：客户端是否免确认直接调，以及工具
+	// 是否绕过写开关。对 REST 接口，方法本身就是证据（GET 不会改数据）；对
+	// 金蝶这类 RPC 风格的接口，ExecuteBillQuery 和 Save 都是 POST，校验器
+	// 无法区分，只有人读一遍声明才能确认。
+	//
+	// 所以这个开关不是「关掉检查」，而是把「方法不能作证」这件事记录下来并
+	// 交给人：页面上会标出来，目录服务器上这类声明的发布也要第二人批准。
+	PostReads bool `json:"postReads,omitempty"`
 
 	// Test 是「测试连通」用的只读接口，保存渠道前会先打一次。
 	Test  Endpoint `json:"test"`
@@ -174,6 +240,7 @@ var (
 	toolNameRe    = regexp.MustCompile(`^[a-z][a-z0-9_]{1,62}$`)
 	paramNameRe   = regexp.MustCompile(`^[a-zA-Z_][a-zA-Z0-9_]{0,40}$`)
 	placeholderRe = regexp.MustCompile(`\{([^{}]*)\}`)
+	tokenRe       = regexp.MustCompile(`\{\{([^{}]*)\}\}`)
 	methodsAll    = map[string]bool{"GET": true, "POST": true, "PUT": true, "PATCH": true, "DELETE": true}
 )
 
@@ -216,8 +283,18 @@ func (s Spec) Validate() error {
 		if strings.TrimSpace(s.Auth.Name) == "" {
 			return fmt.Errorf("%s: auth.kind=%s 必须给出 auth.name", s.Type, s.Auth.Kind)
 		}
+	case AuthLogin:
+		if err := s.checkLogin(); err != nil {
+			return fmt.Errorf("%s: auth.login %w", s.Type, err)
+		}
 	default:
 		return fmt.Errorf("%s: 不支持的 auth.kind %q", s.Type, s.Auth.Kind)
+	}
+	if s.Auth.Kind != AuthLogin && s.Auth.Login != nil {
+		return fmt.Errorf("%s: 只有 auth.kind=login 才能带 login 段", s.Type)
+	}
+	if s.FailWhen != nil && strings.TrimSpace(s.FailWhen.Path) == "" {
+		return fmt.Errorf("%s: failWhen 必须给出 path", s.Type)
 	}
 	for _, f := range s.Fields {
 		if !paramNameRe.MatchString(f.Name) {
@@ -228,18 +305,30 @@ func (s Spec) Validate() error {
 		}
 	}
 
-	if err := checkEndpoint(s.Test.Method, s.Test.Path, nil); err != nil {
-		return fmt.Errorf("%s: test %w", s.Type, err)
-	}
-	if s.Test.Method != "GET" {
-		return fmt.Errorf("%s: test 必须是 GET——测试连通不能改动用户的系统", s.Type)
+	// 登录式渠道的连通性测试就是登录本身：这类 RPC 风格接口往往一个 GET 都没有，
+	// 而「随便挑一个 POST 当测试」要么会改用户数据，要么只能靠声明自称无害。
+	if s.Auth.Kind == AuthLogin {
+		if s.Test.Path != "" {
+			return fmt.Errorf("%s: auth.kind=login 时不要声明 test —— 登录本身就是测试", s.Type)
+		}
+	} else {
+		if err := checkEndpoint(s.Test.Method, s.Test.Path, nil); err != nil {
+			return fmt.Errorf("%s: test %w", s.Type, err)
+		}
+		if s.Test.Method != "GET" {
+			return fmt.Errorf("%s: test 必须是 GET——测试连通不能改动用户的系统", s.Type)
+		}
 	}
 	if len(s.Tools) == 0 {
 		return fmt.Errorf("%s: 至少要声明一个工具", s.Type)
 	}
 
+	postReadUsed := false
 	seen := map[string]bool{}
 	for _, t := range s.Tools {
+		if t.ReadOnly && t.Method != "GET" {
+			postReadUsed = true
+		}
 		if !toolNameRe.MatchString(t.Name) {
 			return fmt.Errorf("%s: 工具名 %q 不合法", s.Type, t.Name)
 		}
@@ -254,11 +343,19 @@ func (s Spec) Validate() error {
 		if strings.TrimSpace(t.Description) == "" {
 			return fmt.Errorf("%s/%s: description 不能为空——模型靠它选工具", s.Type, t.Name)
 		}
-		if t.ReadOnly && t.Method != "GET" {
-			return fmt.Errorf("%s/%s: 只有 GET 能标 readOnly（现在是 %s）", s.Type, t.Name, t.Method)
+		if t.ReadOnly && t.Method != "GET" && !s.PostReads {
+			return fmt.Errorf("%s/%s: readOnly 的工具默认必须是 GET（现在是 %s）。"+
+				"如果这个系统的读操作本身就是 POST，在声明顶层加 \"postReads\": true，"+
+				"该声明会被标记为需要人工复核", s.Type, t.Name, t.Method)
 		}
 		if err := checkEndpoint(t.Method, t.Path, t.Params); err != nil {
 			return fmt.Errorf("%s/%s: %w", s.Type, t.Name, err)
+		}
+		if len(t.BodyConst) > 0 && t.Method == "GET" {
+			return fmt.Errorf("%s/%s: GET 不能带 bodyConst", s.Type, t.Name)
+		}
+		if t.Result.Columns != nil && t.Result.ColumnsFromParam != "" {
+			return fmt.Errorf("%s/%s: columns 和 columnsFromParam 只能有一个", s.Type, t.Name)
 		}
 		pseen := map[string]bool{}
 		for _, p := range t.Params {
@@ -279,12 +376,84 @@ func (s Spec) Validate() error {
 			}
 			switch p.Type {
 			case "", "string", "number", "boolean":
+			case "object":
+				if p.In != InBody {
+					return fmt.Errorf("%s/%s: 参数 %s 的 type=object 只能用在 in=body", s.Type, t.Name, p.Name)
+				}
 			default:
 				return fmt.Errorf("%s/%s: 参数 %s 的 type=%q 不支持", s.Type, t.Name, p.Name, p.Type)
 			}
 			if p.In == InBody && t.Method == "GET" {
 				return fmt.Errorf("%s/%s: GET 不能带 body 参数 %s", s.Type, t.Name, p.Name)
 			}
+			if p.BodyPath != "" {
+				if p.In != InBody {
+					return fmt.Errorf("%s/%s: 参数 %s 的 bodyPath 只能用在 in=body", s.Type, t.Name, p.Name)
+				}
+				if err := checkDotPath(p.BodyPath); err != nil {
+					return fmt.Errorf("%s/%s: 参数 %s 的 bodyPath %w", s.Type, t.Name, p.Name, err)
+				}
+			}
+		}
+		if from := t.Result.ColumnsFromParam; from != "" && !pseen[from] {
+			return fmt.Errorf("%s/%s: columnsFromParam=%q 不是这个工具的参数", s.Type, t.Name, from)
+		}
+	}
+	// 没用到就不许声明：否则这个开关会被顺手加到每份声明上，失去「这份需要
+	// 人工复核」的信号意义。
+	if s.PostReads && !postReadUsed {
+		return fmt.Errorf("%s: 声明了 postReads 但没有 POST 的只读工具，去掉它", s.Type)
+	}
+	return nil
+}
+
+// checkLogin 校验登录声明，重点是 body 里的取值标记。
+func (s Spec) checkLogin() error {
+	l := s.Auth.Login
+	if l == nil {
+		return fmt.Errorf("缺失：auth.kind=login 必须给出 login 段")
+	}
+	if !strings.HasPrefix(l.Path, "/") {
+		return fmt.Errorf("path %q 必须以 / 开头", l.Path)
+	}
+	if len(l.Body) == 0 {
+		return fmt.Errorf("body 不能为空")
+	}
+	secrets := 0
+	for k, v := range l.Body {
+		str, ok := v.(string)
+		if !ok {
+			continue // 数字、布尔等字面量，照原样发
+		}
+		for _, m := range tokenRe.FindAllStringSubmatch(str, -1) {
+			tok := strings.TrimSpace(m[1])
+			switch {
+			case tok == "account":
+			case tok == "secret":
+				secrets++
+			case strings.HasPrefix(tok, "field:"):
+				name := strings.TrimSpace(strings.TrimPrefix(tok, "field:"))
+				if _, ok := s.Field(name); !ok {
+					return fmt.Errorf("body.%s 引用了不存在的字段 %q", k, name)
+				}
+			default:
+				return fmt.Errorf("body.%s 里的标记 {{%s}} 不认识（只有 account / secret / field:名字）", k, tok)
+			}
+		}
+	}
+	if secrets != 1 {
+		return fmt.Errorf("body 里 {{secret}} 必须出现一次，现在出现了 %d 次", secrets)
+	}
+	return nil
+}
+
+func checkDotPath(p string) error {
+	if strings.HasPrefix(p, ".") || strings.HasSuffix(p, ".") || strings.Contains(p, "..") {
+		return fmt.Errorf("%q 形状不对", p)
+	}
+	for _, seg := range strings.Split(p, ".") {
+		if !paramNameRe.MatchString(seg) {
+			return fmt.Errorf("%q 里的 %q 不是合法键名", p, seg)
 		}
 	}
 	return nil

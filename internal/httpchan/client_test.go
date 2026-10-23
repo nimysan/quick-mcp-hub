@@ -217,7 +217,7 @@ func TestPathParamCannotTraverse(t *testing.T) {
 func TestShapeKeepsScalarAndObject(t *testing.T) {
 	var v any
 	json.Unmarshal([]byte(`{"login":"nimysan","name":"叶","noise":1}`), &v)
-	out, err := shape(v, Result{Fields: []string{"login", "name"}})
+	out, err := shape(v, Result{Fields: []string{"login", "name"}}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

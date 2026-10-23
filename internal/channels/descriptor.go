@@ -65,10 +65,13 @@ type Descriptor struct {
 	// SecretField 指出哪个字段是密码类，只有它进密码管理器。
 	SecretField string `json:"secretField"`
 	// Available 为 false 表示「待实现」，页面上灰掉且不可添加。
-	Available bool     `json:"available"`
-	Tools     []string `json:"tools,omitempty"`
-	HelpURL   string   `json:"helpUrl,omitempty"`
-	Fields    []Field  `json:"fields"`
+	Available bool `json:"available"`
+	// NeedsReview 表示这份声明里有「方法本身不能证明无害」的只读工具
+	// （见 httpchan.Spec.PostReads），页面上要标出来。
+	NeedsReview bool     `json:"needsReview,omitempty"`
+	Tools       []string `json:"tools,omitempty"`
+	HelpURL     string   `json:"helpUrl,omitempty"`
+	Fields      []Field  `json:"fields"`
 }
 
 // Field 按名字取字段。
@@ -225,6 +228,7 @@ func httpDescriptor(s httpchan.Spec) Descriptor {
 		AccountField: s.Account.Name,
 		SecretField:  s.Secret.Name,
 		Available:    true,
+		NeedsReview:  s.PostReads,
 		Tools:        tools,
 		HelpURL:      s.HelpURL,
 		Fields:       fields,

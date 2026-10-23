@@ -66,6 +66,8 @@
   .ptype.sel{border:2px solid var(--accent);background:color-mix(in srgb,var(--accent) 10%,transparent)}
   .ptype.off{opacity:.45;cursor:not-allowed}
   .ptype .n{font-weight:600}
+  .rv{font-size:10px;font-weight:600;padding:1px 5px;border-radius:4px;vertical-align:1px;
+      color:#92400e;background:#fef3c7;border:1px solid #fcd34d;cursor:help}
   .ptype .s{font-size:11px;color:var(--muted);margin-top:2px}
   .field{margin-bottom:12px}
   .field label{display:block;font-size:12px;font-weight:600;margin-bottom:4px}
@@ -162,7 +164,7 @@ function openAdd(){
       <div class="grid">${DESCRIPTORS.map(d=>`
         <div class="ptype ${d.available?(d.type===sel?'sel':''):'off'}"
              ${d.available?`onclick="pick('${d.type}')"`:''}>
-          <div class="n">${d.icon} ${d.name}</div><div class="s">${esc(d.summary)}</div>
+          <div class="n">${d.icon} ${d.name}${d.needsReview?' <span class="rv" title="这个系统的读操作也是 POST，声明需人工复核">复核</span>':''}</div><div class="s">${esc(d.summary)}</div>
         </div>`).join("")}</div>
       <div class="foot"><button onclick="close()">取消</button>
         <button class="primary" style="margin-left:auto" onclick="pickNext()">下一步</button></div>`;

@@ -99,6 +99,57 @@ func TestValidateRejects(t *testing.T) {
 		{"GET 带 body 参数", "不能带 body", func(s *Spec) {
 			s.Tools[0].Params = append(s.Tools[0].Params, Param{Name: "x", In: InBody})
 		}},
+		{"占用多账号保留参数名", "保留名", func(s *Spec) {
+			s.Tools[0].Params = append(s.Tools[0].Params, Param{Name: ReservedAccountParam, In: InQuery})
+		}},
+		{"login 缺 login 段", "缺失", func(s *Spec) { s.Auth = Auth{Kind: AuthLogin}; s.Test = Endpoint{} }},
+		{"login 体里没有 secret", "必须出现一次", func(s *Spec) {
+			s.Auth = Auth{Kind: AuthLogin, Login: &Login{Path: "/login", Body: map[string]any{"u": "{{account}}"}}}
+			s.Test = Endpoint{}
+		}},
+		{"login 体引用不存在的字段", "不存在的字段", func(s *Spec) {
+			s.Auth = Auth{Kind: AuthLogin, Login: &Login{Path: "/login",
+				Body: map[string]any{"p": "{{secret}}", "a": "{{field:nope}}"}}}
+			s.Test = Endpoint{}
+		}},
+		{"login 体里有不认识的标记", "不认识", func(s *Spec) {
+			s.Auth = Auth{Kind: AuthLogin, Login: &Login{Path: "/login",
+				Body: map[string]any{"p": "{{secret}}", "x": "{{env:PATH}}"}}}
+			s.Test = Endpoint{}
+		}},
+		{"login 渠道还声明了 test", "不要声明 test", func(s *Spec) {
+			s.Auth = Auth{Kind: AuthLogin, Login: &Login{Path: "/login",
+				Body: map[string]any{"p": "{{secret}}"}}}
+		}},
+		{"非 login 渠道带 login 段", "只有 auth.kind=login", func(s *Spec) {
+			s.Auth.Login = &Login{Path: "/login", Body: map[string]any{"p": "{{secret}}"}}
+		}},
+		{"POST 只读但没声明 postReads", "postReads", func(s *Spec) {
+			s.Tools[0].Method = "POST"
+			s.Tools[0].Params = []Param{{Name: "id", In: InBody}}
+			s.Tools[0].Path = "/items"
+		}},
+		{"声明了 postReads 却没用到", "去掉它", func(s *Spec) { s.PostReads = true }},
+		{"bodyPath 用在非 body 参数上", "只能用在 in=body", func(s *Spec) {
+			s.Tools[0].Params[0].BodyPath = "data.id"
+		}},
+		{"bodyPath 形状不对", "形状不对", func(s *Spec) {
+			s.Tools[0].Method = "POST"
+			s.Tools[0].Path = "/items"
+			s.Tools[0].ReadOnly = false
+			s.Tools[0].Params = []Param{{Name: "id", In: InBody, BodyPath: "data..id"}}
+		}},
+		{"object 参数用在 query 上", "只能用在 in=body", func(s *Spec) {
+			s.Tools[0].Params = []Param{{Name: "id", In: InQuery, Type: "object"}}
+			s.Tools[0].Path = "/items"
+		}},
+		{"columns 和 columnsFromParam 同时给", "只能有一个", func(s *Spec) {
+			s.Tools[0].Result = Result{Columns: []string{"a"}, ColumnsFromParam: "id"}
+		}},
+		{"columnsFromParam 指向不存在的参数", "不是这个工具的参数", func(s *Spec) {
+			s.Tools[0].Result = Result{ColumnsFromParam: "nope"}
+		}},
+		{"failWhen 缺 path", "failWhen 必须", func(s *Spec) { s.FailWhen = &FailWhen{} }},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
