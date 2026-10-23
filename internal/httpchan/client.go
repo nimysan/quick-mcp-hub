@@ -69,6 +69,30 @@ func (r Runtime) AllowWrite() bool {
 	return false
 }
 
+// Trace 记录一次调用的诊断信息，供 catalog try 用。
+//
+// 它要回答的是「声明里写的字段路径在真实响应里到底存不存在」—— 这正是
+// 仿真测试测不出、而真实环境里一跑就暴露的那类问题：project() 取不到的
+// 路径会被静默丢掉，结果看起来「成功了，只是少几个字段」。
+type Trace struct {
+	Method string
+	Path   string
+	Status int
+	// Declared 是声明里要求保留的字段路径。
+	Declared []string
+	// Missing 是键根本不存在的路径 —— 这类才可能是声明写错了。
+	Missing []string
+	// Nulls 是路径上遇到 null 的那些：字段在、值是空。这是数据状态
+	// （没负责人、没优先级），不是声明的问题。把两者混成一类会让诊断
+	// 对正常数据报警，作者很快就会学会无视它。
+	Nulls []string
+	// Items 是列表结果的条数，-1 表示结果不是列表。
+	Items int
+	// MetaFound / MetaMissing 对应 result.meta 里声明的分页字段。
+	MetaFound   []string
+	MetaMissing []string
+}
+
 // Client 执行声明式调用。零值可用。
 //
 // 对登录式渠道（auth.kind=login）它是有状态的：每个实例一份会话（cookie jar），
@@ -77,6 +101,10 @@ func (r Runtime) AllowWrite() bool {
 type Client struct {
 	// HTTP 可替换，测试里指向 httptest。
 	HTTP *http.Client
+
+	// Trace 非空时记录最后一次调用的诊断信息。只给单线程的 catalog try 用，
+	// 不是并发安全的。
+	Trace *Trace
 
 	mu       sync.Mutex
 	sessions map[string]*session
@@ -452,6 +480,10 @@ func (c *Client) send(hc *http.Client, rt Runtime, t Tool, req *http.Request, se
 		return nil, nil, false, fmt.Errorf("响应不是 JSON（%s）: %s", resp.Header.Get("Content-Type"), excerpt(raw))
 	}
 
+	if c.Trace != nil {
+		c.Trace.record(t, resp.StatusCode, decoded)
+	}
+
 	// HTTP 200 但业务失败：不判定就会把失败当成功，模型拿着空结果编结论。
 	if fw := rt.Spec.FailWhen; fw != nil {
 		if got, ok := pick(decoded, fw.Path); ok {
@@ -530,6 +562,84 @@ func shape(v any, r Result, cols []string) (any, map[string]any, error) {
 	default:
 		return project(v, r.Fields), meta, nil
 	}
+}
+
+// record 把一次调用的诊断信息填进 Trace：逐条检查声明的字段路径在真实
+// 响应里是否存在。
+func (tr *Trace) record(t Tool, status int, decoded any) {
+	tr.Method, tr.Path, tr.Status = t.Method, t.Path, status
+	tr.Declared, tr.Missing = nil, nil
+	tr.MetaFound, tr.MetaMissing = nil, nil
+	tr.Items = -1
+
+	for _, path := range t.Result.Meta {
+		if _, ok := pick(decoded, path); ok {
+			tr.MetaFound = append(tr.MetaFound, path)
+		} else {
+			tr.MetaMissing = append(tr.MetaMissing, path)
+		}
+	}
+
+	target := decoded
+	if t.Result.Path != "" {
+		got, ok := pick(decoded, t.Result.Path)
+		if !ok {
+			tr.Missing = append(tr.Missing, t.Result.Path+"（整个子树都没取到）")
+			return
+		}
+		target = got
+	}
+	// 列表结果拿第一条当样本：字段路径是逐条一样的。
+	if arr, ok := target.([]any); ok {
+		tr.Items = len(arr)
+		if len(arr) == 0 {
+			return // 空列表验不出字段路径，这件事由调用方报告
+		}
+		target = arr[0]
+	}
+	for _, f := range t.Result.Fields {
+		tr.Declared = append(tr.Declared, f)
+		switch ok, reason := probePath(target, f); {
+		case ok:
+		case strings.Contains(reason, "null"):
+			tr.Nulls = append(tr.Nulls, f+"（"+reason+"）")
+		default:
+			tr.Missing = append(tr.Missing, f+"（"+reason+"）")
+		}
+	}
+}
+
+// probePath 走一遍点号路径，取不到时说清停在哪、为什么。
+//
+// 区分「键不存在」和「值是 null」是关键：前者可能是声明写错了，后者只是
+// 这条数据没有这个值。
+func probePath(v any, path string) (bool, string) {
+	cur := v
+	segs := strings.Split(path, ".")
+	for i, seg := range segs {
+		if arr, isArr := cur.([]any); isArr && len(arr) == 1 {
+			if _, isMap := arr[0].(map[string]any); isMap {
+				cur = arr[0]
+			}
+		}
+		m, isMap := cur.(map[string]any)
+		if !isMap {
+			at := strings.Join(segs[:i], ".")
+			if at == "" {
+				at = "响应根"
+			}
+			return false, at + " 不是对象"
+		}
+		next, present := m[seg]
+		if !present {
+			return false, "没有键 " + strings.Join(segs[:i+1], ".")
+		}
+		if next == nil {
+			return false, strings.Join(segs[:i+1], ".") + " 是 null"
+		}
+		cur = next
+	}
+	return true, ""
 }
 
 // lastSeg 取点号路径的最后一段，作为 meta 里的键名。

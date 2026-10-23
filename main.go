@@ -57,8 +57,16 @@ func main() {
 		catList     = flag.Bool("catalog-list", false, "列出当前生效的渠道声明及其来源层后退出")
 		catValidate = flag.String("catalog-validate", "", "校验一份渠道声明文件（JSON）后退出")
 		catSync     = flag.String("catalog-sync", "", "从该 https 地址抓取并验签远端渠道目录，写入本地缓存后退出")
+		catTry      = flag.String("catalog-try", "", "用真实凭据跑一份渠道声明，逐条核对字段路径后退出")
+		tryTool     = flag.String("try-tool", "", "只跑这一个工具（配合 -catalog-try）")
+		tryWrite    = flag.Bool("try-write", false, "连写工具一起跑（默认只跑只读工具）")
 		showVersion = flag.Bool("version", false, "打印版本号后退出")
 	)
+	tryFields := fieldFlags{}
+	flag.Var(tryFields, "field", "渠道字段值，形如 site=https://…，可重复（配合 -catalog-try）")
+	tryArgs := fieldFlags{}
+	flag.Var(tryArgs, "try-arg", "工具参数，形如 issueKey=ENG-1，可重复（配合 -try-tool）")
+
 	flag.Parse()
 
 	log.SetFlags(0)
@@ -90,6 +98,13 @@ func main() {
 		os.Exit(runCatalogValidate(*catValidate))
 	case *catSync != "":
 		os.Exit(runCatalogSync(*catSync))
+	}
+
+	if *catTry != "" {
+		os.Exit(runCatalogTry(store, tryOptions{
+			path: *catTry, account: *account, fields: tryFields,
+			tool: *tryTool, args: tryArgs, write: *tryWrite,
+		}))
 	}
 
 	// 凭据管理子命令不需要邮箱配置，先处理掉。

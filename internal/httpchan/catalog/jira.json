@@ -1,7 +1,7 @@
 {
   "id": "jira",
   "name": "Jira",
-  "version": 3,
+  "version": 4,
   "icon": "🎫",
   "summary": "Jira Cloud REST API · 邮箱 + API Token",
   "tags": [
@@ -100,7 +100,7 @@
     {
       "name": "jira_search_issues",
       "title": "搜索事项",
-      "description": "用 JQL 查 Jira 事项，这是找工单的主要方式。常用写法：`project = ENG AND status != Done ORDER BY updated DESC`、`assignee = currentUser() AND status = \"In Progress\"`、`created >= -7d`。返回的是列表（含事项键如 ENG-123），不含描述正文和评论；要看某条的内容，拿事项键调 jira_get_issue。不知道项目键怎么拼就先调 jira_list_projects。结果里的 nextPageToken 非空说明还有下一页，把它传回来可以继续取。",
+      "description": "用 JQL 查 Jira 事项，这是找工单的主要方式。**JQL 必须带限定条件**，光写 ORDER BY 会被接口拒绝（Unbounded JQL queries are not allowed）——至少要有 project、assignee、status、created 之类的条件之一。常用写法：`project = ENG AND status != Done ORDER BY updated DESC`、`assignee = currentUser() AND status = \"In Progress\"`、`created >= -7d`。返回的是列表（含事项键如 ENG-123），不含描述正文和评论；要看某条的内容，拿事项键调 jira_get_issue。不知道项目键怎么拼就先调 jira_list_projects。结果里的 nextPageToken 非空说明还有下一页，把它传回来可以继续取。",
       "readOnly": true,
       "method": "GET",
       "path": "/rest/api/3/search/jql",
@@ -109,7 +109,7 @@
           "name": "jql",
           "in": "query",
           "required": true,
-          "description": "JQL 查询语句，例如 project = ENG AND status != Done ORDER BY updated DESC"
+          "description": "JQL 查询语句，必须带限定条件，如 project = ENG AND status != Done ORDER BY updated DESC"
         },
         {
           "name": "fields",

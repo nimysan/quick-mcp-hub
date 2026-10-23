@@ -229,3 +229,108 @@ func TestShapeKeepsScalarAndObject(t *testing.T) {
 		t.Error("未声明字段漏出")
 	}
 }
+
+// Trace 要能区分「键不存在」和「值是 null」。
+//
+// 混成一类的后果是诊断对正常数据报警：一条没有负责人的 Jira 事项会被报成
+// 「声明的字段不存在」，作者很快就会学会无视这个诊断。
+func TestProbePathDistinguishesMissingFromNull(t *testing.T) {
+	var v any
+	json.Unmarshal([]byte(`{"fields":{"summary":"标题","assignee":null,"status":{"name":"Done"}}}`), &v)
+
+	cases := []struct {
+		path   string
+		ok     bool
+		reason string
+	}{
+		{"fields.summary", true, ""},
+		{"fields.status.name", true, ""},
+		{"fields.assignee.displayName", false, "fields.assignee 是 null"},
+		{"fields.priority.name", false, "没有键 fields.priority"},
+		{"fields.summary.nope", false, "fields.summary 不是对象"},
+		{"nope", false, "没有键 nope"},
+	}
+	for _, c := range cases {
+		ok, reason := probePath(v, c.path)
+		if ok != c.ok {
+			t.Errorf("%s: ok=%v，期望 %v（%s）", c.path, ok, c.ok, reason)
+			continue
+		}
+		if reason != c.reason {
+			t.Errorf("%s: 原因是 %q，期望 %q", c.path, reason, c.reason)
+		}
+	}
+}
+
+// Trace 在真实调用里把三类情况分开记：取到的、键不存在的、值为空的。
+func TestTraceRecordsFieldDiagnostics(t *testing.T) {
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"total":1,"values":[{"key":"A-1","fields":{"summary":"有","assignee":null}}]}`))
+	}))
+	defer srv.Close()
+
+	spec := base()
+	spec.BaseURL = srv.URL
+	spec.Tools = []Tool{{
+		Name: "demo_list", Description: "列一下", ReadOnly: true,
+		Method: "GET", Path: "/items",
+		Result: Result{
+			Path:   "values",
+			Fields: []string{"key", "fields.summary", "fields.assignee.displayName", "fields.priority.name"},
+			Meta:   []string{"total", "nextPageToken"},
+		},
+	}}
+	if err := spec.Validate(); err != nil {
+		t.Fatalf("声明不合法: %v", err)
+	}
+
+	rt := Runtime{Spec: spec, Account: "me", Secret: func() (string, error) { return "tok-123456", nil }}
+	c := &Client{HTTP: srv.Client(), Trace: &Trace{}}
+	if _, _, err := c.Call(context.Background(), rt, "demo_list", nil); err != nil {
+		t.Fatalf("调用失败: %v", err)
+	}
+
+	tr := c.Trace
+	if tr.Items != 1 {
+		t.Errorf("条数不对: %d", tr.Items)
+	}
+	if len(tr.Missing) != 1 || !strings.Contains(tr.Missing[0], "fields.priority") {
+		t.Errorf("键不存在的应当只有 priority: %v", tr.Missing)
+	}
+	if len(tr.Nulls) != 1 || !strings.Contains(tr.Nulls[0], "assignee") {
+		t.Errorf("值为空的应当只有 assignee: %v", tr.Nulls)
+	}
+	if len(tr.MetaFound) != 1 || tr.MetaFound[0] != "total" {
+		t.Errorf("meta 取到的不对: %v", tr.MetaFound)
+	}
+	if len(tr.MetaMissing) != 1 || tr.MetaMissing[0] != "nextPageToken" {
+		t.Errorf("meta 没取到的不对: %v", tr.MetaMissing)
+	}
+}
+
+// 整个子树都取不到时要直接点出来，而不是逐个字段报错。
+func TestTraceReportsMissingResultPath(t *testing.T) {
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"somethingElse":[]}`))
+	}))
+	defer srv.Close()
+
+	spec := base()
+	spec.BaseURL = srv.URL
+	spec.Tools = []Tool{{
+		Name: "demo_list", Description: "列一下", ReadOnly: true,
+		Method: "GET", Path: "/items",
+		Result: Result{Path: "values", Fields: []string{"key"}},
+	}}
+	rt := Runtime{Spec: spec, Account: "me", Secret: func() (string, error) { return "tok-123456", nil }}
+	c := &Client{HTTP: srv.Client(), Trace: &Trace{}}
+
+	if _, _, err := c.Call(context.Background(), rt, "demo_list", nil); err == nil {
+		t.Fatal("取不到声明的 result.path 应当是错误")
+	}
+	if len(c.Trace.Missing) != 1 || !strings.Contains(c.Trace.Missing[0], "整个子树") {
+		t.Errorf("应当点出整个子树取不到: %v", c.Trace.Missing)
+	}
+}
