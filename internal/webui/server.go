@@ -136,11 +136,14 @@ func (s *Server) handleTest(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 45*time.Second)
 	defer cancel()
-	if err := s.mgr.Test(ctx, req.Type, req.Account, req.Values); err != nil {
+	identity, err := s.mgr.Identify(ctx, req.Type, req.Account, req.Values)
+	if err != nil {
 		writeJSON(w, http.StatusOK, map[string]any{"ok": false, "error": err.Error()})
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+	// identity 是对方系统报回来的身份（如 GitHub 的 login），让用户看到
+	// 「以谁的身份连上了」。邮件渠道没有这个概念，返回 null。
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "identity": identity})
 }
 
 func (s *Server) handleDelete(w http.ResponseWriter, r *http.Request) {

@@ -1,8 +1,13 @@
 # mcp-hub
 
 单文件可执行的 MCP 服务器：把你用的各个系统当「渠道」接进来，凭据存在操作系统
-自己的密码管理器里。第一个渠道是邮件（QQ 邮箱 / 163 / 126 / Gmail / Outlook，
-走 IMAP/SMTP）。
+自己的密码管理器里。渠道分两类：
+
+- **邮件**（QQ 邮箱 / 163 / 126 / Gmail / Outlook，走 IMAP/SMTP）——有状态协议，
+  实现编译在程序里。
+- **声明式 HTTPS 渠道**——一个系统怎么接全部写成 JSON 数据，由通用执行器去跑。
+  第一个是 GitHub。加一个这样的渠道**不写 Go 代码**，往
+  `internal/httpchan/catalog/` 放一个 JSON 文件即可，将来可以由服务器下发。
 
 目标机**不需要 Node、不需要 Python、不需要 npm**：一个二进制，Windows / macOS /
 Linux 都是本地交叉编译产出。
@@ -136,13 +141,64 @@ Windows 上**不需要** `cmd /c` 包一层 —— 那是 `npx` 这类 `.cmd` �
 Quick 的代码沙箱没有公网出口，所有对外访问都必须走 connector；
 本程序是独立 OS 进程，不在那个沙箱里，所以 IMAP/SMTP 直连可用。
 
+## 声明式 HTTPS 渠道
+
+一份 JSON 就是一个渠道。`internal/httpchan/catalog/github.json` 是第一个，
+`internal/httpchan/spec.go` 是完整的 schema。骨架：
+
+```jsonc
+{
+  "type": "github",                       // 渠道 id，工具名必须以 github_ 开头
+  "integration": "github",                // 凭据在密码管理器里的分段
+  "baseUrl": "https://api.github.com",    // 固定接入点；自建系统改用 baseUrlField
+  "account": { "name": "login", "label": "GitHub 用户名" },
+  "secret":  { "name": "token", "label": "个人访问令牌 (PAT)" },
+  "auth":    { "kind": "bearer" },        // bearer | header | basic | query
+  "test":    { "method": "GET", "path": "/user" },
+  "tools": [{
+    "name": "github_list_issues", "description": "……", "readOnly": true,
+    "method": "GET", "path": "/repos/{owner}/{repo}/issues",
+    "params": [
+      { "name": "owner", "in": "path",  "required": true, "description": "……" },
+      { "name": "state", "in": "query", "default": "open" }
+    ],
+    "result": { "limit": 50, "fields": ["number", "title", "state", "user.login"] }
+  }]
+}
+```
+
+页面、表单、凭据存放、工具注册都由这份数据驱动，没有一行渠道专属代码。
+`result` 是必要的：不裁剪的话一次 issue 列表就有上万 token 的噪音。
+
+**校验在加载时就做**（`Spec.Validate`，远端下发的内容走同一个入口），几条底线：
+
+- `baseUrl` 只能是 https，且不允许含占位符——主机名不能由目录模板拼出。
+  自建系统用 `baseUrlField` 让**用户自己**填站点地址，运行时再校一次 https。
+- 路径只能用 `{name}` 占位，每个占位都要有对应的 `in: path` 参数；
+  参数值里的 `/` 会被转义，模型给 `../../x` 也逃不出声明的路径。
+- 工具名必须以渠道 id 为前缀，避免两个渠道的工具互相覆盖。
+- `readOnly` 只能给 GET。非只读工具要渠道上打开「允许写入操作」才注册给模型
+  ——不注册比注册后拒绝更安全，模型看不到的工具不会被诱导去调。
+- 解析时拒绝未知字段：下发内容用了更新的 schema 时，静默忽略会让渠道以
+  「少了一半行为」的样子跑起来。
+
+GitHub 渠道自带 6 个工具：`github_whoami`、`github_list_my_repos`、
+`github_search_repos`、`github_list_issues`、`github_get_issue`，以及写开关控制的
+`github_create_issue`。
+
 ## 已知限制
 
 - 只处理 `text/plain`（没有就退回 `text/html` 原文，不做 HTML 转纯文本）。
 - 附件只列文件名，不下载内容。
 - 未做代码签名，首次在 Windows 上运行可能被 SmartScreen 拦（本地编译本地拷贝通常无感）。
 - Windows 控制台代码页可能让 stderr 上的中文日志显示成乱码，不影响功能。
-- 渠道配置页面（本机 web UI）尚未实现，目前只有上面那几个命令行子命令。
+- 渠道目录只有内置一层（`go:embed`）。远端下发 + 验签、用户私有目录这两层还没做，
+  但 `Parse` / `Validate` 已经是三层共用的入口。
+- 同一类渠道配多个账号时，工具名会撞（两个 GitHub 账号都想注册 `github_whoami`）。
+  现在后注册的覆盖前一个，还没有账号维度的分派。
+- 邮件渠道仍从环境变量读配置，页面里保存的邮件渠道还没接到 MCP 注册链路上；
+  声明式 HTTPS 渠道已经是从页面配置读的。
+- 客户端不会自动刷新工具列表：在页面里新增渠道后，Amazon Quick 那边要手动点一次 Sync。
 
 ## 依赖
 

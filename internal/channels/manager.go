@@ -6,6 +6,7 @@ import (
 
 	"github.com/nimysan/mcp-hub/internal/config"
 	"github.com/nimysan/mcp-hub/internal/credstore"
+	"github.com/nimysan/mcp-hub/internal/httpchan"
 	"github.com/nimysan/mcp-hub/internal/mailbox"
 )
 
@@ -71,7 +72,11 @@ func (m *Manager) Save(typ string, values map[string]string) (Instance, error) {
 			return Instance{}, err
 		}
 	} else if _, err := m.creds.Secret(ref).Value(); err != nil {
-		return Instance{}, fmt.Errorf("%s 未填写，且密码管理器中也没有现成凭据", d.SecretField)
+		label := d.SecretField
+		if f, ok := d.Field(d.SecretField); ok {
+			label = f.Label
+		}
+		return Instance{}, fmt.Errorf("%s 未填写，且%s里也没有现成凭据", label, credstore.BackendName())
 	}
 
 	in := Instance{Type: typ, Account: account, Settings: settings, Enabled: true}
@@ -94,7 +99,7 @@ func (m *Manager) Delete(typ, account string) error {
 	return m.creds.Delete(credstore.Ref{Integration: d.Integration, Account: account})
 }
 
-// Test 验证一个渠道实例能否连通。目前只有邮件渠道。
+// Test 验证一个渠道实例能否连通。
 // values 非空时用表单里的临时值测（含刚填、尚未保存的密码）；
 // 为空时用已保存的实例 + 密码管理器里的凭据测。
 func (m *Manager) Test(ctx context.Context, typ, account string, values map[string]string) error {
@@ -102,22 +107,113 @@ func (m *Manager) Test(ctx context.Context, typ, account string, values map[stri
 	if !ok {
 		return fmt.Errorf("未知渠道类型 %q", typ)
 	}
-	if d.Integration != "mail" {
+
+	switch d.Kind {
+	case KindHTTP:
+		rt, err := m.httpRuntime(d, account, values)
+		if err != nil {
+			return err
+		}
+		if _, err := new(httpchan.Client).Test(ctx, rt); err != nil {
+			return err
+		}
+		return nil
+	case KindMail:
+		cfg, err := m.mailConfig(d, account, values)
+		if err != nil {
+			return err
+		}
+		imapErr, smtpErr := mailbox.SelfTest(ctx, cfg)
+		if imapErr != nil {
+			return fmt.Errorf("IMAP: %w", imapErr)
+		}
+		if smtpErr != nil {
+			return fmt.Errorf("SMTP: %w", smtpErr)
+		}
+		return nil
+	default:
 		return fmt.Errorf("渠道 %s 暂不支持连通性测试", d.Name)
 	}
+}
 
-	cfg, err := m.mailConfig(d, account, values)
+// Identify 测试连通并返回对方系统报回来的身份信息（如 GitHub 的 login），
+// 让用户在页面上看到「以谁的身份连上了」，而不只是一个绿勾。
+func (m *Manager) Identify(ctx context.Context, typ, account string, values map[string]string) (any, error) {
+	d, ok := ByType(typ)
+	if !ok {
+		return nil, fmt.Errorf("未知渠道类型 %q", typ)
+	}
+	if d.Kind != KindHTTP {
+		return nil, m.Test(ctx, typ, account, values)
+	}
+	rt, err := m.httpRuntime(d, account, values)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	imapErr, smtpErr := mailbox.SelfTest(ctx, cfg)
-	if imapErr != nil {
-		return fmt.Errorf("IMAP: %w", imapErr)
+	return new(httpchan.Client).Test(ctx, rt)
+}
+
+// HTTPRuntimes 把所有已启用的声明式渠道装配成运行态，供 MCP 启动时注册工具用。
+func (m *Manager) HTTPRuntimes() ([]httpchan.Runtime, error) {
+	views, err := m.List()
+	if err != nil {
+		return nil, err
 	}
-	if smtpErr != nil {
-		return fmt.Errorf("SMTP: %w", smtpErr)
+	var out []httpchan.Runtime
+	for _, v := range views {
+		if v.Descriptor.Kind != KindHTTP || !v.Instance.Enabled {
+			continue
+		}
+		rt, err := m.httpRuntime(v.Descriptor, v.Instance.Account, nil)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, rt)
 	}
-	return nil
+	return out, nil
+}
+
+// httpRuntime 把一个声明式渠道（已保存实例或表单临时值）变成 httpchan.Runtime。
+func (m *Manager) httpRuntime(d Descriptor, account string, values map[string]string) (httpchan.Runtime, error) {
+	spec, ok := httpchan.ByType(d.Type)
+	if !ok {
+		return httpchan.Runtime{}, fmt.Errorf("渠道 %s 的声明已不在目录里", d.Type)
+	}
+
+	var in Instance
+	if len(values) > 0 {
+		acc, _, settings, err := d.Validate(values)
+		if err != nil {
+			return httpchan.Runtime{}, err
+		}
+		if account == "" {
+			account = acc
+		}
+		in = Instance{Type: d.Type, Account: account, Settings: settings}
+	} else {
+		got, ok, err := m.store.Get(d.Type, account)
+		if err != nil {
+			return httpchan.Runtime{}, err
+		}
+		if !ok {
+			return httpchan.Runtime{}, fmt.Errorf("找不到渠道 %s/%s", d.Type, account)
+		}
+		in = got
+	}
+
+	ref := credstore.Ref{Integration: d.Integration, Account: in.Account}
+	secret := m.creds.Secret(ref)
+	// 表单测试时密码可能是刚填、还没入库的，用一个临时 handle 承载它。
+	if v, ok := values[d.SecretField]; ok && v != "" {
+		secret = credstore.Literal(ref, v)
+	}
+
+	return httpchan.Runtime{
+		Spec:     spec,
+		Account:  in.Account,
+		Settings: in.Settings,
+		Secret:   secret.Value,
+	}, nil
 }
 
 // MailConfigs 把所有已启用的邮件渠道装配成 mailbox 要的 Config，
@@ -129,7 +225,7 @@ func (m *Manager) MailConfigs() ([]config.Config, error) {
 	}
 	var out []config.Config
 	for _, v := range views {
-		if v.Descriptor.Integration != "mail" || !v.Instance.Enabled {
+		if v.Descriptor.Kind != KindMail || !v.Instance.Enabled {
 			continue
 		}
 		cfg, err := m.mailConfig(v.Descriptor, v.Instance.Account, nil)

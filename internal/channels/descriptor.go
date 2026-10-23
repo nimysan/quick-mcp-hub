@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/nimysan/mcp-hub/internal/httpchan"
 	"github.com/nimysan/mcp-hub/internal/mailprovider"
 )
 
@@ -50,6 +51,10 @@ type Descriptor struct {
 	Type string `json:"type"`
 	Name string `json:"name"`
 	Icon string `json:"icon"`
+	// Kind 说明这个渠道由哪个执行器承载：
+	// "mail" 是编译进来的 IMAP/SMTP 实现，"http" 是声明式 HTTPS 渠道。
+	// 页面不关心这个值，Manager 靠它分派。
+	Kind string `json:"kind"`
 	// Summary 是选择列表上的一行说明。
 	Summary string `json:"summary"`
 	// Integration 是凭据在系统密码管理器里的分段名（credstore.Ref.Integration）。
@@ -78,6 +83,10 @@ func (d Descriptor) Field(name string) (Field, bool) {
 
 // Validate 校验一份表单值，并把非敏感值整理成待保存的 settings。
 // 返回的 settings 一定不含密码类字段。
+//
+// 密码字段不在这里强制必填：编辑渠道时留空表示「不改密码」，此时凭据
+// 应当已经在系统密码管理器里。「既没填又没存过」由 Manager.Save 判断，
+// 它是唯一能去问密码管理器的地方。
 func (d Descriptor) Validate(values map[string]string) (account, secret string, settings map[string]string, err error) {
 	settings = make(map[string]string, len(d.Fields))
 	for _, f := range d.Fields {
@@ -85,7 +94,7 @@ func (d Descriptor) Validate(values map[string]string) (account, secret string, 
 		if v == "" {
 			v = f.Default
 		}
-		if f.Required && v == "" {
+		if f.Required && v == "" && f.Name != d.SecretField {
 			return "", "", nil, fmt.Errorf("%s 不能为空", f.Label)
 		}
 		switch f.Name {
@@ -110,6 +119,12 @@ func (d Descriptor) Validate(values map[string]string) (account, secret string, 
 	return account, secret, settings, nil
 }
 
+// KindMail 是编译进程序的邮件实现；KindHTTP 是声明式 HTTPS 渠道。
+const (
+	KindMail = "mail"
+	KindHTTP = "http"
+)
+
 // mailDescriptor 由服务商表生成：各家只差默认主机端口和凭据叫法，
 // 字段结构是同一套，所以不手写五份。
 func mailDescriptor(p mailprovider.Provider) Descriptor {
@@ -117,6 +132,7 @@ func mailDescriptor(p mailprovider.Provider) Descriptor {
 		Type:         p.Type,
 		Name:         p.Name,
 		Icon:         p.Icon,
+		Kind:         KindMail,
 		Summary:      fmt.Sprintf("IMAP / SMTP · %s", p.SecretLabel),
 		Integration:  "mail",
 		AccountField: "user",
@@ -158,19 +174,80 @@ func mailDescriptor(p mailprovider.Provider) Descriptor {
 	}
 }
 
+// httpDescriptor 把一份声明式渠道 Spec 变成页面要的描述符。
+//
+// 这是「远端加一个 connector，客户端不升级就能用」的接缝：Spec 是数据，
+// 页面照描述符渲染，执行器照 Spec 发请求，中间没有任何一行渠道专属代码。
+func httpDescriptor(s httpchan.Spec) Descriptor {
+	fields := []Field{
+		{
+			Name: s.Account.Name, Label: s.Account.Label, Kind: KindText, Required: true,
+			Placeholder: s.Account.Placeholder, Help: s.Account.Help,
+		},
+		{
+			Name: s.Secret.Name, Label: s.Secret.Label, Kind: KindPassword, Required: true,
+			Placeholder: s.Secret.Placeholder, Help: s.Secret.Help,
+		},
+	}
+	if s.HasWriteTools() {
+		// 写开关和邮件渠道的「允许发信」是同一个设计：会改外部系统的工具
+		// 默认不注册给模型，必须在这里显式打开。
+		var names []string
+		for _, t := range s.Tools {
+			if !t.ReadOnly {
+				names = append(names, t.Name)
+			}
+		}
+		fields = append(fields, Field{
+			Name: httpchan.AllowWriteField, Label: "允许写入操作", Kind: KindBool, Default: "false",
+			Help: "关闭时这些工具不会注册给模型：" + strings.Join(names, "、"),
+		})
+	}
+	for _, f := range s.Fields {
+		fields = append(fields, Field{
+			Name: f.Name, Label: f.Label, Kind: KindText, Required: f.Required,
+			Default: f.Default, Placeholder: f.Placeholder, Help: f.Help, Advanced: f.Advanced,
+		})
+	}
+
+	tools := make([]string, 0, len(s.Tools))
+	for _, t := range s.Tools {
+		tools = append(tools, t.Name)
+	}
+
+	return Descriptor{
+		Type:         s.Type,
+		Name:         s.Name,
+		Icon:         s.Icon,
+		Kind:         KindHTTP,
+		Summary:      s.Summary,
+		Integration:  s.Integration,
+		AccountField: s.Account.Name,
+		SecretField:  s.Secret.Name,
+		Available:    true,
+		Tools:        tools,
+		HelpURL:      s.HelpURL,
+		Fields:       fields,
+	}
+}
+
 // planned 是还没实现的渠道，放在页面上只为说明「这里能长出什么」，
-// 不可添加。实现一个就把它从这里挪成真的描述符。
+// 不可添加。实现一个就把它从这里挪成真的描述符 —— 声明式渠道只要往
+// httpchan/catalog 里加一个 JSON 文件，不用碰这里的 Go 代码。
 var planned = []Descriptor{
 	{Type: "jira", Name: "Jira", Icon: "🎫", Summary: "待实现 · 工单读取与检索", Integration: "jira"},
 	{Type: "feishu", Name: "飞书", Icon: "💬", Summary: "待实现 · 消息与文档", Integration: "feishu"},
-	{Type: "custom", Name: "自定义 HTTP", Icon: "➕", Summary: "待实现 · 任意带 API Key 的服务", Integration: "custom"},
 }
 
 // All 返回全部渠道描述符，可用的在前。
 func All() []Descriptor {
-	out := make([]Descriptor, 0, len(mailprovider.All)+len(planned))
+	specs := httpchan.All()
+	out := make([]Descriptor, 0, len(mailprovider.All)+len(specs)+len(planned))
 	for _, p := range mailprovider.All {
 		out = append(out, mailDescriptor(p))
+	}
+	for _, s := range specs {
+		out = append(out, httpDescriptor(s))
 	}
 	return append(out, planned...)
 }

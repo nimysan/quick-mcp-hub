@@ -33,6 +33,7 @@ import (
 	"github.com/nimysan/mcp-hub/internal/channels"
 	"github.com/nimysan/mcp-hub/internal/config"
 	"github.com/nimysan/mcp-hub/internal/credstore"
+	"github.com/nimysan/mcp-hub/internal/httpchan"
 	"github.com/nimysan/mcp-hub/internal/mailbox"
 	"github.com/nimysan/mcp-hub/internal/tools"
 	"github.com/nimysan/mcp-hub/internal/webui"
@@ -101,12 +102,15 @@ func main() {
 		return
 	}
 
-	cfg, err := config.Load(store)
-	if err != nil {
-		log.Fatalf("配置错误: %v", err)
-	}
+	// 邮件渠道仍走环境变量那套配置；缺失不再是致命错误 —— 只配了
+	// GitHub 这类声明式渠道的用户没有邮箱环境变量，服务照样要起得来。
+	cfg, mailErr := config.Load(store)
 
 	if *selftest {
+		if mailErr != nil {
+			fmt.Fprintf(os.Stderr, "邮件渠道未配置: %v\n", mailErr)
+			os.Exit(2)
+		}
 		os.Exit(runSelfTest(cfg))
 	}
 
@@ -115,15 +119,42 @@ func main() {
 
 	server := mcp.NewServer(&mcp.Implementation{
 		Name:    "mcp-hub",
-		Title:   "QQ 邮箱",
+		Title:   "MCP Hub",
 		Version: version,
 	}, nil)
-	tools.Register(server, cfg)
+
+	registered := 0
+	if mailErr == nil {
+		tools.Register(server, cfg)
+		registered++
+		log.Printf("邮件渠道：%s，账号 %s，发信%s", cfg.Provider, cfg.User, enabledText(cfg.AllowSend))
+	} else {
+		log.Printf("邮件渠道未注册：%v", mailErr)
+	}
+
+	// 声明式 HTTPS 渠道来自渠道配置（页面里保存的），凭据在系统密码管理器里。
+	for _, err := range httpchan.Errors() {
+		log.Printf("渠道目录里有一条声明无效，已跳过: %v", err)
+	}
+	runtimes, err := mgr.HTTPRuntimes()
+	if err != nil {
+		log.Printf("读取渠道配置失败: %v", err)
+	}
+	for _, rt := range runtimes {
+		n := tools.RegisterHTTP(server, rt)
+		registered += n
+		log.Printf("%s 渠道：账号 %s，注册 %d 个工具，写入%s",
+			rt.Spec.Name, rt.Account, n, enabledText(rt.AllowWrite()))
+	}
+
+	if registered == 0 {
+		log.Fatalf("没有任何可用渠道。用 %s -ui 打开配置页面添加一个", os.Args[0])
+	}
 
 	// 启动时只报非敏感信息，并且不触发凭据读取 —— 保持惰性，
 	// 免得在锁屏状态下于启动阶段弹出钥匙串授权框。
-	log.Printf("启动 %s（%s，账号 %s，发信%s，凭据后端 %s）",
-		version, cfg.Provider, cfg.User, enabledText(cfg.AllowSend), credstore.BackendName())
+	log.Printf("启动 %s（凭据后端 %s，渠道配置 %s）",
+		version, credstore.BackendName(), chanStore.Path())
 	if err := server.Run(ctx, &mcp.StdioTransport{}); err != nil {
 		log.Fatalf("服务退出: %v", err)
 	}
