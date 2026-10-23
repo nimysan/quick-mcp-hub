@@ -15,7 +15,7 @@ import (
 // 仿真的金蝶云·星空（K/3 Cloud）WebAPI：登录换 kdservice-sessionid cookie，
 // 业务接口要带着它；业务失败回 HTTP 200 + 数组包着的 ResponseStatus。
 //
-// 用的是目录里那份真声明（ByType("k3cloud")），不是为测试手搓的，
+// 用的是目录里那份真声明（ByID("k3cloud")），不是为测试手搓的，
 // 所以这组用例同时在验 k3cloud.json 本身。
 type k3mock struct {
 	srv *httptest.Server
@@ -146,7 +146,7 @@ func (m *k3mock) lastBody() map[string]any {
 // runtime 按真声明装配一个运行态，站点指向仿真服务。
 func (m *k3mock) runtime(t *testing.T, password string, allowWrite bool) (Runtime, *Client) {
 	t.Helper()
-	spec, ok := ByType("k3cloud")
+	spec, ok := ByID("k3cloud")
 	if !ok {
 		t.Fatal("目录里没有 k3cloud 声明")
 	}

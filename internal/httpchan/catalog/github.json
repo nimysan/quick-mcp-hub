@@ -1,8 +1,13 @@
 {
-  "type": "github",
+  "id": "github",
   "name": "GitHub",
+  "version": 1,
   "icon": "🐙",
   "summary": "REST API · 个人访问令牌（PAT）",
+  "tags": [
+    "devtools",
+    "project"
+  ],
   "integration": "github",
   "helpUrl": "https://github.com/settings/tokens",
   "baseUrl": "https://api.github.com",
@@ -17,7 +22,9 @@
     "label": "个人访问令牌 (PAT)",
     "help": "github.com → Settings → Developer settings → Personal access tokens。只读用途勾 public_repo / read:user 就够"
   },
-  "auth": { "kind": "bearer" },
+  "auth": {
+    "kind": "bearer"
+  },
   "headers": {
     "Accept": "application/vnd.github+json",
     "X-GitHub-Api-Version": "2022-11-28"
@@ -25,7 +32,13 @@
   "test": {
     "method": "GET",
     "path": "/user",
-    "result": { "fields": ["login", "name", "html_url"] }
+    "result": {
+      "fields": [
+        "login",
+        "name",
+        "html_url"
+      ]
+    }
   },
   "tools": [
     {
@@ -35,7 +48,14 @@
       "readOnly": true,
       "method": "GET",
       "path": "/user",
-      "result": { "fields": ["login", "name", "html_url", "public_repos"] }
+      "result": {
+        "fields": [
+          "login",
+          "name",
+          "html_url",
+          "public_repos"
+        ]
+      }
     },
     {
       "name": "github_list_my_repos",
@@ -45,13 +65,43 @@
       "method": "GET",
       "path": "/user/repos",
       "params": [
-        { "name": "per_page", "in": "query", "type": "number", "default": "20", "description": "返回几个，最大 100" },
-        { "name": "sort", "in": "query", "default": "pushed", "enum": ["created", "updated", "pushed", "full_name"], "description": "排序方式" },
-        { "name": "affiliation", "in": "query", "default": "owner,collaborator", "description": "仓库关系，逗号分隔：owner / collaborator / organization_member" }
+        {
+          "name": "per_page",
+          "in": "query",
+          "type": "number",
+          "default": "20",
+          "description": "返回几个，最大 100"
+        },
+        {
+          "name": "sort",
+          "in": "query",
+          "default": "pushed",
+          "enum": [
+            "created",
+            "updated",
+            "pushed",
+            "full_name"
+          ],
+          "description": "排序方式"
+        },
+        {
+          "name": "affiliation",
+          "in": "query",
+          "default": "owner,collaborator",
+          "description": "仓库关系，逗号分隔：owner / collaborator / organization_member"
+        }
       ],
       "result": {
         "limit": 50,
-        "fields": ["full_name", "private", "description", "language", "pushed_at", "html_url", "open_issues_count"]
+        "fields": [
+          "full_name",
+          "private",
+          "description",
+          "language",
+          "pushed_at",
+          "html_url",
+          "open_issues_count"
+        ]
       }
     },
     {
@@ -62,14 +112,42 @@
       "method": "GET",
       "path": "/search/repositories",
       "params": [
-        { "name": "q", "in": "query", "required": true, "description": "GitHub 搜索语法，可用 language: stars: pushed: 等限定词" },
-        { "name": "sort", "in": "query", "enum": ["stars", "forks", "updated"], "description": "排序字段，留空按相关度" },
-        { "name": "per_page", "in": "query", "type": "number", "default": "10", "description": "返回几个，最大 100" }
+        {
+          "name": "q",
+          "in": "query",
+          "required": true,
+          "description": "GitHub 搜索语法，可用 language: stars: pushed: 等限定词"
+        },
+        {
+          "name": "sort",
+          "in": "query",
+          "enum": [
+            "stars",
+            "forks",
+            "updated"
+          ],
+          "description": "排序字段，留空按相关度"
+        },
+        {
+          "name": "per_page",
+          "in": "query",
+          "type": "number",
+          "default": "10",
+          "description": "返回几个，最大 100"
+        }
       ],
       "result": {
         "path": "items",
         "limit": 30,
-        "fields": ["full_name", "description", "language", "stargazers_count", "pushed_at", "html_url", "license.spdx_id"]
+        "fields": [
+          "full_name",
+          "description",
+          "language",
+          "stargazers_count",
+          "pushed_at",
+          "html_url",
+          "license.spdx_id"
+        ]
       }
     },
     {
@@ -80,15 +158,54 @@
       "method": "GET",
       "path": "/repos/{owner}/{repo}/issues",
       "params": [
-        { "name": "owner", "in": "path", "required": true, "description": "仓库所属用户或组织" },
-        { "name": "repo", "in": "path", "required": true, "description": "仓库名，不含所属前缀" },
-        { "name": "state", "in": "query", "default": "open", "enum": ["open", "closed", "all"], "description": "issue 状态" },
-        { "name": "labels", "in": "query", "description": "按标签过滤，逗号分隔" },
-        { "name": "per_page", "in": "query", "type": "number", "default": "20", "description": "返回几条，最大 100" }
+        {
+          "name": "owner",
+          "in": "path",
+          "required": true,
+          "description": "仓库所属用户或组织"
+        },
+        {
+          "name": "repo",
+          "in": "path",
+          "required": true,
+          "description": "仓库名，不含所属前缀"
+        },
+        {
+          "name": "state",
+          "in": "query",
+          "default": "open",
+          "enum": [
+            "open",
+            "closed",
+            "all"
+          ],
+          "description": "issue 状态"
+        },
+        {
+          "name": "labels",
+          "in": "query",
+          "description": "按标签过滤，逗号分隔"
+        },
+        {
+          "name": "per_page",
+          "in": "query",
+          "type": "number",
+          "default": "20",
+          "description": "返回几条，最大 100"
+        }
       ],
       "result": {
         "limit": 50,
-        "fields": ["number", "title", "state", "user.login", "comments", "created_at", "updated_at", "html_url"]
+        "fields": [
+          "number",
+          "title",
+          "state",
+          "user.login",
+          "comments",
+          "created_at",
+          "updated_at",
+          "html_url"
+        ]
       }
     },
     {
@@ -99,12 +216,38 @@
       "method": "GET",
       "path": "/repos/{owner}/{repo}/issues/{issue_number}",
       "params": [
-        { "name": "owner", "in": "path", "required": true, "description": "仓库所属用户或组织" },
-        { "name": "repo", "in": "path", "required": true, "description": "仓库名" },
-        { "name": "issue_number", "in": "path", "type": "number", "required": true, "description": "issue 或 PR 编号" }
+        {
+          "name": "owner",
+          "in": "path",
+          "required": true,
+          "description": "仓库所属用户或组织"
+        },
+        {
+          "name": "repo",
+          "in": "path",
+          "required": true,
+          "description": "仓库名"
+        },
+        {
+          "name": "issue_number",
+          "in": "path",
+          "type": "number",
+          "required": true,
+          "description": "issue 或 PR 编号"
+        }
       ],
       "result": {
-        "fields": ["number", "title", "state", "user.login", "body", "comments", "created_at", "updated_at", "html_url"]
+        "fields": [
+          "number",
+          "title",
+          "state",
+          "user.login",
+          "body",
+          "comments",
+          "created_at",
+          "updated_at",
+          "html_url"
+        ]
       }
     },
     {
@@ -114,12 +257,38 @@
       "method": "POST",
       "path": "/repos/{owner}/{repo}/issues",
       "params": [
-        { "name": "owner", "in": "path", "required": true, "description": "仓库所属用户或组织" },
-        { "name": "repo", "in": "path", "required": true, "description": "仓库名" },
-        { "name": "title", "in": "body", "required": true, "description": "标题" },
-        { "name": "body", "in": "body", "description": "正文，支持 Markdown" }
+        {
+          "name": "owner",
+          "in": "path",
+          "required": true,
+          "description": "仓库所属用户或组织"
+        },
+        {
+          "name": "repo",
+          "in": "path",
+          "required": true,
+          "description": "仓库名"
+        },
+        {
+          "name": "title",
+          "in": "body",
+          "required": true,
+          "description": "标题"
+        },
+        {
+          "name": "body",
+          "in": "body",
+          "description": "正文，支持 Markdown"
+        }
       ],
-      "result": { "fields": ["number", "title", "state", "html_url"] }
+      "result": {
+        "fields": [
+          "number",
+          "title",
+          "state",
+          "html_url"
+        ]
+      }
     }
   ]
 }

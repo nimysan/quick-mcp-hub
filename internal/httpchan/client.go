@@ -98,7 +98,7 @@ func (c *Client) httpClient() *http.Client {
 
 // session 取（或建）一个实例的会话。
 func (c *Client) session(rt Runtime) (*session, error) {
-	key := rt.Spec.Type + "/" + rt.Account
+	key := rt.Spec.ID + "/" + rt.Account
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.sessions == nil {
@@ -255,7 +255,7 @@ func (c *Client) Test(ctx context.Context, rt Runtime) (any, error) {
 		return map[string]any{"loggedIn": true, "account": rt.Account}, nil
 	}
 	return c.do(ctx, rt, Tool{
-		Name:   rt.Spec.Type + "_test",
+		Name:   rt.Spec.ID + "_test",
 		Method: rt.Spec.Test.Method,
 		Path:   rt.Spec.Test.Path,
 		Result: rt.Spec.Test.Result,
@@ -266,7 +266,7 @@ func (c *Client) Test(ctx context.Context, rt Runtime) (any, error) {
 func (c *Client) Call(ctx context.Context, rt Runtime, toolName string, args map[string]any) (any, error) {
 	t, ok := rt.Spec.Tool(toolName)
 	if !ok {
-		return nil, fmt.Errorf("渠道 %s 没有工具 %s", rt.Spec.Type, toolName)
+		return nil, fmt.Errorf("渠道 %s 没有工具 %s", rt.Spec.ID, toolName)
 	}
 	if !t.ReadOnly && !rt.AllowWrite() {
 		return nil, fmt.Errorf("%s 会改动 %s 的数据，该渠道的写开关未打开", toolName, rt.Spec.Name)

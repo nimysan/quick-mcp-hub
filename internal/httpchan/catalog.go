@@ -49,7 +49,10 @@ func load() {
 		return
 	}
 	sort.Strings(entries)
+	byID := map[string]string{}   // id -> 来自哪个文件
+	byName := map[string]string{} // 显示名 -> 来自哪个文件
 	for _, name := range entries {
+		base := path.Base(name)
 		data, err := builtin.ReadFile(name)
 		if err != nil {
 			loadErrs = append(loadErrs, fmt.Errorf("%s: %w", name, err))
@@ -57,9 +60,22 @@ func load() {
 		}
 		s, err := Parse(data)
 		if err != nil {
-			loadErrs = append(loadErrs, fmt.Errorf("%s: %w", path.Base(name), err))
+			loadErrs = append(loadErrs, fmt.Errorf("%s: %w", base, err))
 			continue
 		}
+		// ID 重复是硬错误：它是凭据和配置的定位键，两份声明抢同一个 id
+		// 会让后加载的那份静默顶掉前一份，用户的凭据指向就变了。
+		if prev, dup := byID[s.ID]; dup {
+			loadErrs = append(loadErrs, fmt.Errorf("%s: id %q 与 %s 重复", base, s.ID, prev))
+			continue
+		}
+		// 显示名重复不影响正确性，但页面上会出现两个一模一样的条目，
+		// 用户没法分辨该点哪个，所以同样拒绝。
+		if prev, dup := byName[s.Name]; dup {
+			loadErrs = append(loadErrs, fmt.Errorf("%s: 显示名 %q 与 %s 重复", base, s.Name, prev))
+			continue
+		}
+		byID[s.ID], byName[s.Name] = base, base
 		specs = append(specs, s)
 	}
 }
@@ -79,10 +95,10 @@ func Errors() []error {
 	return loadErrs
 }
 
-// ByType 按类型取声明。
-func ByType(t string) (Spec, bool) {
+// ByID 按渠道标识取声明。
+func ByID(id string) (Spec, bool) {
 	for _, s := range All() {
-		if s.Type == t {
+		if s.ID == id {
 			return s, true
 		}
 	}

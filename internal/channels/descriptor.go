@@ -55,6 +55,10 @@ type Descriptor struct {
 	// "mail" 是编译进来的 IMAP/SMTP 实现，"http" 是声明式 HTTPS 渠道。
 	// 页面不关心这个值，Manager 靠它分派。
 	Kind string `json:"kind"`
+	// Version 是渠道声明的版本号（邮件这类编译进来的固定为 1）。
+	Version int `json:"version"`
+	// Tags 是分类标签，页面用它做筛选。
+	Tags []string `json:"tags,omitempty"`
 	// Summary 是选择列表上的一行说明。
 	Summary string `json:"summary"`
 	// Integration 是凭据在系统密码管理器里的分段名（credstore.Ref.Integration）。
@@ -136,6 +140,8 @@ func mailDescriptor(p mailprovider.Provider) Descriptor {
 		Name:         p.Name,
 		Icon:         p.Icon,
 		Kind:         KindMail,
+		Version:      1,
+		Tags:         []string{"email"},
 		Summary:      fmt.Sprintf("IMAP / SMTP · %s", p.SecretLabel),
 		Integration:  "mail",
 		AccountField: "user",
@@ -219,10 +225,12 @@ func httpDescriptor(s httpchan.Spec) Descriptor {
 	}
 
 	return Descriptor{
-		Type:         s.Type,
+		Type:         s.ID,
 		Name:         s.Name,
 		Icon:         s.Icon,
 		Kind:         KindHTTP,
+		Version:      s.Version,
+		Tags:         s.Tags,
 		Summary:      s.Summary,
 		Integration:  s.Integration,
 		AccountField: s.Account.Name,
@@ -238,9 +246,13 @@ func httpDescriptor(s httpchan.Spec) Descriptor {
 // planned 是还没实现的渠道，放在页面上只为说明「这里能长出什么」，
 // 不可添加。实现一个就把它从这里挪成真的描述符 —— 声明式渠道只要往
 // httpchan/catalog 里加一个 JSON 文件，不用碰这里的 Go 代码。
+//
+// Version 留 0：0 表示「还没有任何一版声明」，页面上也就不显示版本角标。
 var planned = []Descriptor{
-	{Type: "jira", Name: "Jira", Icon: "🎫", Summary: "待实现 · 工单读取与检索", Integration: "jira"},
-	{Type: "feishu", Name: "飞书", Icon: "💬", Summary: "待实现 · 消息与文档", Integration: "feishu"},
+	{Type: "jira", Name: "Jira", Icon: "🎫", Summary: "待实现 · 工单读取与检索",
+		Integration: "jira", Tags: []string{"project", "devtools"}},
+	{Type: "feishu", Name: "飞书", Icon: "💬", Summary: "待实现 · 消息与文档",
+		Integration: "feishu", Tags: []string{"im"}},
 }
 
 // All 返回全部渠道描述符，可用的在前。

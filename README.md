@@ -144,16 +144,35 @@ Quick 的代码沙箱没有公网出口，所有对外访问都必须走 connect
 ## 声明式 HTTPS 渠道
 
 一份 JSON 就是一个渠道。`internal/httpchan/catalog/github.json` 是第一个，
-`internal/httpchan/spec.go` 是完整的 schema。骨架：
+`internal/httpchan/spec.go` 是完整的 schema。
+
+每份声明的头部有四样认人的东西：
+
+| 字段 | 规则 |
+|---|---|
+| `id` | 纯小写英文缩写，**全目录唯一**，一经发布不可更改。按具体那套接口命名，不按厂商（`k3cloud` 不是 `kingdee`）|
+| `name` | 给人读的显示名，可以是中文，可以改；同样不可重复（页面上两个同名条目用户没法分辨）|
+| `version` | 从 1 起的正整数。改声明就是发新版本，客户端据它判断缓存要不要更新、已启用渠道是否需要重新确认 |
+| `tags` | 分类标签，最多 6 个，小写英文短词。页面按它筛选 |
+
+`id` 和 `name` 重复都是**加载期硬错误**：`id` 重复会让后加载的声明静默顶掉
+前一份，用户的凭据指向就变了。标签是**开放集合**——下发的目录带来新分类时，
+老客户端不该因为不认识一个标签就整个渠道加载失败，`KnownTags` 只是给作者的
+建议词表，页面上没翻译的标签原样显示。
+
+骨架：
 
 ```jsonc
 {
-  "type": "github",                       // 渠道 id，工具名必须以 github_ 开头
+  "id": "github",                         // 渠道标识，工具名必须以 github_ 开头
+  "name": "GitHub",
+  "version": 1,
+  "tags": ["devtools", "project"],
   "integration": "github",                // 凭据在密码管理器里的分段
   "baseUrl": "https://api.github.com",    // 固定接入点；自建系统改用 baseUrlField
   "account": { "name": "login", "label": "GitHub 用户名" },
   "secret":  { "name": "token", "label": "个人访问令牌 (PAT)" },
-  "auth":    { "kind": "bearer" },        // bearer | header | basic | query
+  "auth":    { "kind": "bearer" },        // bearer | header | basic | query | login
   "test":    { "method": "GET", "path": "/user" },
   "tools": [{
     "name": "github_list_issues", "description": "……", "readOnly": true,
@@ -263,14 +282,17 @@ hub 的写开关只能决定「不把写工具给模型」，决定不了那个�
 
 ## 渠道命名规矩
 
-渠道 id 和工具名要对得上**具体那套接口**，不是厂商、也不是产品大类：
+渠道 `id` 和工具名要对得上**具体那套接口**，不是厂商、也不是产品大类：
 
 - 厂商有多条产品线时，用产品线命名（`k3cloud` 不是 `kingdee`）
 - 同一产品的不同接口体系要分开（星空的 BOS WebAPI 和苍穹的 openapi 是两份声明）
-- 工具名必须以渠道 id 为前缀，这条由 `Spec.Validate` 强制
-- id 一旦发布就不该改：客户机上的 `channels.json` 和密码管理器条目都按它定位，
+- 工具名必须以渠道 `id` 为前缀，这条由 `Spec.Validate` 强制
+- `id` 一旦发布就不该改：客户机上的 `channels.json` 和密码管理器条目都按它定位，
   改名等于让用户已配好的渠道凭据失联（远端下发时这件事要靠目录里的改名映射
   来兜，现在还没做）
+
+声明里的 `id` 落到客户机的 `channels.json` 里就是实例的 `type` 字段：前者是
+「这份声明是谁」，后者是「这条实例属于哪类渠道」，同一个值的两层叫法。
 
 ## 已知限制
 

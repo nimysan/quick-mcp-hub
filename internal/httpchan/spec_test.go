@@ -15,13 +15,13 @@ func TestBuiltinCatalogValid(t *testing.T) {
 	if len(All()) == 0 {
 		t.Fatal("内置目录是空的")
 	}
-	if _, ok := ByType("github"); !ok {
+	if _, ok := ByID("github"); !ok {
 		t.Error("github 声明不在目录里")
 	}
 }
 
 func TestGitHubSpecShape(t *testing.T) {
-	s, ok := ByType("github")
+	s, ok := ByID("github")
 	if !ok {
 		t.Fatal("没有 github 声明")
 	}
@@ -41,7 +41,7 @@ func TestGitHubSpecShape(t *testing.T) {
 // base 是一份最小可用声明，各用例在它上面改一处来验证校验规则。
 func base() Spec {
 	return Spec{
-		Type: "demo", Name: "Demo", Integration: "demo",
+		ID: "demo", Name: "Demo", Version: 1, Integration: "demo",
 		BaseURL: "https://api.example.com",
 		Account: Credential{Name: "user", Label: "用户"},
 		Secret:  Credential{Name: "token", Label: "令牌"},
@@ -149,6 +149,14 @@ func TestValidateRejects(t *testing.T) {
 		{"columnsFromParam 指向不存在的参数", "不是这个工具的参数", func(s *Spec) {
 			s.Tools[0].Result = Result{ColumnsFromParam: "nope"}
 		}},
+		{"version 缺失", "version 必须", func(s *Spec) { s.Version = 0 }},
+		{"version 为负", "version 必须", func(s *Spec) { s.Version = -1 }},
+		{"标签大写", "不合法", func(s *Spec) { s.Tags = []string{"ERP"} }},
+		{"标签带空格", "不合法", func(s *Spec) { s.Tags = []string{"my erp"} }},
+		{"标签重复", "重复", func(s *Spec) { s.Tags = []string{"erp", "erp"} }},
+		{"标签太多", "最多 6 个", func(s *Spec) {
+			s.Tags = []string{"a", "b", "c", "d", "e", "f", "g"}
+		}},
 		{"failWhen 缺 path", "failWhen 必须", func(s *Spec) { s.FailWhen = &FailWhen{} }},
 	}
 	for _, c := range cases {
@@ -169,8 +177,42 @@ func TestValidateRejects(t *testing.T) {
 // 未知字段必须报错：下发内容用了更新的 schema 时，静默忽略会让渠道
 // 以「少了一半行为」的样子跑起来。
 func TestParseRejectsUnknownField(t *testing.T) {
-	_, err := Parse([]byte(`{"type":"demo","name":"D","launch":{"command":"sh"}}`))
+	_, err := Parse([]byte(`{"id":"demo","name":"D","version":1,"launch":{"command":"sh"}}`))
 	if err == nil || !strings.Contains(err.Error(), "launch") {
 		t.Fatalf("应当因未知字段 launch 报错，实际: %v", err)
+	}
+}
+
+// 标签是开放集合：下发新分类时，老客户端不该因为不认识一个标签就整个
+// 渠道加载失败。
+func TestUnknownTagIsAccepted(t *testing.T) {
+	s := base()
+	s.Tags = []string{"erp", "some-new-category"}
+	if err := s.Validate(); err != nil {
+		t.Fatalf("没见过的标签不该让声明失效: %v", err)
+	}
+}
+
+// 每个渠道都得有 id、显示名、版本号和标签 —— 这是目录里认人的四样东西。
+func TestBuiltinCatalogMetadata(t *testing.T) {
+	ids := map[string]bool{}
+	names := map[string]bool{}
+	for _, s := range All() {
+		if ids[s.ID] {
+			t.Errorf("id %q 重复", s.ID)
+		}
+		if names[s.Name] {
+			t.Errorf("显示名 %q 重复", s.Name)
+		}
+		ids[s.ID], names[s.Name] = true, true
+		if s.Version < 1 {
+			t.Errorf("%s 没有版本号", s.ID)
+		}
+		if len(s.Tags) == 0 {
+			t.Errorf("%s 没有标签，页面上筛不出来", s.ID)
+		}
+		if s.Summary == "" {
+			t.Errorf("%s 没有一行说明", s.ID)
+		}
 	}
 }

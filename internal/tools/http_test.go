@@ -13,7 +13,7 @@ func rt(account string, write bool) httpchan.Runtime {
 		settings[httpchan.AllowWriteField] = "true"
 	}
 	return httpchan.Runtime{
-		Spec:     httpchan.Spec{Type: "demo", Name: "Demo"},
+		Spec:     httpchan.Spec{ID: "demo", Name: "Demo"},
 		Account:  account,
 		Settings: settings,
 	}
@@ -100,7 +100,7 @@ func TestInputSchemaAccountParam(t *testing.T) {
 
 // 「A 账号可写、B 账号只读」要在描述里讲清楚，否则模型选错账号才知道被拒。
 func TestDescribeNamesWritableAccounts(t *testing.T) {
-	spec := httpchan.Spec{Type: "demo", Name: "Demo"}
+	spec := httpchan.Spec{ID: "demo", Name: "Demo"}
 	tool := httpchan.Tool{Name: "demo_create", Description: "建一条。"}
 	got := describe(spec, tool, []string{"a", "b"}, []string{"b"})
 	if !strings.Contains(got, "只有这些账号打开了写入开关：b") {

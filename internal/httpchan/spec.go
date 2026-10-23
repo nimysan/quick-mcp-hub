@@ -169,10 +169,20 @@ type Tool struct {
 
 // Spec 是一个渠道的完整声明。
 type Spec struct {
-	Type        string `json:"type"`
-	Name        string `json:"name"`
-	Icon        string `json:"icon,omitempty"`
-	Summary     string `json:"summary,omitempty"`
+	// ID 是渠道标识：纯小写英文缩写，全目录唯一，一经发布不可更改
+	// （客户机的 channels.json 和密码管理器条目都按它定位）。
+	// 按**具体那套接口**命名而不是按厂商：金蝶有七八条产品线、接口彼此
+	// 不通，所以是 k3cloud 而不是 kingdee。
+	ID string `json:"id"`
+	// Name 是给人读的显示名，可以是中文，可以改。
+	Name string `json:"name"`
+	// Version 是这份声明的版本号，从 1 起递增。改声明就是发新版本：
+	// 客户端据它判断缓存要不要更新、以及已启用渠道是否需要重新确认。
+	Version int      `json:"version"`
+	Icon    string   `json:"icon,omitempty"`
+	Summary string   `json:"summary,omitempty"`
+	Tags    []string `json:"tags,omitempty"`
+
 	Integration string `json:"integration"`
 	HelpURL     string `json:"helpUrl,omitempty"`
 
@@ -239,6 +249,7 @@ var (
 	typeRe        = regexp.MustCompile(`^[a-z][a-z0-9_]{1,30}$`)
 	toolNameRe    = regexp.MustCompile(`^[a-z][a-z0-9_]{1,62}$`)
 	paramNameRe   = regexp.MustCompile(`^[a-zA-Z_][a-zA-Z0-9_]{0,40}$`)
+	tagRe         = regexp.MustCompile(`^[a-z][a-z0-9-]{0,19}$`)
 	placeholderRe = regexp.MustCompile(`\{([^{}]*)\}`)
 	tokenRe       = regexp.MustCompile(`\{\{([^{}]*)\}\}`)
 	methodsAll    = map[string]bool{"GET": true, "POST": true, "PUT": true, "PATCH": true, "DELETE": true}
@@ -246,62 +257,68 @@ var (
 
 // Validate 校验一份 spec。远端下发的目录必须逐条过这里才会被接受。
 func (s Spec) Validate() error {
-	if !typeRe.MatchString(s.Type) {
-		return fmt.Errorf("type %q 不合法（小写字母、数字、下划线，2-31 字符）", s.Type)
+	if !typeRe.MatchString(s.ID) {
+		return fmt.Errorf("id %q 不合法（小写字母、数字、下划线，2-31 字符）", s.ID)
 	}
 	if strings.TrimSpace(s.Name) == "" {
-		return fmt.Errorf("%s: name 不能为空", s.Type)
+		return fmt.Errorf("%s: name 不能为空", s.ID)
+	}
+	if s.Version < 1 {
+		return fmt.Errorf("%s: version 必须是从 1 起的正整数（现在是 %d）", s.ID, s.Version)
+	}
+	if err := checkTags(s.Tags); err != nil {
+		return fmt.Errorf("%s: tags %w", s.ID, err)
 	}
 	if !typeRe.MatchString(s.Integration) {
-		return fmt.Errorf("%s: integration %q 不合法", s.Type, s.Integration)
+		return fmt.Errorf("%s: integration %q 不合法", s.ID, s.Integration)
 	}
 
 	switch {
 	case s.BaseURL != "" && s.BaseURLField != "":
-		return fmt.Errorf("%s: baseUrl 和 baseUrlField 只能有一个", s.Type)
+		return fmt.Errorf("%s: baseUrl 和 baseUrlField 只能有一个", s.ID)
 	case s.BaseURL != "":
 		if err := checkBaseURL(s.BaseURL); err != nil {
-			return fmt.Errorf("%s: baseUrl %w", s.Type, err)
+			return fmt.Errorf("%s: baseUrl %w", s.ID, err)
 		}
 	case s.BaseURLField != "":
 		if _, ok := s.Field(s.BaseURLField); !ok {
-			return fmt.Errorf("%s: baseUrlField %q 在 fields 里不存在", s.Type, s.BaseURLField)
+			return fmt.Errorf("%s: baseUrlField %q 在 fields 里不存在", s.ID, s.BaseURLField)
 		}
 	default:
-		return fmt.Errorf("%s: 必须声明 baseUrl 或 baseUrlField", s.Type)
+		return fmt.Errorf("%s: 必须声明 baseUrl 或 baseUrlField", s.ID)
 	}
 
 	if !paramNameRe.MatchString(s.Account.Name) || !paramNameRe.MatchString(s.Secret.Name) {
-		return fmt.Errorf("%s: account.name 和 secret.name 必须是合法字段名", s.Type)
+		return fmt.Errorf("%s: account.name 和 secret.name 必须是合法字段名", s.ID)
 	}
 	if s.Account.Name == s.Secret.Name {
-		return fmt.Errorf("%s: account 和 secret 不能是同一个字段", s.Type)
+		return fmt.Errorf("%s: account 和 secret 不能是同一个字段", s.ID)
 	}
 	switch s.Auth.Kind {
 	case AuthBearer, AuthBasic:
 	case AuthHeader, AuthQuery:
 		if strings.TrimSpace(s.Auth.Name) == "" {
-			return fmt.Errorf("%s: auth.kind=%s 必须给出 auth.name", s.Type, s.Auth.Kind)
+			return fmt.Errorf("%s: auth.kind=%s 必须给出 auth.name", s.ID, s.Auth.Kind)
 		}
 	case AuthLogin:
 		if err := s.checkLogin(); err != nil {
-			return fmt.Errorf("%s: auth.login %w", s.Type, err)
+			return fmt.Errorf("%s: auth.login %w", s.ID, err)
 		}
 	default:
-		return fmt.Errorf("%s: 不支持的 auth.kind %q", s.Type, s.Auth.Kind)
+		return fmt.Errorf("%s: 不支持的 auth.kind %q", s.ID, s.Auth.Kind)
 	}
 	if s.Auth.Kind != AuthLogin && s.Auth.Login != nil {
-		return fmt.Errorf("%s: 只有 auth.kind=login 才能带 login 段", s.Type)
+		return fmt.Errorf("%s: 只有 auth.kind=login 才能带 login 段", s.ID)
 	}
 	if s.FailWhen != nil && strings.TrimSpace(s.FailWhen.Path) == "" {
-		return fmt.Errorf("%s: failWhen 必须给出 path", s.Type)
+		return fmt.Errorf("%s: failWhen 必须给出 path", s.ID)
 	}
 	for _, f := range s.Fields {
 		if !paramNameRe.MatchString(f.Name) {
-			return fmt.Errorf("%s: 字段名 %q 不合法", s.Type, f.Name)
+			return fmt.Errorf("%s: 字段名 %q 不合法", s.ID, f.Name)
 		}
 		if f.Name == s.Account.Name || f.Name == s.Secret.Name || f.Name == AllowWriteField {
-			return fmt.Errorf("%s: 字段名 %q 与保留字段冲突", s.Type, f.Name)
+			return fmt.Errorf("%s: 字段名 %q 与保留字段冲突", s.ID, f.Name)
 		}
 	}
 
@@ -309,18 +326,18 @@ func (s Spec) Validate() error {
 	// 而「随便挑一个 POST 当测试」要么会改用户数据，要么只能靠声明自称无害。
 	if s.Auth.Kind == AuthLogin {
 		if s.Test.Path != "" {
-			return fmt.Errorf("%s: auth.kind=login 时不要声明 test —— 登录本身就是测试", s.Type)
+			return fmt.Errorf("%s: auth.kind=login 时不要声明 test —— 登录本身就是测试", s.ID)
 		}
 	} else {
 		if err := checkEndpoint(s.Test.Method, s.Test.Path, nil); err != nil {
-			return fmt.Errorf("%s: test %w", s.Type, err)
+			return fmt.Errorf("%s: test %w", s.ID, err)
 		}
 		if s.Test.Method != "GET" {
-			return fmt.Errorf("%s: test 必须是 GET——测试连通不能改动用户的系统", s.Type)
+			return fmt.Errorf("%s: test 必须是 GET——测试连通不能改动用户的系统", s.ID)
 		}
 	}
 	if len(s.Tools) == 0 {
-		return fmt.Errorf("%s: 至少要声明一个工具", s.Type)
+		return fmt.Errorf("%s: 至少要声明一个工具", s.ID)
 	}
 
 	postReadUsed := false
@@ -330,79 +347,79 @@ func (s Spec) Validate() error {
 			postReadUsed = true
 		}
 		if !toolNameRe.MatchString(t.Name) {
-			return fmt.Errorf("%s: 工具名 %q 不合法", s.Type, t.Name)
+			return fmt.Errorf("%s: 工具名 %q 不合法", s.ID, t.Name)
 		}
 		// 前缀约束：两个渠道各自声明 list_issues 时，后注册的会覆盖前一个。
-		if !strings.HasPrefix(t.Name, s.Type+"_") {
-			return fmt.Errorf("%s: 工具名 %q 必须以 %s_ 开头", s.Type, t.Name, s.Type)
+		if !strings.HasPrefix(t.Name, s.ID+"_") {
+			return fmt.Errorf("%s: 工具名 %q 必须以 %s_ 开头", s.ID, t.Name, s.ID)
 		}
 		if seen[t.Name] {
-			return fmt.Errorf("%s: 工具名 %q 重复", s.Type, t.Name)
+			return fmt.Errorf("%s: 工具名 %q 重复", s.ID, t.Name)
 		}
 		seen[t.Name] = true
 		if strings.TrimSpace(t.Description) == "" {
-			return fmt.Errorf("%s/%s: description 不能为空——模型靠它选工具", s.Type, t.Name)
+			return fmt.Errorf("%s/%s: description 不能为空——模型靠它选工具", s.ID, t.Name)
 		}
 		if t.ReadOnly && t.Method != "GET" && !s.PostReads {
 			return fmt.Errorf("%s/%s: readOnly 的工具默认必须是 GET（现在是 %s）。"+
 				"如果这个系统的读操作本身就是 POST，在声明顶层加 \"postReads\": true，"+
-				"该声明会被标记为需要人工复核", s.Type, t.Name, t.Method)
+				"该声明会被标记为需要人工复核", s.ID, t.Name, t.Method)
 		}
 		if err := checkEndpoint(t.Method, t.Path, t.Params); err != nil {
-			return fmt.Errorf("%s/%s: %w", s.Type, t.Name, err)
+			return fmt.Errorf("%s/%s: %w", s.ID, t.Name, err)
 		}
 		if len(t.BodyConst) > 0 && t.Method == "GET" {
-			return fmt.Errorf("%s/%s: GET 不能带 bodyConst", s.Type, t.Name)
+			return fmt.Errorf("%s/%s: GET 不能带 bodyConst", s.ID, t.Name)
 		}
 		if t.Result.Columns != nil && t.Result.ColumnsFromParam != "" {
-			return fmt.Errorf("%s/%s: columns 和 columnsFromParam 只能有一个", s.Type, t.Name)
+			return fmt.Errorf("%s/%s: columns 和 columnsFromParam 只能有一个", s.ID, t.Name)
 		}
 		pseen := map[string]bool{}
 		for _, p := range t.Params {
 			if !paramNameRe.MatchString(p.Name) {
-				return fmt.Errorf("%s/%s: 参数名 %q 不合法", s.Type, t.Name, p.Name)
+				return fmt.Errorf("%s/%s: 参数名 %q 不合法", s.ID, t.Name, p.Name)
 			}
 			if p.Name == ReservedAccountParam {
-				return fmt.Errorf("%s/%s: 参数名 %s 是保留名（多账号分派用）", s.Type, t.Name, p.Name)
+				return fmt.Errorf("%s/%s: 参数名 %s 是保留名（多账号分派用）", s.ID, t.Name, p.Name)
 			}
 			if pseen[p.Name] {
-				return fmt.Errorf("%s/%s: 参数 %q 重复", s.Type, t.Name, p.Name)
+				return fmt.Errorf("%s/%s: 参数 %q 重复", s.ID, t.Name, p.Name)
 			}
 			pseen[p.Name] = true
 			switch p.In {
 			case InQuery, InPath, InBody:
 			default:
-				return fmt.Errorf("%s/%s: 参数 %s 的 in=%q 不支持", s.Type, t.Name, p.Name, p.In)
+				return fmt.Errorf("%s/%s: 参数 %s 的 in=%q 不支持", s.ID, t.Name, p.Name, p.In)
 			}
 			switch p.Type {
 			case "", "string", "number", "boolean":
 			case "object":
 				if p.In != InBody {
-					return fmt.Errorf("%s/%s: 参数 %s 的 type=object 只能用在 in=body", s.Type, t.Name, p.Name)
+					return fmt.Errorf("%s/%s: 参数 %s 的 type=object 只能用在 in=body", s.ID, t.Name, p.Name)
 				}
 			default:
-				return fmt.Errorf("%s/%s: 参数 %s 的 type=%q 不支持", s.Type, t.Name, p.Name, p.Type)
+				return fmt.Errorf("%s/%s: 参数 %s 的 type=%q 不支持", s.ID, t.Name, p.Name, p.Type)
 			}
 			if p.In == InBody && t.Method == "GET" {
-				return fmt.Errorf("%s/%s: GET 不能带 body 参数 %s", s.Type, t.Name, p.Name)
+				return fmt.Errorf("%s/%s: GET 不能带 body 参数 %s", s.ID, t.Name, p.Name)
 			}
 			if p.BodyPath != "" {
 				if p.In != InBody {
-					return fmt.Errorf("%s/%s: 参数 %s 的 bodyPath 只能用在 in=body", s.Type, t.Name, p.Name)
+					return fmt.Errorf("%s/%s: 参数 %s 的 bodyPath 只能用在 in=body", s.ID, t.Name, p.Name)
 				}
 				if err := checkDotPath(p.BodyPath); err != nil {
-					return fmt.Errorf("%s/%s: 参数 %s 的 bodyPath %w", s.Type, t.Name, p.Name, err)
+					return fmt.Errorf("%s/%s: 参数 %s 的 bodyPath %w", s.ID, t.Name, p.Name, err)
 				}
 			}
 		}
 		if from := t.Result.ColumnsFromParam; from != "" && !pseen[from] {
-			return fmt.Errorf("%s/%s: columnsFromParam=%q 不是这个工具的参数", s.Type, t.Name, from)
+			return fmt.Errorf("%s/%s: columnsFromParam=%q 不是这个工具的参数", s.ID, t.Name, from)
 		}
 	}
 	// 没用到就不许声明：否则这个开关会被顺手加到每份声明上，失去「这份需要
 	// 人工复核」的信号意义。
 	if s.PostReads && !postReadUsed {
-		return fmt.Errorf("%s: 声明了 postReads 但没有 POST 的只读工具，去掉它", s.Type)
+		return fmt.Errorf("%s: 声明了 postReads 但没有 POST 的只读工具，去掉它", s.ID)
 	}
 	return nil
 }
@@ -443,6 +460,33 @@ func (s Spec) checkLogin() error {
 	}
 	if secrets != 1 {
 		return fmt.Errorf("body 里 {{secret}} 必须出现一次，现在出现了 %d 次", secrets)
+	}
+	return nil
+}
+
+// KnownTags 是推荐的标签词表。标签是开放集合（下发的目录可以带新词），
+// 但词表让页面上的分类不至于一半「ERP」一半「erp系统」。
+var KnownTags = []string{
+	"email", "erp", "finance", "devtools", "project", "im", "crm", "hr", "storage", "other",
+}
+
+// checkTags 校验标签：小写英文短词，最多 6 个，不重复。
+//
+// 刻意不限制在 KnownTags 内：远端下发新分类时，老客户端不该因为不认识
+// 一个标签就整个渠道加载失败。词表只是给作者的建议。
+func checkTags(tags []string) error {
+	if len(tags) > 6 {
+		return fmt.Errorf("最多 6 个，现在有 %d 个", len(tags))
+	}
+	seen := map[string]bool{}
+	for _, t := range tags {
+		if !tagRe.MatchString(t) {
+			return fmt.Errorf("标签 %q 不合法（小写字母、数字、连字符，1-20 字符）", t)
+		}
+		if seen[t] {
+			return fmt.Errorf("标签 %q 重复", t)
+		}
+		seen[t] = true
 	}
 	return nil
 }

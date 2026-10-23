@@ -1,8 +1,13 @@
 {
-  "type": "k3cloud",
+  "id": "k3cloud",
   "name": "金蝶云·星空",
+  "version": 1,
   "icon": "📒",
   "summary": "K/3 Cloud WebAPI · 账号密码登录会话",
+  "tags": [
+    "erp",
+    "finance"
+  ],
   "integration": "k3cloud",
   "helpUrl": "https://open.kingdee.com/K3CloudDoc/",
   "baseUrlField": "site",

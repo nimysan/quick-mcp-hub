@@ -35,6 +35,7 @@
   button{font:inherit;cursor:pointer;border-radius:7px;border:1px solid var(--border);
     background:var(--card);color:var(--text);padding:6px 12px}
   button.primary{background:var(--accent);color:var(--accent-fg);border-color:transparent}
+  button:disabled{opacity:.45;cursor:not-allowed}
   button.link{border:none;background:none;color:var(--muted);padding:4px 6px}
   button.link.danger{color:var(--danger)}
   .empty{text-align:center;padding:48px 20px;background:var(--card);
@@ -66,6 +67,14 @@
   .ptype.sel{border:2px solid var(--accent);background:color-mix(in srgb,var(--accent) 10%,transparent)}
   .ptype.off{opacity:.45;cursor:not-allowed}
   .ptype .n{font-weight:600}
+  .ptype .s code{font-size:10px;color:var(--muted)}
+  .ver{font-size:10px;font-weight:600;padding:1px 5px;border-radius:4px;vertical-align:1px;
+       color:var(--muted);background:var(--border)}
+  .tagbar{display:flex;gap:6px;flex-wrap:wrap;margin:0 0 10px}
+  .tg{font-size:11px;padding:3px 9px;border-radius:12px;cursor:pointer;
+      border:1px solid var(--border);color:var(--muted);user-select:none}
+  .tg.on{border-color:var(--accent);color:var(--accent);font-weight:600;
+         background:color-mix(in srgb,var(--accent) 10%,transparent)}
   .rv{font-size:10px;font-weight:600;padding:1px 5px;border-radius:4px;vertical-align:1px;
       color:#92400e;background:#fef3c7;border:1px solid #fcd34d;cursor:help}
   .ptype .s{font-size:11px;color:var(--muted);margin-top:2px}
@@ -154,23 +163,43 @@ function esc(s){return String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','
 function attr(s){return JSON.stringify(String(s))}
 function close(){$("#mask").classList.remove("show")}
 
+// TAG_LABELS 把标签翻成中文显示；没列到的标签原样显示，
+// 这样下发的目录带来新分类时页面不用跟着改。
+const TAG_LABELS = {email:"邮件", erp:"ERP", finance:"财务", devtools:"开发",
+                    project:"项目", im:"协作", crm:"客户", hr:"人事",
+                    storage:"存储", other:"其他"};
+const tagText = t => TAG_LABELS[t] || t;
+
 function openAdd(){
   const avail = DESCRIPTORS.filter(d=>d.available);
   let sel = avail[0]?.type;
+  let tag = "";   // 空串 = 全部
+  const allTags = [...new Set(DESCRIPTORS.flatMap(d=>d.tags||[]))].sort();
   const render=()=>{
+    const list = tag ? DESCRIPTORS.filter(d=>(d.tags||[]).includes(tag)) : DESCRIPTORS;
     $("#modal").innerHTML = `
       <h3>添加渠道</h3>
-      <div class="hint">选择渠道类型，后续可扩展更多系统</div>
-      <div class="grid">${DESCRIPTORS.map(d=>`
+      <div class="tagbar">
+        <span class="tg ${tag?'':'on'}" onclick="filt('')">全部 ${DESCRIPTORS.length}</span>
+        ${allTags.map(t=>`<span class="tg ${tag===t?'on':''}" onclick="filt('${t}')">${esc(tagText(t))}</span>`).join("")}
+      </div>
+      <div class="grid">${list.map(d=>`
         <div class="ptype ${d.available?(d.type===sel?'sel':''):'off'}"
              ${d.available?`onclick="pick('${d.type}')"`:''}>
-          <div class="n">${d.icon} ${d.name}${d.needsReview?' <span class="rv" title="这个系统的读操作也是 POST，声明需人工复核">复核</span>':''}</div><div class="s">${esc(d.summary)}</div>
+          <div class="n">${d.icon} ${esc(d.name)}
+            ${d.version?`<span class="ver">v${d.version}</span>`:''}
+            ${d.needsReview?'<span class="rv" title="这个系统的读操作也是 POST，声明需人工复核">复核</span>':''}</div>
+          <div class="s">${esc(d.summary)}</div>
+          <div class="s"><code>${esc(d.type)}</code></div>
         </div>`).join("")}</div>
       <div class="foot"><button onclick="close()">取消</button>
-        <button class="primary" style="margin-left:auto" onclick="pickNext()">下一步</button></div>`;
+        <button class="primary" style="margin-left:auto" onclick="pickNext()"
+                ${sel?'':'disabled title="这个分类下还没有可用的渠道"'}>下一步</button></div>`;
   };
+  window.filt=(t)=>{tag=t; const l=t?DESCRIPTORS.filter(d=>(d.tags||[]).includes(t)):DESCRIPTORS;
+                    if(!l.some(d=>d.type===sel&&d.available)) sel=l.find(d=>d.available)?.type; render()};
   window.pick=(t)=>{sel=t;render()};
-  window.pickNext=()=>openForm(sel,null);
+  window.pickNext=()=>sel&&openForm(sel,null);
   render(); $("#mask").classList.add("show");
 }
 
