@@ -76,18 +76,19 @@ func RegisterHTTP(s *mcp.Server, rts []httpchan.Runtime) int {
 			// account 是本层的分派参数，不属于渠道声明，不能传给执行器。
 			delete(args, accountParam)
 
-			out, err := client.Call(ctx, rt, tool.Name, args)
+			out, meta, err := client.Call(ctx, rt, tool.Name, args)
 			if err != nil {
 				// 业务错误回进 Content 而不是协议错误，模型才能看见并自我纠正。
 				return errorResult(err), nil
 			}
-			text, err := json.MarshalIndent(out, "", "  ")
+			res := structured(out, meta)
+			text, err := json.MarshalIndent(res, "", "  ")
 			if err != nil {
 				return errorResult(err), nil
 			}
 			return &mcp.CallToolResult{
 				Content:           []mcp.Content{&mcp.TextContent{Text: string(text)}},
-				StructuredContent: out,
+				StructuredContent: res,
 			}, nil
 		})
 		n++
@@ -185,6 +186,35 @@ func toAny(ss []string) []any {
 		out[i] = s
 	}
 	return out
+}
+
+// structured 把结果整理成一个 JSON 对象。
+//
+// structuredContent 必须是对象：MCP 规范较新的修订允许任意 JSON 值，但现实中
+// 的客户端中间层普遍只接受 dict，直接回数组会在客户端那边解析失败 ——
+// 工具其实拿到了数据，用户看到的却是一个报错。
+//
+// 顺带把列表的条数和分页信息一起给出：模型需要知道「这是全部还是第一页」。
+func structured(out any, meta map[string]any) map[string]any {
+	res := map[string]any{}
+	switch v := out.(type) {
+	case []any:
+		res["count"] = len(v)
+		res["items"] = v
+	case map[string]any:
+		for k, val := range v {
+			res[k] = val
+		}
+	default:
+		res["value"] = v
+	}
+	for k, val := range meta {
+		// meta 的键名来自声明，不让它盖掉 count/items
+		if k != "count" && k != "items" {
+			res[k] = val
+		}
+	}
+	return res
 }
 
 func errorResult(err error) *mcp.CallToolResult {

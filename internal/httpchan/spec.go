@@ -133,6 +133,11 @@ type Result struct {
 	// ColumnsFromParam 指出列名来自哪个参数（逗号分隔的字段列表）。
 	// 通用查询工具的列名由调用方决定，没法写死在声明里。
 	ColumnsFromParam string `json:"columnsFromParam,omitempty"`
+	// Meta 是响应根上要一起带出来的字段（点号路径），例如 total、isLast、
+	// nextPageToken。Path 取出列表之后这些兄弟字段就丢了，而模型正是靠它们
+	// 判断「是不是还有下一页」—— 没有它，声明里给了翻页参数也没用，
+	// 因为模型拿不到该传什么。
+	Meta []string `json:"meta,omitempty"`
 }
 
 // Param 是一个工具参数。
@@ -373,6 +378,11 @@ func (s Spec) Validate() error {
 		}
 		if t.Result.Columns != nil && t.Result.ColumnsFromParam != "" {
 			return fmt.Errorf("%s/%s: columns 和 columnsFromParam 只能有一个", s.ID, t.Name)
+		}
+		for _, m := range t.Result.Meta {
+			if err := checkDotPath(m); err != nil {
+				return fmt.Errorf("%s/%s: result.meta %w", s.ID, t.Name, err)
+			}
 		}
 		pseen := map[string]bool{}
 		for _, p := range t.Params {

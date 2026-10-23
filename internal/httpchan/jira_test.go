@@ -213,7 +213,7 @@ func TestJiraSearchSendsDefaultFields(t *testing.T) {
 	m := newJiraMock(t, "you@example.com", "tok-abc-123456")
 	rt, c := m.runtime(t, "tok-abc-123456", false)
 
-	out, err := c.Call(context.Background(), rt, "jira_search_issues", map[string]any{
+	out, _, err := c.Call(context.Background(), rt, "jira_search_issues", map[string]any{
 		"jql": `project = ENG AND status != Done ORDER BY updated DESC`,
 	})
 	if err != nil {
@@ -256,7 +256,7 @@ func TestJiraGetIssueUsesV2PlainText(t *testing.T) {
 	m := newJiraMock(t, "you@example.com", "tok-abc-123456")
 	rt, c := m.runtime(t, "tok-abc-123456", false)
 
-	out, err := c.Call(context.Background(), rt, "jira_get_issue", map[string]any{"issueKey": "ENG-123"})
+	out, _, err := c.Call(context.Background(), rt, "jira_get_issue", map[string]any{"issueKey": "ENG-123"})
 	if err != nil {
 		t.Fatalf("读取详情失败: %v", err)
 	}
@@ -277,7 +277,7 @@ func TestJiraListComments(t *testing.T) {
 	m := newJiraMock(t, "you@example.com", "tok-abc-123456")
 	rt, c := m.runtime(t, "tok-abc-123456", false)
 
-	out, err := c.Call(context.Background(), rt, "jira_list_comments", map[string]any{"issueKey": "ENG-123"})
+	out, _, err := c.Call(context.Background(), rt, "jira_list_comments", map[string]any{"issueKey": "ENG-123"})
 	if err != nil {
 		t.Fatalf("读评论失败: %v", err)
 	}
@@ -296,7 +296,7 @@ func TestJiraAddCommentNeedsWriteSwitch(t *testing.T) {
 	m := newJiraMock(t, "you@example.com", "tok-abc-123456")
 	rt, c := m.runtime(t, "tok-abc-123456", false)
 
-	_, err := c.Call(context.Background(), rt, "jira_add_comment", map[string]any{
+	_, _, err := c.Call(context.Background(), rt, "jira_add_comment", map[string]any{
 		"issueKey": "ENG-123", "body": "收到",
 	})
 	if err == nil || !strings.Contains(err.Error(), "写开关") {
@@ -307,7 +307,7 @@ func TestJiraAddCommentNeedsWriteSwitch(t *testing.T) {
 	}
 
 	rt.Settings[AllowWriteField] = "true"
-	out, err := c.Call(context.Background(), rt, "jira_add_comment", map[string]any{
+	out, _, err := c.Call(context.Background(), rt, "jira_add_comment", map[string]any{
 		"issueKey": "ENG-123", "body": "我来看一下",
 	})
 	if err != nil {

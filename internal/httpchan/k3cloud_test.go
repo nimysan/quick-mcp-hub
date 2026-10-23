@@ -167,7 +167,7 @@ func TestK3CloudLoginThenQuery(t *testing.T) {
 	m := newK3Mock(t, "pw-secret-1")
 	rt, c := m.runtime(t, "pw-secret-1", false)
 
-	out, err := c.Call(context.Background(), rt, "k3cloud_query_bill", map[string]any{
+	out, _, err := c.Call(context.Background(), rt, "k3cloud_query_bill", map[string]any{
 		"formId":       "BD_MATERIAL",
 		"fieldKeys":    "FNumber,FName,FPrice",
 		"filterString": "FNumber like '00%'",
@@ -211,7 +211,7 @@ func TestK3CloudLoginOnlyOnce(t *testing.T) {
 	args := map[string]any{"formId": "BD_MATERIAL", "fieldKeys": "FNumber"}
 
 	for i := 0; i < 3; i++ {
-		if _, err := c.Call(context.Background(), rt, "k3cloud_query_bill", args); err != nil {
+		if _, _, err := c.Call(context.Background(), rt, "k3cloud_query_bill", args); err != nil {
 			t.Fatalf("第 %d 次查询失败: %v", i+1, err)
 		}
 	}
@@ -227,7 +227,7 @@ func TestK3CloudReloginOnSessionLost(t *testing.T) {
 	m.dropFirst = true
 	rt, c := m.runtime(t, "pw-secret-1", false)
 
-	out, err := c.Call(context.Background(), rt, "k3cloud_query_bill", map[string]any{
+	out, _, err := c.Call(context.Background(), rt, "k3cloud_query_bill", map[string]any{
 		"formId": "BD_MATERIAL", "fieldKeys": "FNumber,FName,FPrice",
 	})
 	if err != nil {
@@ -248,7 +248,7 @@ func TestK3CloudBusinessFailureIsError(t *testing.T) {
 	m.failQuery = true
 	rt, c := m.runtime(t, "pw-secret-1", false)
 
-	_, err := c.Call(context.Background(), rt, "k3cloud_query_bill", map[string]any{
+	_, _, err := c.Call(context.Background(), rt, "k3cloud_query_bill", map[string]any{
 		"formId": "BD_MATERIAL", "fieldKeys": "FNoSuchField",
 	})
 	if err == nil {
@@ -263,7 +263,7 @@ func TestK3CloudBadPassword(t *testing.T) {
 	m := newK3Mock(t, "pw-secret-1")
 	rt, c := m.runtime(t, "wrong-password", false)
 
-	_, err := c.Call(context.Background(), rt, "k3cloud_query_bill", map[string]any{
+	_, _, err := c.Call(context.Background(), rt, "k3cloud_query_bill", map[string]any{
 		"formId": "BD_MATERIAL", "fieldKeys": "FNumber",
 	})
 	if err == nil {
@@ -285,7 +285,7 @@ func TestK3CloudSaveNeedsWriteSwitch(t *testing.T) {
 	m := newK3Mock(t, "pw-secret-1")
 	rt, c := m.runtime(t, "pw-secret-1", false)
 
-	_, err := c.Call(context.Background(), rt, "k3cloud_save_bill", map[string]any{
+	_, _, err := c.Call(context.Background(), rt, "k3cloud_save_bill", map[string]any{
 		"formId": "BD_MATERIAL", "model": map[string]any{"FNumber": "003"},
 	})
 	if err == nil || !strings.Contains(err.Error(), "写开关") {
@@ -320,7 +320,7 @@ func TestK3CloudViewBodyShape(t *testing.T) {
 	m := newK3Mock(t, "pw-secret-1")
 	rt, c := m.runtime(t, "pw-secret-1", false)
 
-	if _, err := c.Call(context.Background(), rt, "k3cloud_view_bill", map[string]any{
+	if _, _, err := c.Call(context.Background(), rt, "k3cloud_view_bill", map[string]any{
 		"formId": "BD_MATERIAL", "number": "001",
 	}); err != nil {
 		t.Fatalf("读取单据失败: %v", err)

@@ -243,16 +243,21 @@ func renderLoginBody(tpl map[string]any, rt Runtime, secret string) (map[string]
 // 登录式渠道的测试就是登录本身（这类 RPC 接口往往一个 GET 都没有，
 // 而随便挑一个 POST 当测试要么会改数据、要么只能靠声明自称无害）。
 func (c *Client) Test(ctx context.Context, rt Runtime) (any, error) {
+	out, _, err := c.testOrCall(ctx, rt)
+	return out, err
+}
+
+func (c *Client) testOrCall(ctx context.Context, rt Runtime) (any, map[string]any, error) {
 	if rt.Spec.Auth.Kind == AuthLogin {
 		s, err := c.session(rt)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		s.invalidate() // 测试要真的登一次，不能复用旧会话
 		if err := c.ensureLogin(ctx, rt, s); err != nil {
-			return nil, err
+			return nil, nil, err
 		}
-		return map[string]any{"loggedIn": true, "account": rt.Account}, nil
+		return map[string]any{"loggedIn": true, "account": rt.Account}, nil, nil
 	}
 	return c.do(ctx, rt, Tool{
 		Name:   rt.Spec.ID + "_test",
@@ -262,22 +267,22 @@ func (c *Client) Test(ctx context.Context, rt Runtime) (any, error) {
 	}, nil)
 }
 
-// Call 执行一个声明出来的工具。
-func (c *Client) Call(ctx context.Context, rt Runtime, toolName string, args map[string]any) (any, error) {
+// Call 执行一个声明出来的工具。第二个返回值是分页/总数等元信息。
+func (c *Client) Call(ctx context.Context, rt Runtime, toolName string, args map[string]any) (any, map[string]any, error) {
 	t, ok := rt.Spec.Tool(toolName)
 	if !ok {
-		return nil, fmt.Errorf("渠道 %s 没有工具 %s", rt.Spec.ID, toolName)
+		return nil, nil, fmt.Errorf("渠道 %s 没有工具 %s", rt.Spec.ID, toolName)
 	}
 	if !t.ReadOnly && !rt.AllowWrite() {
-		return nil, fmt.Errorf("%s 会改动 %s 的数据，该渠道的写开关未打开", toolName, rt.Spec.Name)
+		return nil, nil, fmt.Errorf("%s 会改动 %s 的数据，该渠道的写开关未打开", toolName, rt.Spec.Name)
 	}
 	return c.do(ctx, rt, t, args)
 }
 
-func (c *Client) do(ctx context.Context, rt Runtime, t Tool, args map[string]any) (any, error) {
+func (c *Client) do(ctx context.Context, rt Runtime, t Tool, args map[string]any) (any, map[string]any, error) {
 	req, secret, err := c.buildRequest(ctx, rt, t, args)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	hc := c.httpClient()
@@ -285,32 +290,32 @@ func (c *Client) do(ctx context.Context, rt Runtime, t Tool, args map[string]any
 	if rt.Spec.Auth.Kind == AuthLogin {
 		sess, err = c.session(rt)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		if err := c.ensureLogin(ctx, rt, sess); err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		hc = sess.client
 	}
 
 	cols := resolveColumns(t, args)
-	out, retryable, err := c.send(hc, rt, t, req, secret, cols)
+	out, meta, retryable, err := c.send(hc, rt, t, req, secret, cols)
 	if err == nil || sess == nil || !retryable {
-		return out, err
+		return out, meta, err
 	}
 
 	// 会话过期：重登一次再试。企业系统的会话常有几十分钟上限，
 	// 而 MCP server 是常驻进程，不自动重登就会「用一会儿就全挂」。
 	sess.invalidate()
 	if lerr := c.ensureLogin(ctx, rt, sess); lerr != nil {
-		return nil, fmt.Errorf("%v；重新登录也失败: %w", err, lerr)
+		return nil, nil, fmt.Errorf("%v；重新登录也失败: %w", err, lerr)
 	}
 	req2, _, berr := c.buildRequest(ctx, rt, t, args)
 	if berr != nil {
-		return nil, berr
+		return nil, nil, berr
 	}
-	out, _, err = c.send(sess.client, rt, t, req2, secret, cols)
-	return out, err
+	out, meta, _, err = c.send(sess.client, rt, t, req2, secret, cols)
+	return out, meta, err
 }
 
 // buildRequest 按声明拼出请求。返回的 secret 只用于把它从错误信息里抹掉。
@@ -420,31 +425,31 @@ func (c *Client) buildRequest(ctx context.Context, rt Runtime, t Tool, args map[
 }
 
 // send 发请求并裁剪结果。retryable 为真表示「重新登录后值得再试一次」。
-func (c *Client) send(hc *http.Client, rt Runtime, t Tool, req *http.Request, secret string, cols []string) (out any, retryable bool, err error) {
+func (c *Client) send(hc *http.Client, rt Runtime, t Tool, req *http.Request, secret string, cols []string) (out any, meta map[string]any, retryable bool, err error) {
 	resp, err := hc.Do(req)
 	if err != nil {
 		// http.Client 的错误信息里会带 URL，而 query 方式下 URL 含凭据，所以不直接回显。
-		return nil, false, fmt.Errorf("请求 %s %s 失败: %s", t.Method, t.Path, scrub(err.Error(), secret))
+		return nil, nil, false, fmt.Errorf("请求 %s %s 失败: %s", t.Method, t.Path, scrub(err.Error(), secret))
 	}
 	defer resp.Body.Close()
 
 	raw, err := io.ReadAll(io.LimitReader(resp.Body, maxBody))
 	if err != nil {
-		return nil, false, fmt.Errorf("读取响应失败: %w", err)
+		return nil, nil, false, fmt.Errorf("读取响应失败: %w", err)
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		retry := resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden ||
 			matchesRelogin(rt, raw)
-		return nil, retry, fmt.Errorf("%s %s 返回 %s: %s",
+		return nil, nil, retry, fmt.Errorf("%s %s 返回 %s: %s",
 			t.Method, t.Path, resp.Status, scrub(excerpt(raw), secret))
 	}
 	if len(bytes.TrimSpace(raw)) == 0 {
-		return map[string]any{"ok": true, "status": resp.StatusCode}, false, nil
+		return map[string]any{"ok": true, "status": resp.StatusCode}, nil, false, nil
 	}
 
 	var decoded any
 	if err := json.Unmarshal(raw, &decoded); err != nil {
-		return nil, false, fmt.Errorf("响应不是 JSON（%s）: %s", resp.Header.Get("Content-Type"), excerpt(raw))
+		return nil, nil, false, fmt.Errorf("响应不是 JSON（%s）: %s", resp.Header.Get("Content-Type"), excerpt(raw))
 	}
 
 	// HTTP 200 但业务失败：不判定就会把失败当成功，模型拿着空结果编结论。
@@ -458,13 +463,13 @@ func (c *Client) send(hc *http.Client, rt Runtime, t Tool, req *http.Request, se
 						msg = fmt.Sprintf("%v", m)
 					}
 				}
-				return nil, matchesRelogin(rt, raw), fmt.Errorf("%s 返回业务失败: %s", t.Path, scrub(msg, secret))
+				return nil, nil, matchesRelogin(rt, raw), fmt.Errorf("%s 返回业务失败: %s", t.Path, scrub(msg, secret))
 			}
 		}
 	}
 
-	shaped, err := shape(decoded, t.Result, cols)
-	return shaped, false, err
+	shaped, shapedMeta, err := shape(decoded, t.Result, cols)
+	return shaped, shapedMeta, false, err
 }
 
 // matchesRelogin 判断响应内容是否命中「会话过期」的字样。
@@ -482,11 +487,21 @@ func matchesRelogin(rt Runtime, body []byte) bool {
 }
 
 // shape 按 Result 声明裁剪响应。cols 是已解析出的列名（可能来自参数）。
-func shape(v any, r Result, cols []string) (any, error) {
+// 第二个返回值是 Meta 声明的那些兄弟字段（total / nextPageToken 之类）。
+func shape(v any, r Result, cols []string) (any, map[string]any, error) {
+	var meta map[string]any
+	for _, path := range r.Meta {
+		if got, ok := pick(v, path); ok {
+			if meta == nil {
+				meta = map[string]any{}
+			}
+			meta[lastSeg(path)] = got
+		}
+	}
 	if r.Path != "" {
 		got, ok := pick(v, r.Path)
 		if !ok {
-			return nil, fmt.Errorf("响应里没有 %s", r.Path)
+			return nil, nil, fmt.Errorf("响应里没有 %s", r.Path)
 		}
 		v = got
 	}
@@ -494,6 +509,12 @@ func shape(v any, r Result, cols []string) (any, error) {
 	case []any:
 		if r.Limit > 0 && len(t) > r.Limit {
 			t = t[:r.Limit]
+			if meta == nil {
+				meta = map[string]any{}
+			}
+			// 被本地上限截断过就说明还有更多，这件事必须说出来，
+			// 否则模型会把「前 N 条」当成「全部」。
+			meta["truncatedTo"] = r.Limit
 		}
 		out := make([]any, 0, len(t))
 		for _, item := range t {
@@ -505,10 +526,18 @@ func shape(v any, r Result, cols []string) (any, error) {
 			}
 			out = append(out, project(item, r.Fields))
 		}
-		return out, nil
+		return out, meta, nil
 	default:
-		return project(v, r.Fields), nil
+		return project(v, r.Fields), meta, nil
 	}
+}
+
+// lastSeg 取点号路径的最后一段，作为 meta 里的键名。
+func lastSeg(path string) string {
+	if i := strings.LastIndexByte(path, '.'); i >= 0 {
+		return path[i+1:]
+	}
+	return path
 }
 
 // resolveColumns 解析列名：声明里写死的，或者由某个参数带来的。

@@ -147,6 +147,10 @@
           "pushed_at",
           "html_url",
           "license.spdx_id"
+        ],
+        "meta": [
+          "total_count",
+          "incomplete_results"
         ]
       }
     },

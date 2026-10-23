@@ -65,7 +65,7 @@
     {
       "name": "jira_list_projects",
       "title": "列出项目",
-      "description": "列出当前身份能看到的 Jira 项目，返回项目键（如 ENG）和名称。写 JQL 之前用它确认项目键怎么拼——JQL 里的 project= 要的是项目键，不是项目名。",
+      "description": "列出当前身份能看到的 Jira 项目，返回项目键（如 ENG）和名称。写 JQL 之前用它确认项目键怎么拼——JQL 里的 project= 要的是项目键，不是项目名。结果里的 total 是项目总数，isLast 为 false 说明还没列完。",
       "readOnly": true,
       "method": "GET",
       "path": "/rest/api/3/project/search",
@@ -90,13 +90,17 @@
           "key",
           "name",
           "projectTypeKey"
+        ],
+        "meta": [
+          "total",
+          "isLast"
         ]
       }
     },
     {
       "name": "jira_search_issues",
       "title": "搜索事项",
-      "description": "用 JQL 查 Jira 事项，这是找工单的主要方式。常用写法：`project = ENG AND status != Done ORDER BY updated DESC`、`assignee = currentUser() AND status = \"In Progress\"`、`created >= -7d`。返回的是列表（含事项键如 ENG-123），不含描述正文和评论；要看某条的内容，拿事项键调 jira_get_issue。不知道项目键怎么拼就先调 jira_list_projects。",
+      "description": "用 JQL 查 Jira 事项，这是找工单的主要方式。常用写法：`project = ENG AND status != Done ORDER BY updated DESC`、`assignee = currentUser() AND status = \"In Progress\"`、`created >= -7d`。返回的是列表（含事项键如 ENG-123），不含描述正文和评论；要看某条的内容，拿事项键调 jira_get_issue。不知道项目键怎么拼就先调 jira_list_projects。结果里的 nextPageToken 非空说明还有下一页，把它传回来可以继续取。",
       "readOnly": true,
       "method": "GET",
       "path": "/rest/api/3/search/jql",
@@ -132,6 +136,10 @@
         "fields": [
           "key",
           "fields"
+        ],
+        "meta": [
+          "nextPageToken",
+          "isLast"
         ]
       }
     },
@@ -206,6 +214,9 @@
           "body",
           "created",
           "updated"
+        ],
+        "meta": [
+          "total"
         ]
       }
     },

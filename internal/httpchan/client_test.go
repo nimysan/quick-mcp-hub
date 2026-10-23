@@ -56,7 +56,7 @@ func TestCallBuildsRequestAndShapesResult(t *testing.T) {
 	rt.Spec.BaseURL = srv.URL // httptest 是 https，符合 https 约束
 	c := &Client{HTTP: srv.Client()}
 
-	out, err := c.Call(context.Background(), rt, "demo_list", map[string]any{"owner": "oct o"})
+	out, _, err := c.Call(context.Background(), rt, "demo_list", map[string]any{"owner": "oct o"})
 	if err != nil {
 		t.Fatalf("调用失败: %v", err)
 	}
@@ -117,7 +117,7 @@ func TestCallWriteToolNeedsSwitch(t *testing.T) {
 	c := &Client{HTTP: srv.Client()}
 
 	// 写开关关着：必须在发请求之前就拒绝。
-	_, err := c.Call(context.Background(), rt, "demo_create", map[string]any{"title": "新"})
+	_, _, err := c.Call(context.Background(), rt, "demo_create", map[string]any{"title": "新"})
 	if err == nil || !strings.Contains(err.Error(), "写开关") {
 		t.Fatalf("写开关关着时应当拒绝，实际: %v", err)
 	}
@@ -126,7 +126,7 @@ func TestCallWriteToolNeedsSwitch(t *testing.T) {
 	}
 
 	rt.Settings = map[string]string{AllowWriteField: "true"}
-	if _, err := c.Call(context.Background(), rt, "demo_create", map[string]any{"title": "新"}); err != nil {
+	if _, _, err := c.Call(context.Background(), rt, "demo_create", map[string]any{"title": "新"}); err != nil {
 		t.Fatalf("打开写开关后应当放行: %v", err)
 	}
 	if !called {
@@ -146,12 +146,12 @@ func TestCallRequiredParamAndErrorBody(t *testing.T) {
 	rt := Runtime{Spec: spec, Account: "me", Secret: func() (string, error) { return "tok-123456", nil }}
 	c := &Client{HTTP: srv.Client()}
 
-	if _, err := c.Call(context.Background(), rt, "demo_get", nil); err == nil ||
+	if _, _, err := c.Call(context.Background(), rt, "demo_get", nil); err == nil ||
 		!strings.Contains(err.Error(), "必填") {
 		t.Fatalf("缺必填参数应当报错，实际: %v", err)
 	}
 
-	_, err := c.Call(context.Background(), rt, "demo_get", map[string]any{"id": 5})
+	_, _, err := c.Call(context.Background(), rt, "demo_get", map[string]any{"id": 5})
 	if err == nil {
 		t.Fatal("401 应当是错误")
 	}
@@ -205,7 +205,7 @@ func TestPathParamCannotTraverse(t *testing.T) {
 	rt := Runtime{Spec: spec, Account: "me", Secret: func() (string, error) { return "tok-123456", nil }}
 	c := &Client{HTTP: srv.Client()}
 
-	if _, err := c.Call(context.Background(), rt, "demo_get", map[string]any{"id": "../../user"}); err != nil {
+	if _, _, err := c.Call(context.Background(), rt, "demo_get", map[string]any{"id": "../../user"}); err != nil {
 		t.Fatalf("调用失败: %v", err)
 	}
 	// 关键是斜杠被编码成 %2F：路径层级没有多出来，".." 只是个普通段。
@@ -217,7 +217,7 @@ func TestPathParamCannotTraverse(t *testing.T) {
 func TestShapeKeepsScalarAndObject(t *testing.T) {
 	var v any
 	json.Unmarshal([]byte(`{"login":"nimysan","name":"叶","noise":1}`), &v)
-	out, err := shape(v, Result{Fields: []string{"login", "name"}}, nil)
+	out, _, err := shape(v, Result{Fields: []string{"login", "name"}}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

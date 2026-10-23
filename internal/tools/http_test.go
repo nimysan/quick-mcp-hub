@@ -117,3 +117,59 @@ func TestDescribeNamesWritableAccounts(t *testing.T) {
 		}
 	}
 }
+
+// structuredContent 必须是对象。MCP 规范较新的修订允许任意 JSON 值，但现实
+// 中的客户端中间层普遍只接受 dict：直接回数组会在客户端那边解析失败，表现为
+// 「工具明明拿到了数据，用户看到的却是报错」。jira_list_projects 就是这么炸的。
+func TestStructuredAlwaysObject(t *testing.T) {
+	// 列表结果：包成 {count, items}，模型据此知道拿到了几条
+	got := structured([]any{map[string]any{"key": "SCRUM"}, map[string]any{"key": "ENG"}}, nil)
+	if got["count"] != 2 {
+		t.Errorf("count 不对: %v", got["count"])
+	}
+	if items, ok := got["items"].([]any); !ok || len(items) != 2 {
+		t.Errorf("items 不对: %#v", got["items"])
+	}
+
+	// 空列表也要是对象，而且 count=0 —— 不能变成 null 或 []
+	empty := structured([]any{}, nil)
+	if empty["count"] != 0 {
+		t.Errorf("空列表的 count 应当是 0: %v", empty)
+	}
+	if _, ok := empty["items"].([]any); !ok {
+		t.Errorf("空列表也要有 items: %#v", empty["items"])
+	}
+
+	// 对象结果原样透出
+	obj := structured(map[string]any{"login": "nimysan"}, nil)
+	if obj["login"] != "nimysan" {
+		t.Errorf("对象结果不该被包一层: %v", obj)
+	}
+
+	// 标量也得装进对象
+	if v := structured("plain", nil); v["value"] != "plain" {
+		t.Errorf("标量应当放进 value: %v", v)
+	}
+}
+
+// 分页信息要跟着列表一起回去：模型靠它判断「这是全部还是第一页」。
+// 声明里给了 nextPageToken 入参却不回这个值的话，翻页根本走不通。
+func TestStructuredCarriesMeta(t *testing.T) {
+	got := structured([]any{map[string]any{"key": "SCRUM"}},
+		map[string]any{"total": float64(7), "isLast": false, "nextPageToken": "tok2"})
+	if got["total"] != float64(7) || got["isLast"] != false || got["nextPageToken"] != "tok2" {
+		t.Errorf("meta 没带出来: %v", got)
+	}
+	if got["count"] != 1 {
+		t.Errorf("count 被 meta 覆盖了: %v", got)
+	}
+
+	// meta 不准盖掉 count / items
+	bad := structured([]any{1, 2, 3}, map[string]any{"count": 999, "items": "x"})
+	if bad["count"] != 3 {
+		t.Errorf("meta 里的 count 不该生效: %v", bad["count"])
+	}
+	if items, ok := bad["items"].([]any); !ok || len(items) != 3 {
+		t.Errorf("meta 里的 items 不该生效: %#v", bad["items"])
+	}
+}
