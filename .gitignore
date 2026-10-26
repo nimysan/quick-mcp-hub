@@ -1,3 +1,5 @@
 dist/
 *.exe
 .env
+# rsrc 生成的 Windows 图标资源，构建时产生、构建后删除
+rsrc_windows_*.syso

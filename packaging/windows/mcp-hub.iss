@@ -54,6 +54,10 @@ ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 WizardStyle=modern
 UninstallDisplayName=MCP Hub
+; 图标：安装程序自己的、以及「添加或删除程序」里显示的那个。
+; 装好之后开始菜单和桌面快捷方式的图标来自 exe 内嵌的资源（见 release.sh）。
+SetupIconFile=mcp-hub.ico
+UninstallDisplayIcon={app}\mcp-hub.exe
 
 [Languages]
 Name: "chinese"; MessagesFile: "compiler:Languages\ChineseSimplified.isl"

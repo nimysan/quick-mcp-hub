@@ -1,5 +1,7 @@
 # mcp-hub
 
+<img src="packaging/logo.png" width="96" alt="MCP Hub">
+
 单文件可执行的 MCP 服务器：把你用的各个系统当「渠道」接进来，凭据存在操作系统
 自己的密码管理器里。渠道分两类：
 

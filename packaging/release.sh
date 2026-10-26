@@ -45,12 +45,24 @@ if [ -n "$PLUGINS" ]; then
   ./plugins/build.sh $PLUGINS >/dev/null
 fi
 
+# Windows 的 exe 图标只能靠嵌入资源，Go 自己不做这件事：rsrc 把 .ico 编成
+# 一个 .syso，文件名里的 _windows_<arch> 后缀让它只在那个目标上被链接进去。
+# 构建完就删 —— 留着会变成一个来源不明的二进制中间产物。
+RSRC_VER=v0.10.2
+cleanup() { rm -f rsrc_windows_*.syso; }
+trap cleanup EXIT
+
 for t in "${targets[@]}"; do
   read -r goos goarch exe <<<"$t"
   name="mcp-hub-${VERSION}-${goos}-${goarch}"
   dir="${OUT}/${name}"
   mkdir -p "$dir"
 
+  if [ "$goos" = "windows" ]; then
+    go run "github.com/akavel/rsrc@${RSRC_VER}" \
+      -ico packaging/windows/mcp-hub.ico -arch "$goarch" \
+      -o "rsrc_windows_${goarch}.syso"
+  fi
   GOOS="$goos" GOARCH="$goarch" go build -trimpath -ldflags="$LDFLAGS" -o "$dir/$exe" .
   cp "packaging/快速开始.md" "$dir/快速开始.md"
 
