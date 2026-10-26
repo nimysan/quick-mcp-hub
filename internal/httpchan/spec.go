@@ -19,6 +19,8 @@ import (
 	"net/url"
 	"regexp"
 	"strings"
+
+	"github.com/nimysan/mcp-hub/internal/oauthdev"
 )
 
 // AuthKind 决定凭据往哪里放。
@@ -203,6 +205,14 @@ type Spec struct {
 	Headers map[string]string `json:"headers,omitempty"`
 	Fields  []Field           `json:"fields,omitempty"`
 
+	// OAuth 非空时，这个渠道的凭据可以用页面上的「连接」按钮走设备流拿到，
+	// 不必让用户去对方系统手工生成一个长期令牌再粘过来。
+	//
+	// 它不替换手填：同一个凭据槽既能装用户粘来的长期令牌，也能装连接拿到的
+	// 令牌组（靠 oauthdev 的标记区分）。两条路并存是因为企业里两种都有人用 ——
+	// 有的组织根本不允许给桌面程序注册 OAuth App。
+	OAuth *OAuthSpec `json:"oauth,omitempty"`
+
 	// FailWhen 判定「HTTP 200 但业务失败」，对本渠道所有调用生效。
 	FailWhen *FailWhen `json:"failWhen,omitempty"`
 
@@ -225,6 +235,55 @@ type Spec struct {
 // AllowWriteField 是写开关的字段名。只要 spec 里有非只读工具，
 // 描述符就会自动长出这个开关，默认关。
 const AllowWriteField = "allowWrite"
+
+// OAuthSpec 是一个渠道的 OAuth 设备流参数。
+//
+// 只支持设备流，不支持浏览器回调：桌面程序存不住 client_secret，而 GitHub
+// 这类提供方的 web 流换 token 必须带 secret。设备流只要 client_id。
+type OAuthSpec struct {
+	// Flow 目前只能是 "device"。写出来是为了以后加别的流时，旧客户端能
+	// 干净地拒绝一个它执行不了的声明，而不是半残地跑起来。
+	Flow string `json:"flow"`
+
+	// ClientID 写死在声明里（厂商自己发布的 connector 用这个）。
+	ClientID string `json:"clientId,omitempty"`
+	// ClientIDField 指向 Fields 里的一个字段，由用户自己注册 App 后填入。
+	// 两者必须且只能有一个。
+	ClientIDField string `json:"clientIdField,omitempty"`
+
+	DeviceCodeURL string   `json:"deviceCodeUrl"`
+	TokenURL      string   `json:"tokenUrl"`
+	Scopes        []string `json:"scopes,omitempty"`
+
+	// SetupURL 是「去哪注册 App」的地址，页面上给用户一个链接。
+	SetupURL string `json:"setupUrl,omitempty"`
+	// Help 是填 client id 前要知道的事，显示在输入框旁边。
+	Help string `json:"help,omitempty"`
+}
+
+// OAuthConfig 把声明和实例设置拼成可执行的设备流参数。
+func (s Spec) OAuthConfig(settings map[string]string) (oauthdev.Config, error) {
+	if s.OAuth == nil {
+		return oauthdev.Config{}, fmt.Errorf("渠道 %s 不支持 OAuth 连接", s.ID)
+	}
+	clientID := s.OAuth.ClientID
+	if s.OAuth.ClientIDField != "" {
+		clientID = strings.TrimSpace(settings[s.OAuth.ClientIDField])
+		if clientID == "" {
+			label := s.OAuth.ClientIDField
+			if f, ok := s.Field(s.OAuth.ClientIDField); ok {
+				label = f.Label
+			}
+			return oauthdev.Config{}, fmt.Errorf("请先填写 %s", label)
+		}
+	}
+	return oauthdev.Config{
+		ClientID:      clientID,
+		DeviceCodeURL: s.OAuth.DeviceCodeURL,
+		TokenURL:      s.OAuth.TokenURL,
+		Scopes:        s.OAuth.Scopes,
+	}, nil
+}
 
 // ReservedAccountParam 是多实例时由工具层自动加上的参数名，
 // 渠道声明里不能用它做业务参数，否则账号分派会被业务值顶掉。
@@ -314,6 +373,9 @@ func (s Spec) Validate() error {
 	}
 	if s.Auth.Kind != AuthLogin && s.Auth.Login != nil {
 		return fmt.Errorf("%s: 只有 auth.kind=login 才能带 login 段", s.ID)
+	}
+	if err := s.checkOAuth(); err != nil {
+		return fmt.Errorf("%s: oauth %w", s.ID, err)
 	}
 	if s.FailWhen != nil && strings.TrimSpace(s.FailWhen.Path) == "" {
 		return fmt.Errorf("%s: failWhen 必须给出 path", s.ID)
@@ -521,6 +583,54 @@ func (s Spec) Field(name string) (Field, bool) {
 		}
 	}
 	return Field{}, false
+}
+
+// checkOAuth 校验 oauth 段。
+//
+// 最要紧的一条和 baseUrl 同理：授权服务地址不能由下发内容模板拼出 ——
+// 否则一份被篡改的目录就能把「请去这里授权」指向攻击者，而用户在那一页
+// 输入的是自己真实账号的凭据。
+func (s Spec) checkOAuth() error {
+	o := s.OAuth
+	if o == nil {
+		return nil
+	}
+	if o.Flow != "device" {
+		// 只支持设备流。写死这一条，是为了旧客户端遇到以后新增的流时
+		// 干净地拒绝，而不是忽略 flow 字段、按设备流跑出错误的行为。
+		return fmt.Errorf("flow %q 不支持（只支持 device）", o.Flow)
+	}
+	if s.Auth.Kind != AuthBearer {
+		// 拿到的令牌是按 Bearer 注入的，别的认证方式对不上。
+		return fmt.Errorf("只能和 auth.kind=bearer 搭配（现在是 %s）", s.Auth.Kind)
+	}
+	switch {
+	case o.ClientID != "" && o.ClientIDField != "":
+		return fmt.Errorf("clientId 和 clientIdField 只能有一个")
+	case o.ClientID == "" && o.ClientIDField == "":
+		return fmt.Errorf("必须给出 clientId 或 clientIdField")
+	case o.ClientIDField != "":
+		if _, ok := s.Field(o.ClientIDField); !ok {
+			return fmt.Errorf("clientIdField %q 在 fields 里不存在", o.ClientIDField)
+		}
+	}
+	if err := checkBaseURL(o.DeviceCodeURL); err != nil {
+		return fmt.Errorf("deviceCodeUrl %w", err)
+	}
+	if err := checkBaseURL(o.TokenURL); err != nil {
+		return fmt.Errorf("tokenUrl %w", err)
+	}
+	if o.SetupURL != "" {
+		if err := checkBaseURL(o.SetupURL); err != nil {
+			return fmt.Errorf("setupUrl %w", err)
+		}
+	}
+	for _, sc := range o.Scopes {
+		if strings.TrimSpace(sc) == "" || strings.ContainsAny(sc, " \t") {
+			return fmt.Errorf("scope %q 不合法（一个元素一个作用域，不要带空格）", sc)
+		}
+	}
+	return nil
 }
 
 func checkBaseURL(raw string) error {

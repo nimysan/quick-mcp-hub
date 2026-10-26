@@ -438,6 +438,91 @@ mcp-hub -catalog-sync https://.../cat.json  抓取并验签远端目录，写入
 | `fields.assignee 是 null` | 字段在、值是空 | **不用改**，这是数据状态（没负责人） |
 | `values（整个子树都没取到）` | `result.path` 指错了 | 要改 |
 
+## OAuth「连接」按钮（设备流）
+
+有些渠道不必让用户去对方系统手工生成一个长期令牌再粘过来：页面上点一下
+「连接」，在对方网站上确认，令牌就进了本机的密码管理器。GitHub 渠道已经支持。
+
+### 为什么是设备流，不是浏览器回调
+
+桌面程序**存不住 `client_secret`** —— 它跟着 exe 发给每一个客户，不是秘密。
+而 GitHub 的 web 流换 token 必须带 secret（[官方文档](https://docs.github.com/en/apps/oauth-apps/building-oauth-apps/authorizing-oauth-apps)
+把它标为 Required，PKCE 的 `code_verifier` 是额外加固，不替代 secret）。
+
+设备授权流（[RFC 8628](https://datatracker.ietf.org/doc/html/rfc8628)）只要
+`client_id`：程序显示一个 8 位码，用户去对方网站输入，程序轮询直到授权完成。
+它本来就是给没有浏览器的设备设计的，正好适合一个发给客户的 exe。
+
+### 用起来的样子
+
+```
+页面 -> 渠道市场 -> GitHub 「添加」
+  填 OAuth App Client ID（高级设置里）
+  点「连接 GitHub」
+    -> ① 复制验证码 WDJB-MJHT
+    -> ② 打开 github.com/login/device 粘贴并确认
+    -> ③ 等待授权…  ✅ 已连接为 nimysan，渠道已保存
+```
+
+账号名**不用用户填** —— 授权完成后向对方系统问一次身份就知道了。用户填的
+名字和令牌实际属于谁可能不一致，而凭据是按账号名定位的，填错等于把令牌存到
+另一个条目下。
+
+### 要先注册一个 OAuth App
+
+Client ID 只能由你自己注册的 App 提供（公共客户端的 client_id 不是秘密，
+正式发布时应该把你自己 App 的 id 写进声明的 `oauth.clientId`）：
+
+1. github.com -> Settings -> Developer settings -> OAuth Apps -> New
+2. **勾上 Enable Device Flow** —— 不勾的话连接会以 `device_flow_disabled` 失败
+3. 把 Client ID 填进页面的「OAuth App Client ID」
+
+### 两条路并存
+
+同一个凭据槽既能装用户手填的长期令牌（PAT），也能装连接拿到的令牌组，靠
+`oauthdev` 的标记区分。保留手填是因为企业里两种都有人用 —— 有的组织根本不
+允许给桌面程序注册 OAuth App。
+
+### 声明怎么写
+
+```jsonc
+"auth": { "kind": "bearer" },
+"oauth": {
+  "flow": "device",
+  "clientIdField": "oauthClientId",   // 或 "clientId": "Iv23li..." 写死
+  "deviceCodeUrl": "https://github.com/login/device/code",
+  "tokenUrl": "https://github.com/login/oauth/access_token",
+  "scopes": ["repo", "read:user"],
+  "setupUrl": "https://github.com/settings/developers"
+}
+```
+
+校验规则里最要紧的一条和 `baseUrl` 同理：**授权服务地址不能由下发内容模板
+拼出**，必须是写死的 https 地址。否则一份被篡改的目录就能把「请去这里授权」
+指向攻击者，而用户在那一页输入的是自己真实账号的密码。页面上也把这件事摆出来：
+点按钮前会显示「会把你送到 **github.com** 授权」和申请的权限。
+
+### 轮询放在服务端
+
+授权服务规定了最小轮询间隔，收到 `slow_down` 还要把间隔**加 5 秒**（不是原速
+重试，那会一直撞限流）。这套节流只有一份实现才可靠，而且放在服务端的话，用户
+切走页面再回来，授权照样在进行。设备码不下发到前端 —— 它等价于一次授权的凭据。
+
+### 几件要知道的事
+
+- **OAuth 的权限是粗粒度的。** `repo` 这个作用域包含写权限，所以令牌在 API
+  层面是能改仓库的。hub 的写开关只决定「哪些工具注册给模型」，决定不了令牌
+  本身能做什么 —— 要真正收窄，得在对方系统那侧用更细的权限（GitHub 的话是
+  改用 GitHub App 的 fine-grained permissions）。
+- **GitHub 的刷新走不通，而且不需要。** OAuth App 的刷新接口要求
+  `client_secret`，公共客户端没有它。对应做法是不要开 App 的「过期令牌」、
+  也不要申请 `offline_access`，让令牌长期有效，被吊销时重新点连接。刷新代码
+  留着是给支持公共客户端刷新的提供方用的。
+- **刷新成功但写不回密码管理器 = 致命错误**，不是记一笔然后继续。很多提供方
+  刷新时会轮换 `refresh_token`，存不下来就意味着库里那个已作废，继续跑会变成
+  「这次好了，之后全坏」。
+- 连接失败不会留下半个渠道：凭据和实例都是拿到令牌、验证可用之后才写。
+
 ## wasm 插件渠道（原型，尚未接进运行时）
 
 声明式渠道能覆盖「HTTP 请求 + 裁剪响应」，但有些系统真的需要执行代码（多步握手、

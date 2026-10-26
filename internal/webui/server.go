@@ -43,6 +43,11 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("/api/channels", s.handleChannels) // GET 列表 / POST 保存
 	s.mux.HandleFunc("/api/channels/test", s.handleTest)
 	s.mux.HandleFunc("/api/channels/delete", s.handleDelete)
+	// OAuth 设备流：开始授权 / 查状态 / 放弃。轮询由服务端做（见 connect.go），
+	// 这里只是把状态端出来。
+	s.mux.HandleFunc("/api/oauth/start", s.handleOAuthStart)
+	s.mux.HandleFunc("/api/oauth/status", s.handleOAuthStatus)
+	s.mux.HandleFunc("/api/oauth/cancel", s.handleOAuthCancel)
 }
 
 // Listen 在 127.0.0.1 上监听。port 为 0 时由系统分配，返回实际地址。
@@ -166,6 +171,59 @@ func (s *Server) handleDelete(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, err)
 		return
 	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
+// handleOAuthStart 开始一次设备流授权。只回给用户看的码和地址 ——
+// 设备码不下发到前端，它等价于一次授权的凭据。
+func (s *Server) handleOAuthStart(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	var req struct {
+		Type   string            `json:"type"`
+		Values map[string]string `json:"values"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeErr(w, http.StatusBadRequest, err)
+		return
+	}
+	sess, err := s.mgr.StartConnect(req.Type, req.Values)
+	if err != nil {
+		writeJSON(w, http.StatusOK, map[string]any{"ok": false, "error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "session": sess})
+}
+
+func (s *Server) handleOAuthStatus(w http.ResponseWriter, r *http.Request) {
+	id := r.URL.Query().Get("session")
+	if id == "" {
+		writeErr(w, http.StatusBadRequest, fmt.Errorf("缺少 session 参数"))
+		return
+	}
+	st, err := s.mgr.ConnectStatus(id)
+	if err != nil {
+		writeJSON(w, http.StatusOK, map[string]any{"state": "error", "error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, st)
+}
+
+func (s *Server) handleOAuthCancel(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	var req struct {
+		Session string `json:"session"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeErr(w, http.StatusBadRequest, err)
+		return
+	}
+	s.mgr.CancelConnect(req.Session)
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 

@@ -65,6 +65,12 @@
     width:100%;max-width:520px;padding:20px}
   .modal h3{margin:0 0 4px}
   .modal .hint{color:var(--muted);font-size:12px;margin-bottom:14px}
+  .oauth-box{border:1px solid var(--border);border-radius:10px;padding:12px 14px;margin:4px 0 14px}
+  .oauth-head{font-weight:600;font-size:13px;margin-bottom:6px}
+  .oauth-code{margin-top:10px}
+  .code-row{display:flex;align-items:center;gap:10px;margin-top:4px}
+  .code-row code{font-size:20px;letter-spacing:2px;font-weight:700;
+    padding:6px 12px;border:1px dashed var(--border);border-radius:8px}
   .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(270px,1fr));gap:10px}
   .mk{background:var(--card);border:1px solid var(--border);border-radius:10px;
       padding:12px 14px;display:flex;flex-direction:column;gap:6px}
@@ -280,7 +286,17 @@ function renderMarket(){
 }
 
 function esc(s){return String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]))}
-function close(){$("#mask").classList.remove("show")}
+function close(){
+  $("#mask").classList.remove("show");
+  // 关弹窗就放弃正在进行的授权：服务端那个轮询协程不该在没人看的时候
+  // 继续打授权服务。
+  if(OAUTH_SESSION){
+    const id = OAUTH_SESSION; OAUTH_SESSION = null;
+    api("/api/oauth/cancel",{method:"POST",
+      headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({session:id})}).catch(()=>{});
+  }
+}
 
 function openEdit(type,account){openForm(type,account)}
 
@@ -310,12 +326,23 @@ async function openForm(type, account){
       ${f.help?`<div class="help">${esc(f.help)}</div>`:""}</div>`;
   };
   // 账号字段编辑时锁定（它是凭据键的一部分）
+  const oauthHTML = (d.oauth && !account) ? `
+    <div class="oauth-box">
+      <div class="oauth-head">🔗 用 OAuth 连接（不用手工生成令牌）</div>
+      <div class="help">点下面的按钮，会把你送到 <b>${esc(d.oauth.authHost)}</b> 授权${
+        d.oauth.scopes?.length?`，申请的权限：<code>${esc(d.oauth.scopes.join(" "))}</code>`:""}</div>
+      ${d.oauth.help?`<div class="help">${esc(d.oauth.help)}${
+        d.oauth.setupUrl?` · <a href="${esc(d.oauth.setupUrl)}" target="_blank" rel="noreferrer">去注册</a>`:""}</div>`:""}
+      <button id="oauthbtn" style="margin-top:8px">连接 ${esc(d.name)}</button>
+      <div id="oauthpanel"></div>
+    </div>` : "";
   $("#modal").innerHTML = `
     <h3>${d.icon} ${esc(d.name)}</h3>
     <div class="hint">密码类字段只存进系统密码管理器，不写配置文件、不进日志</div>
     ${basic.map(fieldHTML).join("")}
     ${adv.length?`<div class="adv-toggle" id="advtoggle">▸ 高级设置（主机 / 端口）</div>
       <div class="adv" id="adv">${adv.map(fieldHTML).join("")}</div>`:""}
+    ${oauthHTML}
     <div class="foot">
       <button class="primary" id="savebtn">测试并保存</button>
       <button id="cancelbtn">取消</button>
@@ -325,6 +352,8 @@ async function openForm(type, account){
   // 按钮就变成点了没反应 —— 这个 bug 曾让「编辑」整个静默失效。
   $("#savebtn").onclick = () => doSave(type, account);
   $("#cancelbtn").onclick = close;
+  const ob = $("#oauthbtn");
+  if(ob) ob.onclick = () => startOAuth(type);
   const advToggle = $("#advtoggle");
   if(advToggle) advToggle.onclick = () => $("#adv").classList.toggle("show");
   if(account){const af=$("#f_"+d.accountField); if(af){af.readOnly=true; af.style.opacity=.6}}
@@ -339,6 +368,60 @@ function collect(type){
     values[f.name] = f.kind==="bool" ? (el.checked?"true":"false") : el.value;
   });
   return {d,values};
+}
+
+// ── OAuth 设备流 ──────────────────────────────────────────────
+// 轮询在服务端做（授权服务规定了最小间隔，slow_down 还要加间隔），
+// 这里只是每 2 秒问一次状态。
+let OAUTH_SESSION = null;
+
+async function startOAuth(type){
+  const {values} = collect(type);
+  const panel = $("#oauthpanel");
+  panel.innerHTML = `<div class="help">正在向授权服务要验证码…</div>`;
+  const r = await api("/api/oauth/start",{method:"POST",
+    headers:{"Content-Type":"application/json"},
+    body:JSON.stringify({type,values})});
+  if(!r.ok){ panel.innerHTML = `<div class="status bad">${esc(r.error||"无法开始授权")}</div>`; return; }
+
+  const s = r.session;
+  OAUTH_SESSION = s.id;
+  const openURL = s.verificationUriComplete || s.verificationUri;
+  panel.innerHTML = `
+    <div class="oauth-code">
+      <div class="help">① 复制这个验证码</div>
+      <div class="code-row"><code id="ucode">${esc(s.userCode)}</code>
+        <button id="copycode">复制</button></div>
+      <div class="help" style="margin-top:8px">② 打开 <a href="${esc(openURL)}" target="_blank" rel="noreferrer">${esc(s.verificationUri)}</a> 粘贴进去并确认</div>
+      <div class="status" id="ost">③ 等待授权…</div>
+    </div>`;
+  $("#copycode").onclick = async () => {
+    try{ await navigator.clipboard.writeText(s.userCode); $("#copycode").textContent="已复制"; }
+    catch(e){ $("#copycode").textContent="请手动复制"; }
+  };
+  pollOAuth(type, s.id);
+}
+
+async function pollOAuth(type, id){
+  const ost = () => $("#ost");
+  while(OAUTH_SESSION === id){
+    await new Promise(r=>setTimeout(r,2000));
+    if(OAUTH_SESSION !== id) return;            // 弹窗已关
+    const st = await api("/api/oauth/status?session="+encodeURIComponent(id));
+    const el = ost();
+    if(!el) return;                              // DOM 没了，停
+    if(st.state === "pending"){ el.className="status"; el.textContent="③ 等待授权…"; continue; }
+    if(st.state === "ok"){
+      el.className="status ok";
+      el.textContent = "✅ 已连接为 " + st.account + "，渠道已保存";
+      OAUTH_SESSION = null;
+      setTimeout(()=>{close();refresh();},1200);
+      return;
+    }
+    el.className="status bad"; el.textContent = "授权失败：" + (st.error||"未知原因");
+    OAUTH_SESSION = null;
+    return;
+  }
 }
 
 async function doSave(type, account){

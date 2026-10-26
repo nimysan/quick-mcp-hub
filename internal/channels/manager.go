@@ -3,6 +3,8 @@ package channels
 import (
 	"context"
 	"fmt"
+	"net/http"
+	"sync"
 
 	"github.com/nimysan/mcp-hub/internal/config"
 	"github.com/nimysan/mcp-hub/internal/credstore"
@@ -15,6 +17,12 @@ import (
 type Manager struct {
 	store *Store
 	creds *credstore.Store
+
+	// HTTP 非空时用于 OAuth 授权和身份查询，测试里指向 httptest。
+	HTTP *http.Client
+
+	connMu sync.Mutex
+	conns  map[string]*ConnectSession
 }
 
 func NewManager(store *Store, creds *credstore.Store) *Manager {
@@ -222,16 +230,20 @@ func (m *Manager) httpRuntime(d Descriptor, account string, values map[string]st
 
 	ref := credstore.Ref{Integration: d.Integration, Account: in.Account}
 	secret := m.creds.Secret(ref)
+	saveSecret := m.saveSecretFunc(d, in.Account)
 	// 表单测试时密码可能是刚填、还没入库的，用一个临时 handle 承载它。
 	if v, ok := values[d.SecretField]; ok && v != "" {
 		secret = credstore.Literal(ref, v)
+		// 这条实例可能还没保存过，写回去等于凭空造一条凭据，所以不给写回口。
+		saveSecret = nil
 	}
 
 	return httpchan.Runtime{
-		Spec:     spec,
-		Account:  in.Account,
-		Settings: in.Settings,
-		Secret:   secret.Value,
+		Spec:       spec,
+		Account:    in.Account,
+		Settings:   in.Settings,
+		Secret:     secret.Value,
+		SaveSecret: saveSecret,
 	}, nil
 }
 

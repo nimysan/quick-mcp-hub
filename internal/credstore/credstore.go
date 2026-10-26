@@ -73,15 +73,21 @@ func (s *Store) service(r Ref) string { return s.namespace + ":" + r.Integration
 // 第一次调用 Value 才真正去读，之后复用结果（含错误）。
 //
 // 并发安全：多个 tool 同时首次调用只会触发一次后端读取。
+//
+// 句柄是跨调用点共享的（见 Store.Secret），所以 Store.Put 必须把新值
+// 推进已发出的句柄里 —— 否则 OAuth 刷新换了新令牌之后，常驻的 MCP
+// 进程会一直读到旧的那个，每次调用都去刷一遍，而很多提供方刷新时会
+// 轮换 refresh_token，第二次就用了一个已作废的。
 type Secret struct {
 	ref     Ref
 	service string
 	envKeys []string
 
-	once sync.Once
-	val  string
-	src  string
-	err  error
+	mu     sync.Mutex
+	loaded bool
+	val    string
+	src    string
+	err    error
 }
 
 // Ref 返回这份凭据的标识。
@@ -91,9 +97,22 @@ func (s *Secret) Ref() Ref { return s.ref }
 // 用于「测试尚未保存的表单」：页面刚填的密码还没入库，用它承载即可。
 // Source 报告为 "form"。
 func Literal(ref Ref, value string) *Secret {
-	s := &Secret{ref: ref, val: value, src: "form"}
-	s.once.Do(func() {}) // 标记为已加载，Value 直接返回
-	return s
+	return &Secret{ref: ref, val: value, src: "form", loaded: true}
+}
+
+// override 把新值推进句柄。Put 成功后调用，让已经拿着这个句柄的调用方
+// 立刻看到新凭据，而不是继续用缓存里的旧值。
+func (s *Secret) override(value string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.val, s.src, s.err, s.loaded = value, "keychain", nil, true
+}
+
+// forget 丢掉缓存，下次 Value 重新读后端。Delete 之后调用。
+func (s *Secret) forget() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.val, s.src, s.err, s.loaded = "", "", nil, false
 }
 
 // Source 返回凭据实际来自哪里（"keychain" 或 "env:XXX"），
@@ -101,7 +120,11 @@ func Literal(ref Ref, value string) *Secret {
 func (s *Secret) Source() string { return s.src }
 
 // Loaded 报告是否已经取过（不触发读取）。
-func (s *Secret) Loaded() bool { return s.src != "" || s.err != nil }
+func (s *Secret) Loaded() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.loaded
+}
 
 // Value 取出凭据明文。第一次调用会访问系统密码管理器。
 //
@@ -109,31 +132,36 @@ func (s *Secret) Loaded() bool { return s.src != "" || s.err != nil }
 // 这样「把凭据搬进钥匙串」这个迁移只要 -set-secret 一次，
 // 不必同时去 Quick 的面板里删环境变量。
 func (s *Secret) Value() (string, error) {
-	s.once.Do(func() {
-		v, err := keyring.Get(s.service, s.ref.Account)
-		if err == nil && v != "" {
-			s.val, s.src = v, "keychain"
-			return
-		}
-		keyringErr := err
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.loaded {
+		return s.val, s.err
+	}
+	s.loaded = true
 
-		for _, k := range s.envKeys {
-			if ev := strings.TrimSpace(os.Getenv(k)); ev != "" {
-				s.val, s.src = ev, "env:"+k
-				return
-			}
-		}
+	v, err := keyring.Get(s.service, s.ref.Account)
+	if err == nil && v != "" {
+		s.val, s.src = v, "keychain"
+		return s.val, s.err
+	}
+	keyringErr := err
 
-		switch {
-		case keyringErr == nil || errors.Is(keyringErr, keyring.ErrNotFound):
-			s.err = fmt.Errorf("%w: %s 不在%s中，也没有环境变量 %s；用 -set-secret 写入",
-				ErrNotFound, s.ref, BackendName(), strings.Join(s.envKeys, " / "))
-		default:
-			// 后端本身出错（Linux 无 Secret Service、钥匙串被锁等）。
-			// 这里只回错误类型，绝不回凭据内容。
-			s.err = fmt.Errorf("读取%s失败（%s）: %w", BackendName(), s.ref, keyringErr)
+	for _, k := range s.envKeys {
+		if ev := strings.TrimSpace(os.Getenv(k)); ev != "" {
+			s.val, s.src = ev, "env:"+k
+			return s.val, s.err
 		}
-	})
+	}
+
+	switch {
+	case keyringErr == nil || errors.Is(keyringErr, keyring.ErrNotFound):
+		s.err = fmt.Errorf("%w: %s 不在%s中，也没有环境变量 %s；用 -set-secret 写入",
+			ErrNotFound, s.ref, BackendName(), strings.Join(s.envKeys, " / "))
+	default:
+		// 后端本身出错（Linux 无 Secret Service、钥匙串被锁等）。
+		// 这里只回错误类型，绝不回凭据内容。
+		s.err = fmt.Errorf("读取%s失败（%s）: %w", BackendName(), s.ref, keyringErr)
+	}
 	return s.val, s.err
 }
 
@@ -164,6 +192,12 @@ func (s *Store) Put(r Ref, secret string) error {
 	if err := keyring.Set(s.service(r), r.Account, secret); err != nil {
 		return fmt.Errorf("写入%s失败: %w", BackendName(), err)
 	}
+	// 把新值推进已发出的句柄：它们是共享的，不更新就会继续返回旧凭据。
+	s.mu.Lock()
+	if sec, ok := s.secrets[r]; ok {
+		sec.override(secret)
+	}
+	s.mu.Unlock()
 	return s.indexAdd(r)
 }
 
@@ -176,6 +210,12 @@ func (s *Store) Delete(r Ref) error {
 	if err != nil && !errors.Is(err, keyring.ErrNotFound) {
 		return fmt.Errorf("删除%s条目失败: %w", BackendName(), err)
 	}
+	// 同理：删掉之后，已发出的句柄不能继续返回缓存里的那份凭据。
+	s.mu.Lock()
+	if sec, ok := s.secrets[r]; ok {
+		sec.forget()
+	}
+	s.mu.Unlock()
 	return s.indexRemove(r)
 }
 

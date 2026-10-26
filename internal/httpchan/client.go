@@ -15,6 +15,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/nimysan/mcp-hub/internal/oauthdev"
 )
 
 const (
@@ -36,6 +38,48 @@ type Runtime struct {
 	Account  string
 	Settings map[string]string
 	Secret   func() (string, error)
+
+	// SaveSecret 非空时，刷新到的新令牌会写回密码管理器。为空则刷新结果
+	// 只在本次进程里有效 —— 这不算错（下次会再刷一次），但会白耗一次往返。
+	SaveSecret func(string) error
+}
+
+// bearer 解析出该放进 Authorization 的令牌。
+//
+// 同一个凭据槽装两种东西：用户手填的长期令牌（原样用），或者「连接」按钮
+// 走设备流拿到的令牌组（取 access_token，过期则刷新）。
+func (r Runtime) bearer(ctx context.Context, hc *http.Client, secret string) (string, error) {
+	tok, ok := oauthdev.Parse(secret)
+	if !ok {
+		return secret, nil // 手填的长期令牌
+	}
+	if !tok.Stale(time.Now()) {
+		return tok.AccessToken, nil
+	}
+	if !tok.CanRefresh(time.Now()) {
+		return "", fmt.Errorf("%s 的授权已过期且没有可用的刷新令牌，请到页面上重新点「连接」", r.Spec.Name)
+	}
+	cfg, err := r.Spec.OAuthConfig(r.Settings)
+	if err != nil {
+		return "", err
+	}
+	fresh, err := cfg.Refresh(ctx, hc, tok.RefreshToken)
+	if err != nil {
+		return "", fmt.Errorf("刷新 %s 的授权失败（请重新点「连接」）: %w", r.Spec.Name, err)
+	}
+	if r.SaveSecret != nil {
+		stored, err := fresh.Marshal()
+		if err != nil {
+			return "", err
+		}
+		if err := r.SaveSecret(stored); err != nil {
+			// 这个必须是致命的，不能只记一笔然后继续：很多提供方刷新时会
+			// 轮换 refresh_token，存不下来就意味着库里那个已经作废了 ——
+			// 继续跑下去会变成「这次好了，之后全坏」，而且查不出原因。
+			return "", fmt.Errorf("刷新到了新令牌但写回密码管理器失败（旧的刷新令牌可能已作废，请重新点「连接」）: %w", err)
+		}
+	}
+	return fresh.AccessToken, nil
 }
 
 // BaseURL 解析这个实例实际要打的接入点。
@@ -441,7 +485,11 @@ func (c *Client) buildRequest(ctx context.Context, rt Runtime, t Tool, args map[
 	}
 	switch rt.Spec.Auth.Kind {
 	case AuthBearer:
-		req.Header.Set("Authorization", "Bearer "+secret)
+		token, err := rt.bearer(ctx, c.httpClient(), secret)
+		if err != nil {
+			return nil, "", err
+		}
+		req.Header.Set("Authorization", "Bearer "+token)
 	case AuthHeader:
 		req.Header.Set(rt.Spec.Auth.Name, secret)
 	case AuthBasic:

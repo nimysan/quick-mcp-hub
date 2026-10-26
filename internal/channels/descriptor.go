@@ -7,6 +7,7 @@ package channels
 
 import (
 	"fmt"
+	"net/url"
 	"strings"
 
 	"github.com/nimysan/mcp-hub/internal/catalog"
@@ -95,7 +96,23 @@ type Descriptor struct {
 	WriteTools  []string `json:"writeTools,omitempty"`
 	WriteSwitch string   `json:"writeSwitch,omitempty"`
 	HelpURL     string   `json:"helpUrl,omitempty"`
-	Fields      []Field  `json:"fields"`
+	// OAuth 非空时页面上会多一个「连接」按钮：用户不必去对方系统手工生成
+	// 一个长期令牌，点一下、在对方网站上确认即可。
+	OAuth  *OAuthInfo `json:"oauth,omitempty"`
+	Fields []Field    `json:"fields"`
+}
+
+// OAuthInfo 是页面渲染「连接」按钮要知道的事。
+//
+// AuthHost 是风险披露：用户要被送到哪台主机去输自己的账号密码。这件事必须
+// 在点按钮之前就看得见 —— 一份被篡改的目录最直接的攻击就是把它指向别处。
+type OAuthInfo struct {
+	Flow          string   `json:"flow"`
+	ClientIDField string   `json:"clientIdField,omitempty"`
+	Scopes        []string `json:"scopes,omitempty"`
+	SetupURL      string   `json:"setupUrl,omitempty"`
+	Help          string   `json:"help,omitempty"`
+	AuthHost      string   `json:"authHost"`
 }
 
 // Field 按名字取字段。
@@ -210,15 +227,34 @@ func mailDescriptor(p mailprovider.Provider) Descriptor {
 // 这是「远端加一个 connector，客户端不升级就能用」的接缝：Spec 是数据，
 // 页面照描述符渲染，执行器照 Spec 发请求，中间没有任何一行渠道专属代码。
 func httpDescriptor(s httpchan.Spec) Descriptor {
+	secretField := Field{
+		Name: s.Secret.Name, Label: s.Secret.Label, Kind: KindPassword, Required: true,
+		Placeholder: s.Secret.Placeholder, Help: s.Secret.Help,
+	}
+	var oauthInfo *OAuthInfo
+	if s.OAuth != nil {
+		// 有「连接」按钮时手填令牌就不是必填了：两条路取其一。
+		secretField.Required = false
+		secretField.Help = strings.TrimSpace(secretField.Help + "。也可以留空，用下面的「连接」按钮授权")
+		host := ""
+		if u, err := url.Parse(s.OAuth.DeviceCodeURL); err == nil {
+			host = u.Hostname()
+		}
+		oauthInfo = &OAuthInfo{
+			Flow:          s.OAuth.Flow,
+			ClientIDField: s.OAuth.ClientIDField,
+			Scopes:        s.OAuth.Scopes,
+			SetupURL:      s.OAuth.SetupURL,
+			Help:          s.OAuth.Help,
+			AuthHost:      host,
+		}
+	}
 	fields := []Field{
 		{
 			Name: s.Account.Name, Label: s.Account.Label, Kind: KindText, Required: true,
 			Placeholder: s.Account.Placeholder, Help: s.Account.Help,
 		},
-		{
-			Name: s.Secret.Name, Label: s.Secret.Label, Kind: KindPassword, Required: true,
-			Placeholder: s.Secret.Placeholder, Help: s.Secret.Help,
-		},
+		secretField,
 	}
 	if s.HasWriteTools() {
 		// 写开关和邮件渠道的「允许发信」是同一个设计：会改外部系统的工具
@@ -271,6 +307,7 @@ func httpDescriptor(s httpchan.Spec) Descriptor {
 		WriteTools:   writeTools,
 		WriteSwitch:  writeSwitch,
 		HelpURL:      s.HelpURL,
+		OAuth:        oauthInfo,
 		Fields:       fields,
 	}
 }
