@@ -1,0 +1,17 @@
+# 换行符归一。
+#
+# 不加这个文件的话，Windows 上检出会把文本文件转成 CRLF，于是 `gofmt -l`
+# 把每一个 .go 文件都报成「未格式化」—— CI 在 Windows runner 上必红，而本机
+# 怎么看都是对的。同样的坑也会落在 Windows 开发者的提交上。
+*               text=auto eol=lf
+
+# 批处理文件必须是 CRLF：LF 换行的 .bat 在某些 Windows 版本上行为异常。
+*.bat           text eol=crlf
+*.cmd           text eol=crlf
+
+# 二进制不要碰。
+*.wasm          binary
+*.zip           binary
+*.png           binary
+*.jpg           binary
+*.ico           binary

@@ -2,6 +2,7 @@ package credstore
 
 import (
 	"errors"
+	"path/filepath"
 	"testing"
 
 	"github.com/zalando/go-keyring"
@@ -12,8 +13,10 @@ import (
 func newTestStore(t *testing.T) *Store {
 	t.Helper()
 	keyring.MockInit()
-	t.Setenv("HOME", t.TempDir())            // darwin / linux 的 UserConfigDir 基准
-	t.Setenv("XDG_CONFIG_HOME", t.TempDir()) // linux 优先读这个
+	home := t.TempDir()
+	t.Setenv("HOME", home)                           // darwin / linux 的 UserConfigDir 基准
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())         // linux 优先读这个
+	t.Setenv("AppData", filepath.Join(home, "Roam")) // Windows 的 UserConfigDir 基准
 	return New("mcp-hub-test")
 }
 

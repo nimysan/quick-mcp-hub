@@ -26,13 +26,17 @@ LDFLAGS="-s -w -X main.version=${VERSION}"
 rm -rf "$OUT"
 mkdir -p "$OUT"
 
-# 平台表：GOOS GOARCH 可执行文件名 启动入口文件名
+# 平台表：GOOS GOARCH 可执行文件名
+#
+# 没有启动脚本了：双击主程序本身就会打开配置页面（程序按 stdin 是不是管道
+# 判断自己是被用户双击还是被 AI 客户端 spawn 的）。少一个文件，就少一件
+# 要在文档里解释的事。
 targets=(
-  "windows amd64 mcp-hub.exe 打开配置页面.bat"
-  "windows arm64 mcp-hub.exe 打开配置页面.bat"
-  "darwin  arm64 mcp-hub     打开配置页面.command"
-  "darwin  amd64 mcp-hub     打开配置页面.command"
-  "linux   amd64 mcp-hub     打开配置页面.sh"
+  "windows amd64 mcp-hub.exe"
+  "windows arm64 mcp-hub.exe"
+  "darwin  arm64 mcp-hub"
+  "darwin  amd64 mcp-hub"
+  "linux   amd64 mcp-hub"
 )
 
 # 要带进包里的插件先构建好。
@@ -42,20 +46,13 @@ if [ -n "$PLUGINS" ]; then
 fi
 
 for t in "${targets[@]}"; do
-  read -r goos goarch exe launcher <<<"$t"
+  read -r goos goarch exe <<<"$t"
   name="mcp-hub-${VERSION}-${goos}-${goarch}"
   dir="${OUT}/${name}"
   mkdir -p "$dir"
 
   GOOS="$goos" GOARCH="$goarch" go build -trimpath -ldflags="$LDFLAGS" -o "$dir/$exe" .
-  cp "packaging/$launcher" "$dir/$launcher"
   cp "packaging/快速开始.md" "$dir/快速开始.md"
-
-  # 启动入口要可执行；Windows 的 .bat 不需要，但要 CRLF 换行。
-  case "$goos" in
-    windows) : ;;
-    *) chmod +x "$dir/$launcher" ;;
-  esac
 
   for p in $PLUGINS; do
     mkdir -p "$dir/plugins/$p"

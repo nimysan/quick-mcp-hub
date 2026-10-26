@@ -151,6 +151,9 @@ func newTestManager(t *testing.T, f *fakeProvider) *Manager {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
+	// Windows 的 os.UserConfigDir 读的是 %AppData%，不设它的话这里的隔离
+	// 在 Windows 上是假的 —— 测试会写进 runner 真实的用户目录。
+	t.Setenv("AppData", filepath.Join(home, "AppData", "Roaming"))
 
 	store, err := NewStore(config.Namespace)
 	if err != nil {
