@@ -109,13 +109,99 @@ jobs:
             dist/pkg/SHA256SUMS.txt
           retention-days: 30
 
+  installer-windows:
+    name: Windows 安装包
+    runs-on: windows-latest
+    needs: build
+    steps:
+      # 用 build 这一步的产物，而不是在这台 runner 上重新编译 —— 这样
+      # zip 里的 exe 和安装包里的 exe 是同一个二进制，排查问题时不用怀疑
+      # 「这两个是不是同一次构建」。
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: mcp-hub-*
+          merge-multiple: true
+          path: artifacts
+
+      - name: 解出 Windows amd64 的内容
+        shell: bash
+        run: |
+          mkdir -p stage
+          zip=$(ls artifacts/mcp-hub-*-windows-amd64.zip)
+          unzip -q "$zip" -d unpacked
+          # zip 里是 mcp-hub-<版本>-windows-amd64/ 这一层目录
+          cp unpacked/*/mcp-hub.exe stage/
+          cp unpacked/*/快速开始.md stage/
+          ls -l stage
+
+      - name: 确定版本号
+        id: ver
+        shell: bash
+        run: |
+          zip=$(ls artifacts/mcp-hub-*-windows-amd64.zip)
+          base=$(basename "$zip" -windows-amd64.zip)
+          version=${base#mcp-hub-}
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          # VersionInfoVersion 必须是 x.x.x.x 的纯数字形式，
+          # 而 dev 构建的版本号形如 0.0.0-dev+abc1234，塞不进去。
+          if [[ "$version" =~ ^([0-9]+)\.([0-9]+)\.([0-9]+)$ ]]; then
+            echo "verinfo=${version}.0" >> "$GITHUB_OUTPUT"
+          else
+            echo "verinfo=0.0.0.0" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: 装 Inno Setup
+        run: choco install innosetup --no-progress -y
+
+      # Inno Setup 自带的语言包里**没有简体中文** —— 它在 issrc 仓库里单独
+      # 放着，不随安装程序分发。不取这个文件，安装包就只能是英文界面，而
+      # 用户是中文办公环境里的财务和运营。
+      #
+      # 取不到就让这一步失败，不要静默退回英文：那样中文用户会拿到一个英文
+      # 安装包，而没有人会发现。
+      - name: 取简体中文语言包
+        shell: bash
+        run: |
+          dest="/c/Program Files (x86)/Inno Setup 6/Languages/ChineseSimplified.isl"
+          curl -fsSL --retry 3 \
+            "https://raw.githubusercontent.com/jrsoftware/issrc/main/Files/Languages/ChineseSimplified.isl" \
+            -o "$dest"
+          head -1 "$dest"
+          test -s "$dest"
+
+      - name: 编译安装包
+        shell: cmd
+        run: |
+          "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" ^
+            /DAppVersion=${{ steps.ver.outputs.version }} ^
+            /DVersionInfo=${{ steps.ver.outputs.verinfo }} ^
+            /DSourceDir=%CD%\stage ^
+            packaging\windows\mcp-hub.iss
+
+      - name: 校验和
+        shell: bash
+        run: |
+          cd stage/out
+          sha256sum ./*.exe > SHA256SUMS-setup.txt
+          cat SHA256SUMS-setup.txt
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mcp-hub-setup-${{ steps.ver.outputs.version }}
+          path: |
+            stage/out/*.exe
+            stage/out/SHA256SUMS-setup.txt
+          retention-days: 30
+
   release:
     name: 发布 Release
     # 只有 tag 才发布。草稿形式产出，由人确认后再 Publish ——
     # 自动发布一个没人看过的版本不是我们想要的默认行为。
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
-    needs: build
+    needs: [build, installer-windows]
     permissions:
       contents: write
     steps:
@@ -129,9 +215,10 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          ls -l dist/pkg
           gh release create "${GITHUB_REF#refs/tags/}" \
             --repo "${GITHUB_REPOSITORY}" \
             --draft \
             --title "${GITHUB_REF#refs/tags/}" \
             --generate-notes \
-            dist/pkg/*.zip dist/pkg/SHA256SUMS.txt
+            dist/pkg/*.zip dist/pkg/*.exe dist/pkg/SHA256SUMS*.txt
