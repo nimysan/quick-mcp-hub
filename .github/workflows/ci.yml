@@ -155,6 +155,22 @@ jobs:
       - name: 装 Inno Setup
         run: choco install innosetup --no-progress -y
 
+      # Inno Setup 自带的语言包里**没有简体中文** —— 它在 issrc 仓库里单独
+      # 放着，不随安装程序分发。不取这个文件，安装包就只能是英文界面，而
+      # 用户是中文办公环境里的财务和运营。
+      #
+      # 取不到就让这一步失败，不要静默退回英文：那样中文用户会拿到一个英文
+      # 安装包，而没有人会发现。
+      - name: 取简体中文语言包
+        shell: bash
+        run: |
+          dest="/c/Program Files (x86)/Inno Setup 6/Languages/ChineseSimplified.isl"
+          curl -fsSL --retry 3 \
+            "https://raw.githubusercontent.com/jrsoftware/issrc/main/Files/Languages/ChineseSimplified.isl" \
+            -o "$dest"
+          head -1 "$dest"
+          test -s "$dest"
+
       - name: 编译安装包
         shell: cmd
         run: |
