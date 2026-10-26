@@ -1,0 +1,134 @@
+# 三平台构建与测试。
+#
+# 为什么要三个平台的 runner：**构建**其实不需要 —— 全程 CGO_ENABLED=0 的纯 Go，
+# 一台 Linux 就能交叉编译出全部五个目标。三个 runner 要解决的是另外三件事：
+#
+#   1. 在每个操作系统上真的跑一遍测试（凭据后端、路径、UserConfigDir 的基准
+#      目录三者在三个平台上完全不同，只在 macOS 上绿不说明 Windows 上能用）
+#   2. 以后做原生安装包（MSI 要 Windows，dmg / pkg 要 macOS）
+#   3. 以后做代码签名（Windows 签名和 Apple 公证都必须在对应平台上做）
+#
+# 所以这里的分工是：test 用三平台矩阵，build 只在 Linux 上做交叉编译。
+name: CI
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: 测试 (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      # 一个平台失败不打断其他平台：三个平台的失败往往互相独立，
+      # 一次就把三份结果都看到比逐个试快得多。
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      # wasm 插件的测试要先有模块。这一步不用 plugins/build.sh：那是个
+      # bash 脚本，在 Windows runner 上要靠 Git Bash 和 du，没必要赌。
+      - name: 构建 wasm 插件模块
+        shell: bash
+        env:
+          GOOS: wasip1
+          GOARCH: wasm
+        run: |
+          mkdir -p plugins/dist/ghwasm
+          go build -buildmode=c-shared -o plugins/dist/ghwasm/ghwasm.wasm ./plugins/ghwasm
+
+      - name: go vet
+        run: go vet ./...
+
+      - name: gofmt 检查
+        shell: bash
+        run: |
+          unformatted=$(gofmt -l . | grep -v '^$' || true)
+          if [ -n "$unformatted" ]; then
+            echo "下面这些文件没有 gofmt 过："
+            echo "$unformatted"
+            exit 1
+          fi
+
+      - name: go test
+        run: go test ./... -count=1
+
+  build:
+    name: 交叉编译五平台
+    runs-on: ubuntu-latest
+    needs: test
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      # tag 推上来就用 tag 名当版本号，其他情况用 0.0.0-dev+<短 sha>，
+      # 这样从任何一个产物都能倒推出它是哪次提交。
+      - name: 确定版本号
+        id: ver
+        run: |
+          if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
+            echo "version=${GITHUB_REF#refs/tags/v}" >> "$GITHUB_OUTPUT"
+          else
+            echo "version=0.0.0-dev+${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+          fi
+
+      # release.sh 默认用 goproxy.cn —— 那是为开发机准备的（本机到
+      # proxy.golang.org 的 DNS 不通）。CI 上走官方的。
+      - name: 打发布包
+        env:
+          GOPROXY: https://proxy.golang.org,direct
+          GOSUMDB: sum.golang.org
+        run: VERSION="${{ steps.ver.outputs.version }}" ./packaging/release.sh
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mcp-hub-${{ steps.ver.outputs.version }}
+          path: |
+            dist/pkg/*.zip
+            dist/pkg/SHA256SUMS.txt
+          retention-days: 30
+
+  release:
+    name: 发布 Release
+    # 只有 tag 才发布。草稿形式产出，由人确认后再 Publish ——
+    # 自动发布一个没人看过的版本不是我们想要的默认行为。
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    needs: build
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: mcp-hub-*
+          merge-multiple: true
+          path: dist/pkg
+
+      - name: 建草稿 Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${GITHUB_REF#refs/tags/}" \
+            --repo "${GITHUB_REPOSITORY}" \
+            --draft \
+            --title "${GITHUB_REF#refs/tags/}" \
+            --generate-notes \
+            dist/pkg/*.zip dist/pkg/SHA256SUMS.txt
