@@ -438,6 +438,67 @@ mcp-hub -catalog-sync https://.../cat.json  抓取并验签远端目录，写入
 | `fields.assignee 是 null` | 字段在、值是空 | **不用改**，这是数据状态（没负责人） |
 | `values（整个子树都没取到）` | `result.path` 指错了 | 要改 |
 
+## 打一个发给客户的发布包
+
+```bash
+make package                      # 默认版本 0.1.0
+make package VERSION=0.2.0        # 指定版本（注入 main.version）
+make package PLUGINS=ghwasm       # 把指定的 wasm 插件一起打进去
+```
+
+输出在 `dist/pkg/`：五个平台各一个 zip，加一份 `SHA256SUMS.txt`。
+每个包里三样东西：
+
+| 文件 | 作用 |
+|---|---|
+| `mcp-hub` / `mcp-hub.exe` | 主程序，单文件，无运行时依赖 |
+| `打开配置页面.bat` / `.command` / `.sh` | 双击就能开配置页面的入口 |
+| `快速开始.md` | 给客户看的文档：装哪、怎么配、怎么接客户端、出问题怎么查 |
+
+### 为什么要那个启动入口
+
+**双击主程序做的是错事。** 不带参数启动的是给 AI 客户端用的 stdio 服务，在
+Windows 上双击只会看到一个窗口一闪而过。启动入口帮客户走对那一步（`-ui`），
+顺手把浏览器也打开。
+
+### 两处打包上的坑，都已经处理
+
+**zip 的文件名编码。** macOS 自带的 Info-ZIP 3.0 把非 ASCII 文件名按原始字节存，
+不置 UTF-8（EFS）标志位；中文 Windows 的资源管理器按系统代码页去解，解出来就是
+乱码文件名。所以打包走 `packaging/mkzip.py`（Python 的 `zipfile` 会置那个标志位），
+不用 `zip(1)`。可执行位也在那里写进 `external_attr`，客户解压后不必再 `chmod`。
+
+**`.bat` 要 CRLF 换行。** LF 换行的批处理在某些 Windows 版本上会出怪问题，
+所以 `packaging/打开配置页面.bat` 以 CRLF 保存。
+
+### 交叉编译不需要目标机
+
+`CGO_ENABLED=0` 下全平台纯 Go 交叉编译（密码管理器三个后端都是纯 Go 实现：
+Windows 凭据管理器走 `wincred`，macOS 钥匙串走 `security` 命令，Linux 走 dbus）。
+在 macOS 上就能产出 Windows 的 exe。
+
+### 客户第一次运行会被拦
+
+没有做代码签名，所以：
+
+- **Windows**：SmartScreen 提示「已保护你的电脑」→ 更多信息 → 仍要运行
+- **macOS**：Gatekeeper 拦下 → `xattr -dr com.apple.quarantine <解压出的文件夹>`，
+  或在隐私与安全性里点「仍要打开」
+
+这两条写在 `快速开始.md` 里了。要去掉提示就得买证书并签名（Windows 的 EV 代码签名
+证书、Apple Developer ID + notarization），还没做。
+
+### 包里没有什么
+
+没有凭据、没有配置文件、没有遥测。客户的账号密码在他自己机器的系统密码管理器里，
+程序只连客户自己配置的那些系统。
+
+### 默认不带示范插件
+
+`ghwasm` 是个 GitHub 的 wasm 示范插件，和内置的 `github` 声明式渠道做的是同一件事 ——
+放进客户包里只会让人问「为什么有两个 GitHub」。要演示插件机制时用
+`make package PLUGINS=ghwasm`，客户那边再 `mcp-hub -plugin-install plugins/ghwasm/manifest.json`。
+
 ## OAuth「连接」按钮（设备流）
 
 有些渠道不必让用户去对方系统手工生成一个长期令牌再粘过来：页面上点一下

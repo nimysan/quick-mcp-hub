@@ -5,7 +5,7 @@ GOFLAGS_ENV := GOPROXY=$(GOPROXY_URL) GOSUMDB=sum.golang.google.cn CGO_ENABLED=0
 # proxy.golang.org 在本机不可达（DNS 超时），用国内镜像。
 GOPROXY_URL ?= https://goproxy.cn,direct
 
-.PHONY: build all test vet selftest clean
+.PHONY: build all package test vet selftest clean
 
 build:
 	$(GOFLAGS_ENV) go build -trimpath -ldflags="$(LDFLAGS)" -o dist/mcp-hub .
@@ -17,6 +17,11 @@ all:
 	$(GOFLAGS_ENV) GOOS=darwin  GOARCH=arm64 go build -trimpath -ldflags="$(LDFLAGS)" -o dist/mcp-hub-darwin-arm64 .
 	$(GOFLAGS_ENV) GOOS=darwin  GOARCH=amd64 go build -trimpath -ldflags="$(LDFLAGS)" -o dist/mcp-hub-darwin-amd64 .
 	$(GOFLAGS_ENV) GOOS=linux   GOARCH=amd64 go build -trimpath -ldflags="$(LDFLAGS)" -o dist/mcp-hub-linux-amd64 .
+
+# 发给客户的发布包：每个平台一个 zip，含启动入口和快速开始文档，不含凭据。
+# 带上示范插件：make package PLUGINS=ghwasm
+package:
+	VERSION=$(VERSION) PLUGINS=$(PLUGINS) ./packaging/release.sh
 
 vet:
 	$(GOFLAGS_ENV) go vet ./...
