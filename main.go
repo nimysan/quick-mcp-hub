@@ -38,6 +38,7 @@ import (
 	"github.com/nimysan/mcp-hub/internal/httpchan"
 	"github.com/nimysan/mcp-hub/internal/mailbox"
 	"github.com/nimysan/mcp-hub/internal/tools"
+	"github.com/nimysan/mcp-hub/internal/wasmplug"
 	"github.com/nimysan/mcp-hub/internal/webui"
 )
 
@@ -60,6 +61,8 @@ func main() {
 		catTry      = flag.String("catalog-try", "", "用真实凭据跑一份渠道声明，逐条核对字段路径后退出")
 		tryTool     = flag.String("try-tool", "", "只跑这一个工具（配合 -catalog-try）")
 		tryWrite    = flag.Bool("try-write", false, "连写工具一起跑（默认只跑只读工具）")
+		pluginInst  = flag.String("plugin-install", "", "安装一个 wasm 插件（给它的 manifest.json 路径）后退出")
+		pluginList  = flag.Bool("plugin-list", false, "列出已安装的 wasm 插件后退出")
 		showVersion = flag.Bool("version", false, "打印版本号后退出")
 	)
 	tryFields := fieldFlags{}
@@ -117,11 +120,27 @@ func main() {
 		os.Exit(runRemoveSecret(store, *integration, resolveAccount(*account)))
 	}
 
+	if *pluginList {
+		os.Exit(runPluginList())
+	}
+	if *pluginInst != "" {
+		os.Exit(runPluginInstall(*pluginInst))
+	}
+
 	chanStore, err := channels.NewStore(config.Namespace)
 	if err != nil {
 		log.Fatalf("渠道配置错误: %v", err)
 	}
 	mgr := channels.NewManager(chanStore, store)
+
+	// 插件发现只读 manifest，不编译 wasm —— 模块由 Registry 在第一次调用
+	// 时才加载，所以这一步对启动时间没有影响。
+	installed, pluginErrs := wasmplug.Discover(config.Namespace)
+	for _, err := range pluginErrs {
+		log.Printf("插件已跳过: %v", err)
+	}
+	registry := wasmplug.NewRegistry(installed)
+	mgr.Plugins = registry
 
 	if *uiFlag {
 		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -189,6 +208,28 @@ func main() {
 			len(mailCfgs), strings.Join(labels, " "), n)
 	} else {
 		log.Printf("邮件渠道未注册：页面里没有邮件渠道，也没有 MCPHUB_MAIL_USER（%v）", mailErr)
+	}
+
+	// wasm 插件渠道：第三方代码在沙箱里跑，凭据由宿主注入，模块懒加载。
+	defer registry.Close(context.Background())
+	pluginGroups, err := mgr.PluginGroups()
+	if err != nil {
+		log.Printf("读取插件渠道配置失败: %v", err)
+	}
+	for _, g := range pluginGroups {
+		n := tools.RegisterPlugin(server, registry, g.Manifest, g.Instances)
+		registered += n
+		accounts := make([]string, 0, len(g.Instances))
+		for _, in := range g.Instances {
+			label := in.Account
+			if in.AllowWrite() {
+				label += "(可写)"
+			}
+			accounts = append(accounts, label)
+		}
+		log.Printf("%s 插件渠道：%d 个账号 [%s]，注册 %d 个工具（允许访问 %s）",
+			g.Manifest.Name, len(g.Instances), strings.Join(accounts, " "), n,
+			strings.Join(g.Manifest.AllowedHosts, " "))
 	}
 
 	// 声明式 HTTPS 渠道来自渠道配置（页面里保存的），凭据在系统密码管理器里。
@@ -459,4 +500,62 @@ func enabledText(b bool) string {
 		return "已启用"
 	}
 	return "已关闭"
+}
+
+// runPluginList 列出已安装的 wasm 插件，含它们被允许访问的主机。
+//
+// 主机清单要跟着一起列：一个插件最该被关注的性质就是「它能把数据发到哪」，
+// 而那是 manifest 说的、宿主强制的。
+func runPluginList() int {
+	dir, err := wasmplug.Dir(config.Namespace)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "定位插件目录失败: %v\n", err)
+		return 1
+	}
+	items, errs := wasmplug.Discover(config.Namespace)
+	fmt.Printf("插件目录: %s\n", dir)
+	if len(items) == 0 && len(errs) == 0 {
+		fmt.Println("（没有已安装的插件）")
+		return 0
+	}
+	for _, it := range items {
+		m := it.Manifest
+		var write []string
+		for _, t := range m.Tools {
+			if !t.ReadOnly {
+				write = append(write, t.Name)
+			}
+		}
+		fmt.Printf("\n%-10s v%d  %s  (ABI v%d)\n", m.ID, m.Version, m.Name, m.ABI)
+		fmt.Printf("  模块      %s\n", it.ModulePath)
+		fmt.Printf("  可访问主机 %s\n", strings.Join(m.AllowedHosts, " "))
+		fmt.Printf("  工具      %d 个", len(m.Tools))
+		if len(write) > 0 {
+			fmt.Printf("，其中写操作 %d 个（%s），需打开写开关",
+				len(write), strings.Join(write, " "))
+		}
+		fmt.Println()
+	}
+	for _, err := range errs {
+		fmt.Fprintf(os.Stderr, "\n跳过: %v\n", err)
+	}
+	return 0
+}
+
+// runPluginInstall 把一份插件装进插件目录。
+//
+// 刻意不做签名验证：手工装一个插件等于用户自己承担来源风险，和手工往 catalog
+// 目录放一份声明同理。签名是目录下发那一层的事。
+func runPluginInstall(manifestPath string) int {
+	it, err := wasmplug.Install(config.Namespace, manifestPath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "安装失败: %v\n", err)
+		return 1
+	}
+	m := it.Manifest
+	fmt.Printf("已安装 %s v%d (%s)\n", m.ID, m.Version, m.Name)
+	fmt.Printf("  装到      %s\n", it.Dir)
+	fmt.Printf("  会执行第三方代码，允许访问: %s\n", strings.Join(m.AllowedHosts, " "))
+	fmt.Printf("  工具 %d 个；到配置页面填凭据后才会注册给模型\n", len(m.Tools))
+	return 0
 }

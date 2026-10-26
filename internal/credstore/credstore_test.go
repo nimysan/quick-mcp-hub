@@ -76,6 +76,9 @@ func TestNotFound(t *testing.T) {
 }
 
 // 凭据只读一次：进程内缓存，不会每次调用都查后端。
+//
+// 「外部改动」必须用 keyring.Set 直接写后端来模拟 —— 用本 Store 的 Put
+// 来模拟是错的：那是本进程自己的写入，必须对自己的句柄可见（见下一个用例）。
 func TestValueCachedPerProcess(t *testing.T) {
 	s := newTestStore(t)
 	ref := Ref{"mail", "a@qq.com"}
@@ -87,9 +90,9 @@ func TestValueCachedPerProcess(t *testing.T) {
 		t.Fatalf("first read = %q", v)
 	}
 
-	// 后端改了，但已缓存的 handle 不应再去读。
-	if err := s.Put(ref, "v2"); err != nil {
-		t.Fatalf("Put: %v", err)
+	// 别的进程改了后端，已缓存的 handle 不应再去读。
+	if err := keyring.Set("mcp-hub-test:mail", ref.Account, "v2"); err != nil {
+		t.Fatalf("外部写入失败: %v", err)
 	}
 	if v, _ := sec.Value(); v != "v1" {
 		t.Fatalf("缓存失效，second read = %q, want v1", v)
@@ -97,6 +100,51 @@ func TestValueCachedPerProcess(t *testing.T) {
 	// 新 Store 才会看到新值。
 	if v, _ := New("mcp-hub-test").Secret(ref).Value(); v != "v2" {
 		t.Fatalf("新进程应读到 v2, got %q", v)
+	}
+}
+
+// TestPutUpdatesLiveHandle：本进程自己写的新凭据，必须对已发出的句柄可见。
+//
+// 这是 OAuth 刷新那条路的要求：令牌过期 -> 换一套新的 -> Put 回去。句柄
+// 不更新的话，常驻的 MCP 进程会一直读到旧令牌，于是每次调用都刷一遍；
+// 而很多提供方刷新时会轮换 refresh_token，第二次用的就是一个已作废的。
+func TestPutUpdatesLiveHandle(t *testing.T) {
+	s := newTestStore(t)
+	ref := Ref{"github", "nimysan"}
+	if err := s.Put(ref, "token-old"); err != nil {
+		t.Fatalf("Put: %v", err)
+	}
+	sec := s.Secret(ref)
+	if v, _ := sec.Value(); v != "token-old" {
+		t.Fatalf("first read = %q", v)
+	}
+	if err := s.Put(ref, "token-new"); err != nil {
+		t.Fatalf("Put: %v", err)
+	}
+	if v, err := sec.Value(); v != "token-new" || err != nil {
+		t.Fatalf("已发出的句柄没看到新凭据: %q err=%v", v, err)
+	}
+	if sec.Source() != "keychain" {
+		t.Fatalf("Source = %q，期望 keychain", sec.Source())
+	}
+}
+
+// TestDeleteForgetsLiveHandle：删掉之后句柄不能继续交出缓存里的凭据。
+func TestDeleteForgetsLiveHandle(t *testing.T) {
+	s := newTestStore(t)
+	ref := Ref{"github", "nimysan"}
+	if err := s.Put(ref, "token"); err != nil {
+		t.Fatalf("Put: %v", err)
+	}
+	sec := s.Secret(ref)
+	if _, err := sec.Value(); err != nil {
+		t.Fatalf("first read: %v", err)
+	}
+	if err := s.Delete(ref); err != nil {
+		t.Fatalf("Delete: %v", err)
+	}
+	if v, err := sec.Value(); err == nil || v != "" {
+		t.Fatalf("删除后还能读出凭据: %q err=%v", v, err)
 	}
 }
 

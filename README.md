@@ -438,6 +438,247 @@ mcp-hub -catalog-sync https://.../cat.json  抓取并验签远端目录，写入
 | `fields.assignee 是 null` | 字段在、值是空 | **不用改**，这是数据状态（没负责人） |
 | `values（整个子树都没取到）` | `result.path` 指错了 | 要改 |
 
+## 打一个发给客户的发布包
+
+```bash
+make package                      # 默认版本 0.1.0
+make package VERSION=0.2.0        # 指定版本（注入 main.version）
+make package PLUGINS=ghwasm       # 把指定的 wasm 插件一起打进去
+```
+
+输出在 `dist/pkg/`：五个平台各一个 zip，加一份 `SHA256SUMS.txt`。
+每个包里三样东西：
+
+| 文件 | 作用 |
+|---|---|
+| `mcp-hub` / `mcp-hub.exe` | 主程序，单文件，无运行时依赖 |
+| `打开配置页面.bat` / `.command` / `.sh` | 双击就能开配置页面的入口 |
+| `快速开始.md` | 给客户看的文档：装哪、怎么配、怎么接客户端、出问题怎么查 |
+
+### 为什么要那个启动入口
+
+**双击主程序做的是错事。** 不带参数启动的是给 AI 客户端用的 stdio 服务，在
+Windows 上双击只会看到一个窗口一闪而过。启动入口帮客户走对那一步（`-ui`），
+顺手把浏览器也打开。
+
+### 两处打包上的坑，都已经处理
+
+**zip 的文件名编码。** macOS 自带的 Info-ZIP 3.0 把非 ASCII 文件名按原始字节存，
+不置 UTF-8（EFS）标志位；中文 Windows 的资源管理器按系统代码页去解，解出来就是
+乱码文件名。所以打包走 `packaging/mkzip.py`（Python 的 `zipfile` 会置那个标志位），
+不用 `zip(1)`。可执行位也在那里写进 `external_attr`，客户解压后不必再 `chmod`。
+
+**`.bat` 要 CRLF 换行。** LF 换行的批处理在某些 Windows 版本上会出怪问题，
+所以 `packaging/打开配置页面.bat` 以 CRLF 保存。
+
+### 交叉编译不需要目标机
+
+`CGO_ENABLED=0` 下全平台纯 Go 交叉编译（密码管理器三个后端都是纯 Go 实现：
+Windows 凭据管理器走 `wincred`，macOS 钥匙串走 `security` 命令，Linux 走 dbus）。
+在 macOS 上就能产出 Windows 的 exe。
+
+### 客户第一次运行会被拦
+
+没有做代码签名，所以：
+
+- **Windows**：SmartScreen 提示「已保护你的电脑」→ 更多信息 → 仍要运行
+- **macOS**：Gatekeeper 拦下 → `xattr -dr com.apple.quarantine <解压出的文件夹>`，
+  或在隐私与安全性里点「仍要打开」
+
+这两条写在 `快速开始.md` 里了。要去掉提示就得买证书并签名（Windows 的 EV 代码签名
+证书、Apple Developer ID + notarization），还没做。
+
+### 包里没有什么
+
+没有凭据、没有配置文件、没有遥测。客户的账号密码在他自己机器的系统密码管理器里，
+程序只连客户自己配置的那些系统。
+
+### 默认不带示范插件
+
+`ghwasm` 是个 GitHub 的 wasm 示范插件，和内置的 `github` 声明式渠道做的是同一件事 ——
+放进客户包里只会让人问「为什么有两个 GitHub」。要演示插件机制时用
+`make package PLUGINS=ghwasm`，客户那边再 `mcp-hub -plugin-install plugins/ghwasm/manifest.json`。
+
+## OAuth「连接」按钮（设备流）
+
+有些渠道不必让用户去对方系统手工生成一个长期令牌再粘过来：页面上点一下
+「连接」，在对方网站上确认，令牌就进了本机的密码管理器。GitHub 渠道已经支持。
+
+### 为什么是设备流，不是浏览器回调
+
+桌面程序**存不住 `client_secret`** —— 它跟着 exe 发给每一个客户，不是秘密。
+而 GitHub 的 web 流换 token 必须带 secret（[官方文档](https://docs.github.com/en/apps/oauth-apps/building-oauth-apps/authorizing-oauth-apps)
+把它标为 Required，PKCE 的 `code_verifier` 是额外加固，不替代 secret）。
+
+设备授权流（[RFC 8628](https://datatracker.ietf.org/doc/html/rfc8628)）只要
+`client_id`：程序显示一个 8 位码，用户去对方网站输入，程序轮询直到授权完成。
+它本来就是给没有浏览器的设备设计的，正好适合一个发给客户的 exe。
+
+### 用起来的样子
+
+```
+页面 -> 渠道市场 -> GitHub 「添加」
+  填 OAuth App Client ID（高级设置里）
+  点「连接 GitHub」
+    -> ① 复制验证码 WDJB-MJHT
+    -> ② 打开 github.com/login/device 粘贴并确认
+    -> ③ 等待授权…  ✅ 已连接为 nimysan，渠道已保存
+```
+
+账号名**不用用户填** —— 授权完成后向对方系统问一次身份就知道了。用户填的
+名字和令牌实际属于谁可能不一致，而凭据是按账号名定位的，填错等于把令牌存到
+另一个条目下。
+
+### 要先注册一个 OAuth App
+
+Client ID 只能由你自己注册的 App 提供（公共客户端的 client_id 不是秘密，
+正式发布时应该把你自己 App 的 id 写进声明的 `oauth.clientId`）：
+
+1. github.com -> Settings -> Developer settings -> OAuth Apps -> New
+2. **勾上 Enable Device Flow** —— 不勾的话连接会以 `device_flow_disabled` 失败
+3. 把 Client ID 填进页面的「OAuth App Client ID」
+
+### 两条路并存
+
+同一个凭据槽既能装用户手填的长期令牌（PAT），也能装连接拿到的令牌组，靠
+`oauthdev` 的标记区分。保留手填是因为企业里两种都有人用 —— 有的组织根本不
+允许给桌面程序注册 OAuth App。
+
+### 声明怎么写
+
+```jsonc
+"auth": { "kind": "bearer" },
+"oauth": {
+  "flow": "device",
+  "clientIdField": "oauthClientId",   // 或 "clientId": "Iv23li..." 写死
+  "deviceCodeUrl": "https://github.com/login/device/code",
+  "tokenUrl": "https://github.com/login/oauth/access_token",
+  "scopes": ["repo", "read:user"],
+  "setupUrl": "https://github.com/settings/developers"
+}
+```
+
+校验规则里最要紧的一条和 `baseUrl` 同理：**授权服务地址不能由下发内容模板
+拼出**，必须是写死的 https 地址。否则一份被篡改的目录就能把「请去这里授权」
+指向攻击者，而用户在那一页输入的是自己真实账号的密码。页面上也把这件事摆出来：
+点按钮前会显示「会把你送到 **github.com** 授权」和申请的权限。
+
+### 轮询放在服务端
+
+授权服务规定了最小轮询间隔，收到 `slow_down` 还要把间隔**加 5 秒**（不是原速
+重试，那会一直撞限流）。这套节流只有一份实现才可靠，而且放在服务端的话，用户
+切走页面再回来，授权照样在进行。设备码不下发到前端 —— 它等价于一次授权的凭据。
+
+### 几件要知道的事
+
+- **OAuth 的权限是粗粒度的。** `repo` 这个作用域包含写权限，所以令牌在 API
+  层面是能改仓库的。hub 的写开关只决定「哪些工具注册给模型」，决定不了令牌
+  本身能做什么 —— 要真正收窄，得在对方系统那侧用更细的权限（GitHub 的话是
+  改用 GitHub App 的 fine-grained permissions）。
+- **GitHub 的刷新走不通，而且不需要。** OAuth App 的刷新接口要求
+  `client_secret`，公共客户端没有它。对应做法是不要开 App 的「过期令牌」、
+  也不要申请 `offline_access`，让令牌长期有效，被吊销时重新点连接。刷新代码
+  留着是给支持公共客户端刷新的提供方用的。
+- **刷新成功但写不回密码管理器 = 致命错误**，不是记一笔然后继续。很多提供方
+  刷新时会轮换 `refresh_token`，存不下来就意味着库里那个已作废，继续跑会变成
+  「这次好了，之后全坏」。
+- 连接失败不会留下半个渠道：凭据和实例都是拿到令牌、验证可用之后才写。
+
+## wasm 插件渠道
+
+声明式渠道能覆盖「HTTP 请求 + 裁剪响应」，但有些系统真的需要执行代码（多步握手、
+算签名、带状态机）。那类 connector 走 wasm 插件：**代码由第三方编译成 `.wasm`，
+作为数据下发，在客户机的 exe 里沙箱执行** —— 客户不装 Python、不装 Node、也不用
+升级程序。
+
+它已经接进 MCP 工具注册和配置页面，和邮件、声明式 HTTPS 并列成为第三种渠道类型。
+`ghwasm` 是随仓库带的示范插件（`plugins/ghwasm/`，一个第三方风格手写的 GitHub
+connector，不 import hub 的任何包）。
+
+### 装一个插件
+
+```bash
+plugins/build.sh                                            # 构建到 plugins/dist/<id>/
+mcp-hub -plugin-install plugins/dist/ghwasm/manifest.json   # 装进插件目录
+mcp-hub -plugin-list                                        # 看装了什么、能访问哪些主机
+```
+
+插件装在 `<用户配置目录>/mcp-hub/plugins/<id>/`，一个插件一个目录，里面是
+`manifest.json` 加它的 `.wasm`。**目录名必须等于插件 id** —— 否则「改个目录名」
+就能换掉一个已配好渠道背后的代码，而用户配置是按 id 定位的。
+
+装完之后它出现在页面的渠道市场里，填凭据、测连通、保存，和别的渠道完全一样。
+工具要客户端重连一次才可见（Quick 还要点 Sync）。
+
+### 沙箱是「只有这些」，不是「拦住了什么」
+
+wasm 的指令集里没有系统调用，所以模块想碰外界只能调宿主导出的函数。一共三个：
+
+| 宿主给的 | 说明 |
+|---|---|
+| `fetch(ptr,len) -> len` | 受限 HTTP。只允许 https、只允许 manifest 声明的主机、只允许常规方法 |
+| `read(ptr)` | 取回上一次 fetch 的响应（分两步是为了不从宿主回调插件，重入会把 Go 运行时搅乱） |
+| `log(ptr,len)` | 诊断输出，宿主决定要不要显示 |
+
+没有文件、没有 socket、没有钥匙串、没有起进程。和原生 `.dll` 插件的区别是结构性的：
+dll 一旦加载进进程就和宿主同权限，拦不住。
+
+**凭据不交给插件。** manifest 里声明 `auth.kind`，宿主在 `fetch` 时注入请求头；
+插件自己设的 `Authorization` 会被丢掉。所以第三方模块只能「以这个身份干活」，
+拿不到也带不走 token。
+
+**权威是 manifest，不是模块。** 工具清单、参数表、允许访问的主机都来自签名过的
+manifest，所以风险披露在任何第三方代码跑起来之前就能摆给用户，模块也无法给自己
+扩权。两处门禁都在插件执行前：**写开关**（关着的写工具根本不注册给模型），
+以及**必填参数校验**（「参数够不够」不该由被审的那一方说）。
+
+页面上这件事是看得见的：市场卡片带一个 `🧩 第三方代码` 标记和「沙箱只允许它访问
+api.github.com」，填凭据的表单顶部还有一块橙框说明。
+
+### 模块是懒加载的
+
+发现（读 manifest）和加载（编译 wasm）刻意分开。工具注册只要 manifest，而编译
+一个 3MB 的模块要上百毫秒到一秒 —— 卡在 stdio 握手上会被客户端判超时。模块在
+**第一次工具调用**时才加载，之后在进程内复用。加载失败会被记住，不在每次调用时
+重试编译。
+
+### 这个示范插件验了什么
+
+| 验的事 | 结果 |
+|---|---|
+| 6 个工具的结果、meta、请求路径、query、请求体 vs 声明式执行器 | 逐字节一致 |
+| 对比测试本身会不会失败 | 变异验证过：插件少回一个字段 → 测试失败 |
+| 真实 api.github.com | 通（令牌从钥匙串惰性取用，宿主注入） |
+| 经真的 MCP 协议 tools/list + tools/call | 通（5 个只读工具，写工具被开关挡住；开关打开后 6 个） |
+| MCP 启动时真实注册 | 通（1 个账号 5 个工具；2 个账号其一可写 → 6 个） |
+| 多账号分派 | 不指定 `channel_account` 被拒并列出可选项；未开写开关的账号的写操作在执行前被拒 |
+| 插件打未声明的主机 / 明文 http / `file://` / 非常规方法 | 沙箱拒绝并记录 |
+| 插件自己塞 `Authorization` | 被丢掉，宿主注入的是最终值 |
+| 装了个坏插件 | 只让自己失效，其余插件照常；目录名和 id 不一致被拒 |
+
+```bash
+go test ./internal/wasmplug/ ./internal/tools/        # 沙箱边界 + MCP 注册
+MCPHUB_PLUGIN_REAL=1 GITHUB_ACCOUNT=<你的用户名> \
+  go test ./internal/wasmplug/ -run Real -v           # 真实环境
+```
+
+### 要知道的代价
+
+- **ABI 一旦发布就改不动**：已发布的模块是照这套函数签名编译的。所以 manifest 必须
+  声明 `abi` 版本，宿主对不认识的版本干净地拒绝（`ABIVersion` 常量 + 加载期握手，
+  模块报的版本和 manifest 不一致也拒绝加载）。
+- **体积**：Go 编译出来 3.2MB（运行时固定开销）。Rust / TinyGo 会小一个数量级。
+- **一个实例不能并发调用**（里面是一份 Go 运行时），所以 `Plugin.Call` 是串行的。
+  要并发得起实例池，还没做。
+- **超时会连带关掉模块实例**（`WithCloseOnContextDone`）：一个跑飞的第三方模块该被
+  拆掉，但现在拆掉之后不会自动重建。
+- **wasm 做不到的事仍然做不到**：WASI 没有原始 TCP、不能监听端口，所以 IMAP 那类
+  协议、以及 OAuth 回调，都得由宿主以高层能力的形式提供，不是模块自己能解决的。
+- **`-plugin-install` 不做签名验证**：手工装一个插件等于用户自己承担来源风险，和手工
+  往 catalog 目录放一份声明同理。签名是目录下发那一层的事，还没做。
+- **沙箱挡不住数据外流到已声明的主机**：那是它正常工作所必需的能力。所以「这个
+  connector 会执行代码、要访问哪台主机」必须在用户点「添加」之前就摆出来。
+
 ## 渠道命名规矩
 
 渠道 `id` 和工具名要对得上**具体那套接口**，不是厂商、也不是产品大类：
@@ -478,3 +719,4 @@ mcp-hub -catalog-sync https://.../cat.json  抓取并验签远端目录，写入
 | IMAP | `github.com/emersion/go-imap/v2` |
 | MIME / 字符集 | `github.com/emersion/go-message`（导入 `charset` 即注册 GB2312/GBK/GB18030 等） |
 | SMTP | `github.com/wneessen/go-mail` |
+| wasm 运行时（插件沙箱） | `github.com/tetratelabs/wazero`（纯 Go、零依赖、不用 CGO，交叉编译照常） |

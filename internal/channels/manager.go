@@ -3,11 +3,14 @@ package channels
 import (
 	"context"
 	"fmt"
+	"net/http"
+	"sync"
 
 	"github.com/nimysan/mcp-hub/internal/config"
 	"github.com/nimysan/mcp-hub/internal/credstore"
 	"github.com/nimysan/mcp-hub/internal/httpchan"
 	"github.com/nimysan/mcp-hub/internal/mailbox"
+	"github.com/nimysan/mcp-hub/internal/wasmplug"
 )
 
 // Manager 把渠道实例（store）、凭据（credstore）和具体渠道的连通性测试
@@ -15,6 +18,16 @@ import (
 type Manager struct {
 	store *Store
 	creds *credstore.Store
+
+	// HTTP 非空时用于 OAuth 授权和身份查询，测试里指向 httptest。
+	HTTP *http.Client
+
+	// Plugins 是 wasm 插件运行时。为空表示本进程不执行插件渠道
+	// （例如只跑配置页面时也要装上它，否则「测试并保存」用不了）。
+	Plugins *wasmplug.Registry
+
+	connMu sync.Mutex
+	conns  map[string]*ConnectSession
 }
 
 func NewManager(store *Store, creds *credstore.Store) *Manager {
@@ -118,6 +131,11 @@ func (m *Manager) Test(ctx context.Context, typ, account string, values map[stri
 			return err
 		}
 		return nil
+	case KindPlugin:
+		if _, err := m.testPlugin(ctx, d, account, values); err != nil {
+			return err
+		}
+		return nil
 	case KindMail:
 		cfg, err := m.mailConfig(d, account, values)
 		if err != nil {
@@ -142,6 +160,9 @@ func (m *Manager) Identify(ctx context.Context, typ, account string, values map[
 	d, ok := ByType(typ)
 	if !ok {
 		return nil, fmt.Errorf("未知渠道类型 %q", typ)
+	}
+	if d.Kind == KindPlugin {
+		return m.testPlugin(ctx, d, account, values)
 	}
 	if d.Kind != KindHTTP {
 		return nil, m.Test(ctx, typ, account, values)
@@ -222,16 +243,20 @@ func (m *Manager) httpRuntime(d Descriptor, account string, values map[string]st
 
 	ref := credstore.Ref{Integration: d.Integration, Account: in.Account}
 	secret := m.creds.Secret(ref)
+	saveSecret := m.saveSecretFunc(d, in.Account)
 	// 表单测试时密码可能是刚填、还没入库的，用一个临时 handle 承载它。
 	if v, ok := values[d.SecretField]; ok && v != "" {
 		secret = credstore.Literal(ref, v)
+		// 这条实例可能还没保存过，写回去等于凭空造一条凭据，所以不给写回口。
+		saveSecret = nil
 	}
 
 	return httpchan.Runtime{
-		Spec:     spec,
-		Account:  in.Account,
-		Settings: in.Settings,
-		Secret:   secret.Value,
+		Spec:       spec,
+		Account:    in.Account,
+		Settings:   in.Settings,
+		Secret:     secret.Value,
+		SaveSecret: saveSecret,
 	}, nil
 }
 

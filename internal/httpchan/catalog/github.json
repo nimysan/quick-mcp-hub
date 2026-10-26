@@ -25,6 +25,27 @@
   "auth": {
     "kind": "bearer"
   },
+  "oauth": {
+    "flow": "device",
+    "clientIdField": "oauthClientId",
+    "deviceCodeUrl": "https://github.com/login/device/code",
+    "tokenUrl": "https://github.com/login/oauth/access_token",
+    "scopes": [
+      "repo",
+      "read:user"
+    ],
+    "setupUrl": "https://github.com/settings/developers",
+    "help": "建 OAuth App 时必须勾上 Enable Device Flow，否则连接会失败。设备流只要 Client ID，不要 Client Secret（桌面程序存不住它）"
+  },
+  "fields": [
+    {
+      "name": "oauthClientId",
+      "label": "OAuth App Client ID",
+      "placeholder": "Iv23li...",
+      "help": "只有用「连接」按钮时需要：到 github.com → Settings → Developer settings → OAuth Apps 新建一个，勾上 Enable Device Flow，把 Client ID 填这里。直接粘贴 PAT 的话不用填",
+      "advanced": true
+    }
+  ],
   "headers": {
     "Accept": "application/vnd.github+json",
     "X-GitHub-Api-Version": "2022-11-28"
