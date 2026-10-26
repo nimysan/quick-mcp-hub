@@ -39,7 +39,7 @@ var All = []Provider{
 		IMAPHost: "imap.qq.com", IMAPPort: 993,
 		SMTPHost: "smtp.qq.com", SMTPPort: 465,
 		SecretLabel: "授权码",
-		SecretHelp:  "邮箱设置 → 账户 → 开启 IMAP/SMTP 服务 → 生成授权码（16 位，不是登录密码）",
+		SecretHelp:  "QQ邮箱网页版 → 设置 → 账号与安全 → 安全设置 → 开启服务（会收一条短信）→ 生成授权码（16 位小写字母，不是 QQ 登录密码）",
 	},
 	{
 		Type: "mail163", Name: "网易 163", Icon: "📧",

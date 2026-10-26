@@ -51,7 +51,9 @@ func main() {
 		setSecret   = flag.Bool("set-secret", false, "把凭据写入系统密码管理器后退出")
 		listSecrets = flag.Bool("list-secrets", false, "列出已配置的凭据条目（不打印凭据内容）后退出")
 		rmSecret    = flag.Bool("rm-secret", false, "删除一条凭据后退出")
-		uiFlag      = flag.Bool("ui", false, "启动渠道配置页面（本机 127.0.0.1 web 服务）")
+		uiFlag      = flag.Bool("ui", false, "打开配置页面（本机 127.0.0.1 web 服务）")
+		serveFlag   = flag.Bool("serve", false, "强制以 MCP 服务模式运行（默认由启动方式自动判断）")
+		noBrowser   = flag.Bool("no-browser", false, "打开配置页面时不自动弹出窗口")
 		uiPort      = flag.Int("ui-port", 7801, "渠道配置页面端口，默认 7801")
 		integration = flag.String("integration", config.IntegrationMail, "凭据所属集成名，默认 mail")
 		account     = flag.String("account", "", "凭据所属账号，默认取 MCPHUB_MAIL_USER")
@@ -142,11 +144,22 @@ func main() {
 	registry := wasmplug.NewRegistry(installed)
 	mgr.Plugins = registry
 
-	if *uiFlag {
+	// 默认行为由启动方式决定，而不是让用户记住该加什么参数：
+	// 被 AI 客户端 spawn 时 stdin 是管道 -> 跑 MCP 服务；
+	// 用户双击时 stdin 是终端 / NUL / 拿不到 -> 打开配置页面。
+	//
+	// 这个程序的用户是财务和运营。「双击主程序会一闪而过，要去双击另一个
+	// 辅助脚本」是不能接受的，所以把默认值做对，而不是写进文档。
+	// -ui / -serve 两个显式参数仍然保留：自动判断只是默认值，猜错了也有救。
+	if *uiFlag || (!*serveFlag && !stdinIsPipe()) {
 		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 		defer stop()
-		if err := webui.New(mgr, version).Listen(ctx, *uiPort); err != nil {
-			log.Fatalf("渠道配置页面退出: %v", err)
+		srv := webui.New(mgr, version)
+		if !*noBrowser {
+			srv.OnReady = func(url string) { webui.OpenInBrowser(url) }
+		}
+		if err := srv.Listen(ctx, *uiPort); err != nil {
+			log.Fatalf("配置页面退出: %v", err)
 		}
 		return
 	}
@@ -558,4 +571,21 @@ func runPluginInstall(manifestPath string) int {
 	fmt.Printf("  会执行第三方代码，允许访问: %s\n", strings.Join(m.AllowedHosts, " "))
 	fmt.Printf("  工具 %d 个；到配置页面填凭据后才会注册给模型\n", len(m.Tools))
 	return 0
+}
+
+// stdinIsPipe 报告 stdin 是不是一个管道 —— 也就是「我是被别的程序启动的」。
+//
+// AI 客户端（Claude / Cursor / Kiro / Quick）都用 stdio 传输，spawn 子进程时
+// 给的是管道。用户在 Finder / 资源管理器里双击时，stdin 是终端、是 NUL、
+// 或者根本拿不到。
+//
+// 拿不到时按「不是管道」处理：双击的场景比脚本调用常见得多，而且猜错的
+// 代价不对称 —— 该开页面却跑了服务，用户看到窗口一闪而过、毫无头绪；
+// 该跑服务却开了页面，客户端会报连接失败，而那条路可以用 -serve 钉死。
+func stdinIsPipe() bool {
+	fi, err := os.Stdin.Stat()
+	if err != nil {
+		return false
+	}
+	return fi.Mode()&os.ModeCharDevice == 0
 }

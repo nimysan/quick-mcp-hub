@@ -29,6 +29,11 @@ type Server struct {
 	mgr     *channels.Manager
 	mux     *http.ServeMux
 	version string
+
+	// OnReady 在监听端口绑定成功、开始服务之前调用一次，参数是页面地址。
+	// 用来自动把窗口打开 —— 放在绑定之后才调，是为了不让用户看到一个指向
+	// 还没起来的服务的窗口（那会显示「无法连接」）。
+	OnReady func(url string)
 }
 
 func New(mgr *channels.Manager, version string) *Server {
@@ -68,6 +73,10 @@ func (s *Server) Listen(ctx context.Context, port int) error {
 	}()
 	log.Printf("渠道配置页面：http://%s", ln.Addr())
 	fmt.Printf("在浏览器打开：http://%s\n", ln.Addr())
+	if s.OnReady != nil {
+		// 端口已经绑上了，所以这个窗口一打开就能连上。
+		s.OnReady(fmt.Sprintf("http://%s", ln.Addr()))
+	}
 	if err := srv.Serve(ln); err != nil && err != http.ErrServerClosed {
 		return err
 	}
