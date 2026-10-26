@@ -54,18 +54,21 @@ jobs:
       - name: go vet
         run: go vet ./...
 
+      - name: go test
+        run: go test ./... -count=1
+
+      # 只在 Linux 上查：格式是平台无关的，跑三遍纯属浪费。而且它必须排在
+      # 测试**后面** —— 这一步失败过一次，把 Windows 上的测试整个挡掉了，
+      # 结果是「Windows 红了，但我们不知道测试本身能不能过」。
       - name: gofmt 检查
-        shell: bash
+        if: runner.os == 'Linux'
         run: |
-          unformatted=$(gofmt -l . | grep -v '^$' || true)
+          unformatted=$(gofmt -l . || true)
           if [ -n "$unformatted" ]; then
             echo "下面这些文件没有 gofmt 过："
             echo "$unformatted"
             exit 1
           fi
-
-      - name: go test
-        run: go test ./... -count=1
 
   build:
     name: 交叉编译五平台
