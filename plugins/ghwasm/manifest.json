@@ -1,0 +1,100 @@
+{
+  "abi": 1,
+  "id": "ghwasm",
+  "name": "GitHub（wasm 插件）",
+  "version": 1,
+  "icon": "🧩",
+  "summary": "第三方 wasm 插件 · 宿主注入 PAT · 代码在沙箱里跑",
+  "tags": [
+    "devtools",
+    "project"
+  ],
+  "module": "ghwasm.wasm",
+  "allowedHosts": [
+    "api.github.com"
+  ],
+  "baseUrl": "https://api.github.com",
+  "auth": {
+    "kind": "bearer"
+  },
+  "account": {
+    "name": "login",
+    "label": "GitHub 用户名",
+    "placeholder": "octocat",
+    "help": "只用来标识这份凭据存在哪个条目下；调接口用的身份由令牌本身决定"
+  },
+  "secret": {
+    "name": "token",
+    "label": "个人访问令牌 (PAT)",
+    "help": "github.com → Settings → Developer settings → Personal access tokens。令牌由宿主注入请求头，插件代码看不到它"
+  },
+  "tools": [
+    {
+      "name": "ghwasm_whoami",
+      "title": "当前身份",
+      "description": "确认现在在以谁的身份操作 GitHub：返回登录名、昵称和公开仓库数。不确定有没有权限、或者用户问「我是谁」时用它。",
+      "readOnly": true
+    },
+    {
+      "name": "ghwasm_list_my_repos",
+      "title": "我的仓库",
+      "description": "列出当前身份有权访问的仓库，默认按最近推送排序。用它回答「我有哪些仓库」「我最近在改哪个项目」。要找别人的仓库用 ghwasm_search_repos。",
+      "readOnly": true,
+      "params": [
+        { "name": "per_page", "type": "number", "description": "返回几个，最大 100" },
+        {
+          "name": "sort",
+          "description": "排序方式",
+          "enum": ["created", "updated", "pushed", "full_name"]
+        },
+        { "name": "affiliation", "description": "仓库关系，逗号分隔：owner / collaborator / organization_member" }
+      ]
+    },
+    {
+      "name": "ghwasm_search_repos",
+      "title": "搜索仓库",
+      "description": "在全站搜公开仓库，支持 GitHub 的搜索语法，例如 `mcp server language:go stars:>100`。用它找别人的项目；自己的仓库用 ghwasm_list_my_repos。",
+      "readOnly": true,
+      "params": [
+        { "name": "q", "required": true, "description": "GitHub 搜索语法，可用 language: stars: pushed: 等限定词" },
+        { "name": "sort", "description": "排序字段，留空按相关度", "enum": ["stars", "forks", "updated"] },
+        { "name": "per_page", "type": "number", "description": "返回几个，最大 100" }
+      ]
+    },
+    {
+      "name": "ghwasm_list_issues",
+      "title": "列出 Issue",
+      "description": "列出一个仓库的 issue，返回编号、标题、状态、作者和链接，不含正文。GitHub 把 PR 也算作 issue，结果里带 pull_request 字段的那些是 PR。要看某条写了什么，拿编号调 ghwasm_get_issue。",
+      "readOnly": true,
+      "params": [
+        { "name": "owner", "required": true, "description": "仓库所属用户或组织" },
+        { "name": "repo", "required": true, "description": "仓库名，不含所属前缀" },
+        { "name": "state", "description": "issue 状态", "enum": ["open", "closed", "all"] },
+        { "name": "labels", "description": "按标签过滤，逗号分隔" },
+        { "name": "per_page", "type": "number", "description": "返回几条，最大 100" }
+      ]
+    },
+    {
+      "name": "ghwasm_get_issue",
+      "title": "读取 Issue",
+      "description": "读取一条 issue 或 PR 的正文和当前状态。编号从 ghwasm_list_issues 来，用户直接给了编号也可以。",
+      "readOnly": true,
+      "params": [
+        { "name": "owner", "required": true, "description": "仓库所属用户或组织" },
+        { "name": "repo", "required": true, "description": "仓库名" },
+        { "name": "issue_number", "type": "number", "required": true, "description": "issue 或 PR 编号" }
+      ]
+    },
+    {
+      "name": "ghwasm_create_issue",
+      "title": "新建 Issue",
+      "description": "在指定仓库新建一条 issue。这会在对方仓库留下公开记录，无法彻底删除，所以提交前应当把仓库、标题和正文给用户确认。",
+      "params": [
+        { "name": "owner", "required": true, "description": "仓库所属用户或组织" },
+        { "name": "repo", "required": true, "description": "仓库名" },
+        { "name": "title", "required": true, "description": "标题" },
+        { "name": "body", "description": "正文，支持 Markdown" }
+      ]
+    }
+  ]
+}

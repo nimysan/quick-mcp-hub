@@ -98,8 +98,14 @@ type Descriptor struct {
 	HelpURL     string   `json:"helpUrl,omitempty"`
 	// OAuth 非空时页面上会多一个「连接」按钮：用户不必去对方系统手工生成
 	// 一个长期令牌，点一下、在对方网站上确认即可。
-	OAuth  *OAuthInfo `json:"oauth,omitempty"`
-	Fields []Field    `json:"fields"`
+	OAuth *OAuthInfo `json:"oauth,omitempty"`
+	// ThirdPartyCode 表示这个渠道会在本机执行第三方代码（wasm 插件）。
+	// AllowedHosts 是它被允许访问的主机。这两件事必须在用户点「添加」之前
+	// 看得见 —— 沙箱挡得住读文件和连任意地址，挡不住它把拿到的数据发给
+	// 自己声明的那台主机。
+	ThirdPartyCode bool     `json:"thirdPartyCode,omitempty"`
+	AllowedHosts   []string `json:"allowedHosts,omitempty"`
+	Fields         []Field  `json:"fields"`
 }
 
 // OAuthInfo 是页面渲染「连接」按钮要知道的事。
@@ -163,7 +169,8 @@ func (d Descriptor) Validate(values map[string]string) (account, secret string, 
 	return account, secret, settings, nil
 }
 
-// KindMail 是编译进程序的邮件实现；KindHTTP 是声明式 HTTPS 渠道。
+// KindMail 是编译进程序的邮件实现；KindHTTP 是声明式 HTTPS 渠道；
+// KindPlugin 是 wasm 插件渠道（见 plugin.go）。
 const (
 	KindMail = "mail"
 	KindHTTP = "http"
@@ -325,12 +332,18 @@ var planned = []Descriptor{
 // All 返回全部渠道描述符，可用的在前。
 func All() []Descriptor {
 	specs := specs()
-	out := make([]Descriptor, 0, len(mailprovider.All)+len(specs)+len(planned))
+	mans := pluginManifests()
+	out := make([]Descriptor, 0, len(mailprovider.All)+len(specs)+len(mans)+len(planned))
 	for _, p := range mailprovider.All {
 		out = append(out, mailDescriptor(p))
 	}
 	for _, s := range specs {
 		out = append(out, httpDescriptor(s))
+	}
+	// 插件排在声明式之后：同 id 时声明式赢（ByType 取第一个命中）。一个
+	// 插件不该靠占用某个 id 顶掉内置或下发的声明式渠道。
+	for _, m := range mans {
+		out = append(out, pluginDescriptor(m))
 	}
 	return append(out, planned...)
 }

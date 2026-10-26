@@ -15,6 +15,8 @@ func validManifest() Manifest {
 		AllowedHosts: []string{"api.example.com"},
 		BaseURL:      "https://api.example.com",
 		Auth:         Auth{Kind: "bearer"},
+		Account:      Credential{Name: "login", Label: "账号"},
+		Secret:       Credential{Name: "token", Label: "令牌"},
 		Tools: []Tool{
 			{Name: "demo_read", Description: "读点东西", ReadOnly: true},
 			{Name: "demo_write", Description: "写点东西"},
@@ -75,6 +77,32 @@ func TestManifestRejections(t *testing.T) {
 		{"工具没有描述", func(m *Manifest) { m.Tools[0].Description = "" }, "缺少 description"},
 		{"认证方式不认识", func(m *Manifest) { m.Auth = Auth{Kind: "oauth-magic"} }, "不支持"},
 		{"header 认证没给头名", func(m *Manifest) { m.Auth = Auth{Kind: "header"} }, "必须给出 auth.name"},
+		{"账号和凭据同名", func(m *Manifest) { m.Secret.Name = m.Account.Name }, "不能是同一个字段"},
+		{"账号字段名不合法", func(m *Manifest) { m.Account.Name = "1bad" }, "必须是合法字段名"},
+		{"凭据缺 label", func(m *Manifest) { m.Secret.Label = "" }, "都要有 label"},
+		{"额外字段与凭据撞名", func(m *Manifest) {
+			m.Fields = []Field{{Name: "token", Label: "撞名"}}
+		}, "与保留字段冲突"},
+		{"额外字段占用写开关名", func(m *Manifest) {
+			m.Fields = []Field{{Name: AllowWriteField, Label: "撞名"}}
+		}, "与保留字段冲突"},
+		{"baseUrlField 指向不存在的字段", func(m *Manifest) {
+			m.BaseURL = ""
+			m.BaseURLField = "site"
+			m.AllowedHosts = []string{"api.example.com"}
+		}, "在 fields 里不存在"},
+		{"参数占用分派参数名", func(m *Manifest) {
+			m.Tools[0].Params = []Param{{Name: ReservedAccountParam}}
+		}, "保留参数名"},
+		{"参数名不合法", func(m *Manifest) {
+			m.Tools[0].Params = []Param{{Name: "has-dash"}}
+		}, "参数名"},
+		{"参数重复", func(m *Manifest) {
+			m.Tools[0].Params = []Param{{Name: "a"}, {Name: "a"}}
+		}, "重复"},
+		{"参数类型不支持", func(m *Manifest) {
+			m.Tools[0].Params = []Param{{Name: "a", Type: "int64"}}
+		}, "类型"},
 	}
 
 	for _, c := range cases {

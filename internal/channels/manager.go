@@ -10,6 +10,7 @@ import (
 	"github.com/nimysan/mcp-hub/internal/credstore"
 	"github.com/nimysan/mcp-hub/internal/httpchan"
 	"github.com/nimysan/mcp-hub/internal/mailbox"
+	"github.com/nimysan/mcp-hub/internal/wasmplug"
 )
 
 // Manager 把渠道实例（store）、凭据（credstore）和具体渠道的连通性测试
@@ -20,6 +21,10 @@ type Manager struct {
 
 	// HTTP 非空时用于 OAuth 授权和身份查询，测试里指向 httptest。
 	HTTP *http.Client
+
+	// Plugins 是 wasm 插件运行时。为空表示本进程不执行插件渠道
+	// （例如只跑配置页面时也要装上它，否则「测试并保存」用不了）。
+	Plugins *wasmplug.Registry
 
 	connMu sync.Mutex
 	conns  map[string]*ConnectSession
@@ -126,6 +131,11 @@ func (m *Manager) Test(ctx context.Context, typ, account string, values map[stri
 			return err
 		}
 		return nil
+	case KindPlugin:
+		if _, err := m.testPlugin(ctx, d, account, values); err != nil {
+			return err
+		}
+		return nil
 	case KindMail:
 		cfg, err := m.mailConfig(d, account, values)
 		if err != nil {
@@ -150,6 +160,9 @@ func (m *Manager) Identify(ctx context.Context, typ, account string, values map[
 	d, ok := ByType(typ)
 	if !ok {
 		return nil, fmt.Errorf("未知渠道类型 %q", typ)
+	}
+	if d.Kind == KindPlugin {
+		return m.testPlugin(ctx, d, account, values)
 	}
 	if d.Kind != KindHTTP {
 		return nil, m.Test(ctx, typ, account, values)

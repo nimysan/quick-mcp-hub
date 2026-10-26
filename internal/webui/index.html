@@ -66,6 +66,8 @@
   .modal h3{margin:0 0 4px}
   .modal .hint{color:var(--muted);font-size:12px;margin-bottom:14px}
   .oauth-box{border:1px solid var(--border);border-radius:10px;padding:12px 14px;margin:4px 0 14px}
+  .risk{border:1px solid var(--warn);border-radius:10px;padding:12px 14px;margin:4px 0 14px}
+  .tp{font-size:11px;padding:1px 6px;border-radius:5px;border:1px solid var(--warn);color:var(--warn)}
   .oauth-head{font-weight:600;font-size:13px;margin-bottom:6px}
   .oauth-code{margin-top:10px}
   .code-row{display:flex;align-items:center;gap:10px;margin-top:4px}
@@ -265,9 +267,11 @@ function renderMarket(){
         <span class="nm">${esc(d.name)}</span>
         ${d.version?`<span class="ver">v${d.version}</span>`:''}
         ${d.needsReview?'<span class="rv" title="这个系统的读操作也是 POST，声明需人工复核">复核</span>':''}
+        ${d.thirdPartyCode?'<span class="tp" title="这个渠道会在你的机器上执行第三方代码（wasm 沙箱）">🧩 第三方代码</span>':''}
         <code style="margin-left:auto">${esc(d.type)}</code>
       </div>
       <div class="sm">${esc(d.summary)}</div>
+      ${d.thirdPartyCode?`<div class="tl" style="color:var(--warn)">沙箱只允许它访问：${esc((d.allowedHosts||[]).join(" "))}</div>`:''}
       ${tools?`<div class="tl" title="${esc(tools)}">${esc(tools)}</div>`:''}
       ${wn?`<div class="tl" style="color:var(--warn)">其中 ${wn} 个写操作，默认不启用</div>`:''}
       <div class="act">
@@ -336,9 +340,18 @@ async function openForm(type, account){
       <button id="oauthbtn" style="margin-top:8px">连接 ${esc(d.name)}</button>
       <div id="oauthpanel"></div>
     </div>` : "";
+  const riskHTML = d.thirdPartyCode ? `
+    <div class="risk">
+      <div class="oauth-head">🧩 这个渠道会在你的机器上执行第三方代码</div>
+      <div class="help">代码跑在 wasm 沙箱里：没有文件、没有钥匙串、不能连任意地址。
+        它只能访问 <b>${esc((d.allowedHosts||[]).join(" "))}</b>，
+        凭据由本程序注入请求头，插件代码看不到你的令牌。</div>
+      ${(d.writeTools||[]).length?`<div class="help" style="color:var(--warn)">其中 ${(d.writeTools||[]).length} 个写操作，写开关关着时不会注册给模型</div>`:''}
+    </div>` : "";
   $("#modal").innerHTML = `
     <h3>${d.icon} ${esc(d.name)}</h3>
     <div class="hint">密码类字段只存进系统密码管理器，不写配置文件、不进日志</div>
+    ${riskHTML}
     ${basic.map(fieldHTML).join("")}
     ${adv.length?`<div class="adv-toggle" id="advtoggle">▸ 高级设置（主机 / 端口）</div>
       <div class="adv" id="adv">${adv.map(fieldHTML).join("")}</div>`:""}

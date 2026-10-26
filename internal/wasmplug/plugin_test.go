@@ -19,9 +19,9 @@ import (
 
 const (
 	// wasmPath 是构建产物（.gitignore 里的 dist/ 不入库，按需构建）。
-	wasmPath = "../../plugins/dist/github.wasm"
+	wasmPath = "../../plugins/dist/ghwasm/ghwasm.wasm"
 	// manifestFile 是「签名过的那一半」，和插件源码一起入库。
-	manifestFile = "../../plugins/github/manifest.json"
+	manifestFile = "../../plugins/ghwasm/manifest.json"
 )
 
 // fakeGitHub 是一台仿真的 api.github.com。
@@ -127,7 +127,7 @@ func openPlugin(t *testing.T, f *fakeGitHub) *Plugin {
 	module, err := os.ReadFile(wasmPath)
 	if err != nil {
 		t.Fatalf("没有找到插件模块 %s。先构建它：\n"+
-			"  GOOS=wasip1 GOARCH=wasm go build -buildmode=c-shared -o plugins/dist/github.wasm ./plugins/github\n%v",
+			"  GOOS=wasip1 GOARCH=wasm go build -buildmode=c-shared -o plugins/dist/ghwasm/ghwasm.wasm ./plugins/github\n%v",
 			wasmPath, err)
 	}
 	p, err := Open(context.Background(), manifestFor(t, f.srv.URL), module)
@@ -196,7 +196,7 @@ func TestParityWithDeclarative(t *testing.T) {
 
 			fPlug := newFakeGitHub(t)
 			p := openPlugin(t, fPlug)
-			gotRes, gotMeta, errPlug := p.Call(context.Background(), instance(), c.tool, c.args)
+			gotRes, gotMeta, errPlug := p.Call(context.Background(), instance(), pluginTool(c.tool), c.args)
 			if errPlug != nil {
 				t.Fatalf("wasm 插件报错: %v", errPlug)
 			}
@@ -226,7 +226,7 @@ func TestParityWithDeclarative(t *testing.T) {
 func TestHostInjectsCredential(t *testing.T) {
 	f := newFakeGitHub(t)
 	p := openPlugin(t, f)
-	if _, _, err := p.Call(context.Background(), instance(), "github_whoami", nil); err != nil {
+	if _, _, err := p.Call(context.Background(), instance(), "ghwasm_whoami", nil); err != nil {
 		t.Fatalf("调用失败: %v", err)
 	}
 	if len(f.gotAuth) != 1 || f.gotAuth[0] != "Bearer t0ken-from-keychain" {
@@ -312,7 +312,7 @@ func TestWriteGateRunsBeforePlugin(t *testing.T) {
 	readOnly := instance()
 	readOnly.Settings = map[string]string{"allowWrite": "false"}
 
-	_, _, err := p.Call(context.Background(), readOnly, "github_create_issue", map[string]any{
+	_, _, err := p.Call(context.Background(), readOnly, "ghwasm_create_issue", map[string]any{
 		"owner": "nimysan", "repo": "quick-mcp-hub", "title": "不该建出来",
 	})
 	if err == nil || !strings.Contains(err.Error(), "写开关未打开") {
@@ -330,7 +330,7 @@ func TestWriteGateRunsBeforePlugin(t *testing.T) {
 func TestUnknownToolRejected(t *testing.T) {
 	f := newFakeGitHub(t)
 	p := openPlugin(t, f)
-	if _, _, err := p.Call(context.Background(), instance(), "github_delete_repo", nil); err == nil ||
+	if _, _, err := p.Call(context.Background(), instance(), "ghwasm_delete_repo", nil); err == nil ||
 		!strings.Contains(err.Error(), "没有工具") {
 		t.Fatalf("err = %v，期望被宿主拒绝", err)
 	}
@@ -357,7 +357,7 @@ func TestPluginLogGoesToHost(t *testing.T) {
 	p.Log = func(s string) { lines = append(lines, s) }
 
 	// 打一个仿真服务没有注册的路径 -> 404 -> 插件会写一行日志。
-	_, _, err := p.Call(context.Background(), instance(), "github_get_issue", map[string]any{
+	_, _, err := p.Call(context.Background(), instance(), "ghwasm_get_issue", map[string]any{
 		"owner": "nimysan", "repo": "quick-mcp-hub", "issue_number": float64(99999),
 	})
 	if err == nil {
@@ -366,6 +366,15 @@ func TestPluginLogGoesToHost(t *testing.T) {
 	if len(lines) == 0 || !strings.Contains(lines[0], "404") {
 		t.Fatalf("没收到插件日志: %v", lines)
 	}
+}
+
+// pluginTool 把声明式渠道的工具名换成插件里对应的那个。
+//
+// 两边前缀刻意不同：插件 id 是 ghwasm、声明式是 github，这样两个渠道能同时
+// 存在于一个 MCP server 里而不撞名——也正是这次对比要证明的「同一件事两种
+// 实现、结果一致」。
+func pluginTool(declName string) string {
+	return strings.Replace(declName, "github_", "ghwasm_", 1)
 }
 
 func mustJSON(t *testing.T, v any) string {

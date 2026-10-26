@@ -21,8 +21,13 @@ if [ ${#plugins[@]} -eq 0 ]; then
 fi
 
 for name in "${plugins[@]}"; do
-  out="plugins/dist/$name.wasm"
+  out="plugins/dist/$name/$name.wasm"
+  mkdir -p "plugins/dist/$name"
   # -buildmode=c-shared 才能用 //go:wasmexport（模块入口变成 _initialize）。
   GOOS=wasip1 GOARCH=wasm go build -buildmode=c-shared -o "$out" "./plugins/$name"
-  printf '%-28s %s\n' "$out" "$(du -h "$out" | cut -f1)"
+  # manifest 和模块放在一起 —— 那是真实的分发形态，也是 -plugin-install
+  # 期望的布局（它只在 manifest 旁边找模块）。
+  cp "plugins/$name/manifest.json" "plugins/dist/$name/manifest.json"
+  printf '%-34s %s\n' "$out" "$(du -h "$out" | cut -f1)"
+  printf '  安装: mcp-hub -plugin-install plugins/dist/%s/manifest.json\n' "$name"
 done

@@ -133,11 +133,11 @@ func dispatch(req request) (any, map[string]any, error) {
 		return out, nil, err
 	}
 	switch req.Tool {
-	case "github_whoami":
+	case "ghwasm_whoami":
 		return get(req, "/user", nil,
 			[]string{"login", "name", "html_url", "public_repos"}, 0)
 
-	case "github_list_my_repos":
+	case "ghwasm_list_my_repos":
 		q := map[string]string{
 			"per_page":    str(req.Args["per_page"], "20"),
 			"sort":        str(req.Args["sort"], "pushed"),
@@ -148,7 +148,7 @@ func dispatch(req request) (any, map[string]any, error) {
 			"pushed_at", "html_url", "open_issues_count",
 		}, 50)
 
-	case "github_search_repos":
+	case "ghwasm_search_repos":
 		qv := str(req.Args["q"], "")
 		if qv == "" {
 			return nil, nil, errors.New("参数 q 必填")
@@ -177,7 +177,7 @@ func dispatch(req request) (any, map[string]any, error) {
 		}
 		return out, meta, nil
 
-	case "github_list_issues":
+	case "ghwasm_list_issues":
 		owner, repo := str(req.Args["owner"], ""), str(req.Args["repo"], "")
 		if owner == "" || repo == "" {
 			return nil, nil, errors.New("参数 owner 和 repo 必填")
@@ -194,7 +194,7 @@ func dispatch(req request) (any, map[string]any, error) {
 			"comments", "created_at", "updated_at", "html_url",
 		}, 50)
 
-	case "github_get_issue":
+	case "ghwasm_get_issue":
 		owner, repo := str(req.Args["owner"], ""), str(req.Args["repo"], "")
 		num := str(req.Args["issue_number"], "")
 		if owner == "" || repo == "" || num == "" {
@@ -205,7 +205,7 @@ func dispatch(req request) (any, map[string]any, error) {
 			"comments", "created_at", "updated_at", "html_url",
 		}, 0)
 
-	case "github_create_issue":
+	case "ghwasm_create_issue":
 		owner, repo := str(req.Args["owner"], ""), str(req.Args["repo"], "")
 		title := str(req.Args["title"], "")
 		if owner == "" || repo == "" || title == "" {

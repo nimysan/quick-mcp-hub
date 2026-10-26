@@ -8,6 +8,7 @@ package wasmplug
 import (
 	"fmt"
 	"net/url"
+	"regexp"
 	"strings"
 )
 
@@ -20,12 +21,13 @@ const ABIVersion = 1
 
 // Manifest 描述一个插件渠道。
 type Manifest struct {
-	ABI     int    `json:"abi"`
-	ID      string `json:"id"`
-	Name    string `json:"name"`
-	Version int    `json:"version"`
-	Icon    string `json:"icon,omitempty"`
-	Summary string `json:"summary,omitempty"`
+	ABI     int      `json:"abi"`
+	ID      string   `json:"id"`
+	Name    string   `json:"name"`
+	Version int      `json:"version"`
+	Icon    string   `json:"icon,omitempty"`
+	Summary string   `json:"summary,omitempty"`
+	Tags    []string `json:"tags,omitempty"`
 
 	// Module 是模块文件名，与 manifest 放在同一目录。
 	Module string `json:"module"`
@@ -42,7 +44,56 @@ type Manifest struct {
 	// 这样一个第三方模块只能「以这个身份干活」，不能把 token 带走。
 	Auth Auth `json:"auth"`
 
+	// Account / Secret 是页面上那两个输入框的文案。和声明式渠道同义：
+	// Account 是凭据的定位键，Secret 是唯一进密码管理器的字段。
+	Account Credential `json:"account"`
+	Secret  Credential `json:"secret"`
+	// Fields 是额外的非敏感配置项（站点地址、租户 id 之类）。
+	Fields []Field `json:"fields,omitempty"`
+
 	Tools []Tool `json:"tools"`
+}
+
+// Credential 是账号/密码输入框的文案。
+type Credential struct {
+	Name        string `json:"name"`
+	Label       string `json:"label"`
+	Placeholder string `json:"placeholder,omitempty"`
+	Help        string `json:"help,omitempty"`
+}
+
+// Field 是一个额外配置项。它绝不会是密码类 —— 插件渠道只有一个凭据槽，
+// 多出来的密码类字段会悄悄落进配置文件。
+type Field struct {
+	Name        string `json:"name"`
+	Label       string `json:"label"`
+	Required    bool   `json:"required,omitempty"`
+	Default     string `json:"default,omitempty"`
+	Placeholder string `json:"placeholder,omitempty"`
+	Help        string `json:"help,omitempty"`
+	Advanced    bool   `json:"advanced,omitempty"`
+}
+
+// Param 是一个工具参数。宿主据它生成 JSON Schema 并校验必填项 ——
+// 校验放在宿主而不是插件里，是因为「参数对不对」这件事不该由被审的那一方说。
+type Param struct {
+	Name        string `json:"name"`
+	Description string `json:"description,omitempty"`
+	// Type: string（默认）/ number / boolean / object / array
+	Type     string   `json:"type,omitempty"`
+	Required bool     `json:"required,omitempty"`
+	Enum     []string `json:"enum,omitempty"`
+}
+
+// AllowWriteField 是写开关的字段名，和声明式渠道共用同一个名字。
+const AllowWriteField = "allowWrite"
+
+// ReservedAccountParam 是多实例时由工具层自动加上的参数名。
+const ReservedAccountParam = "channel_account"
+
+// paramTypes 是允许的参数类型。
+var paramTypes = map[string]bool{
+	"": true, "string": true, "number": true, "boolean": true, "object": true, "array": true,
 }
 
 // Auth 是宿主注入凭据的方式。
@@ -53,13 +104,34 @@ type Auth struct {
 	Name string `json:"name,omitempty"`
 }
 
-// Tool 是插件暴露的一个工具。宿主只需要知道「叫什么、是不是只读」，
-// 具体怎么实现在模块里。
+// Tool 是插件暴露的一个工具。宿主只需要知道「叫什么、是不是只读、参数长
+// 什么样」；具体怎么实现在模块里。
 type Tool struct {
-	Name        string `json:"name"`
-	Title       string `json:"title,omitempty"`
-	Description string `json:"description"`
-	ReadOnly    bool   `json:"readOnly,omitempty"`
+	Name        string  `json:"name"`
+	Title       string  `json:"title,omitempty"`
+	Description string  `json:"description"`
+	ReadOnly    bool    `json:"readOnly,omitempty"`
+	Params      []Param `json:"params,omitempty"`
+}
+
+// HasWriteTools 报告这个插件是否含会改动外部系统的工具。
+func (m Manifest) HasWriteTools() bool {
+	for _, t := range m.Tools {
+		if !t.ReadOnly {
+			return true
+		}
+	}
+	return false
+}
+
+// Field 按名字取额外配置项。
+func (m Manifest) Field(name string) (Field, bool) {
+	for _, f := range m.Fields {
+		if f.Name == name {
+			return f, true
+		}
+	}
+	return Field{}, false
 }
 
 // Validate 检查 manifest 本身。
@@ -144,9 +216,64 @@ func (m Manifest) Validate() error {
 		if strings.TrimSpace(t.Description) == "" {
 			return fmt.Errorf("工具 %s 缺少 description（那是给模型看的）", t.Name)
 		}
+		pseen := map[string]bool{}
+		for _, p := range t.Params {
+			if !fieldNameRe.MatchString(p.Name) {
+				return fmt.Errorf("工具 %s 的参数名 %q 不合法", t.Name, p.Name)
+			}
+			if p.Name == ReservedAccountParam {
+				// 多账号分派参数由工具层自动加上，业务参数占用它会让分派
+				// 被业务值顶掉。
+				return fmt.Errorf("工具 %s 不能用保留参数名 %s", t.Name, ReservedAccountParam)
+			}
+			if pseen[p.Name] {
+				return fmt.Errorf("工具 %s 的参数 %s 重复", t.Name, p.Name)
+			}
+			pseen[p.Name] = true
+			if !paramTypes[p.Type] {
+				return fmt.Errorf("工具 %s 的参数 %s 类型 %q 不支持", t.Name, p.Name, p.Type)
+			}
+		}
+	}
+	if err := m.checkFields(); err != nil {
+		return err
 	}
 	return nil
 }
+
+// checkFields 校验账号、凭据和额外字段的字段名不互相冲突。
+func (m Manifest) checkFields() error {
+	if !fieldNameRe.MatchString(m.Account.Name) || !fieldNameRe.MatchString(m.Secret.Name) {
+		return fmt.Errorf("插件 %s 的 account.name 和 secret.name 必须是合法字段名", m.ID)
+	}
+	if m.Account.Name == m.Secret.Name {
+		return fmt.Errorf("插件 %s 的 account 和 secret 不能是同一个字段", m.ID)
+	}
+	if strings.TrimSpace(m.Account.Label) == "" || strings.TrimSpace(m.Secret.Label) == "" {
+		return fmt.Errorf("插件 %s 的 account 和 secret 都要有 label（页面上要显示）", m.ID)
+	}
+	seen := map[string]bool{m.Account.Name: true, m.Secret.Name: true, AllowWriteField: true}
+	for _, f := range m.Fields {
+		if !fieldNameRe.MatchString(f.Name) {
+			return fmt.Errorf("插件 %s 的字段名 %q 不合法", m.ID, f.Name)
+		}
+		if seen[f.Name] {
+			return fmt.Errorf("插件 %s 的字段名 %q 与保留字段冲突", m.ID, f.Name)
+		}
+		seen[f.Name] = true
+		if strings.TrimSpace(f.Label) == "" {
+			return fmt.Errorf("插件 %s 的字段 %s 缺少 label", m.ID, f.Name)
+		}
+	}
+	if m.BaseURLField != "" {
+		if _, ok := m.Field(m.BaseURLField); !ok {
+			return fmt.Errorf("插件 %s 的 baseUrlField %q 在 fields 里不存在", m.ID, m.BaseURLField)
+		}
+	}
+	return nil
+}
+
+var fieldNameRe = regexp.MustCompile(`^[a-zA-Z][a-zA-Z0-9_]{0,31}$`)
 
 // WriteTools 返回会改动对方数据的工具名，供风险披露和写开关用。
 func (m Manifest) WriteTools() []string {
