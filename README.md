@@ -438,6 +438,75 @@ mcp-hub -catalog-sync https://.../cat.json  抓取并验签远端目录，写入
 | `fields.assignee 是 null` | 字段在、值是空 | **不用改**，这是数据状态（没负责人） |
 | `values（整个子树都没取到）` | `result.path` 指错了 | 要改 |
 
+## wasm 插件渠道（原型，尚未接进运行时）
+
+声明式渠道能覆盖「HTTP 请求 + 裁剪响应」，但有些系统真的需要执行代码（多步握手、
+算签名、带状态机）。那类 connector 走 wasm 插件：**代码由第三方编译成 `.wasm`，
+作为数据下发，在客户机的 exe 里沙箱执行** —— 客户不装 Python、不装 Node、也不用
+升级程序。
+
+这一层目前是**原型**：`internal/wasmplug` 能加载并执行插件，但还没有接进 MCP
+工具注册和配置页面。接进去之前 ABI 不算定稿。
+
+### 沙箱是「只有这些」，不是「拦住了什么」
+
+wasm 的指令集里没有系统调用，所以模块想碰外界只能调宿主导出的函数。一共三个：
+
+| 宿主给的 | 说明 |
+|---|---|
+| `fetch(ptr,len) -> len` | 受限 HTTP。只允许 https、只允许 manifest 声明的主机、只允许常规方法 |
+| `read(ptr)` | 取回上一次 fetch 的响应（分两步是为了不从宿主回调插件，重入会把 Go 运行时搅乱） |
+| `log(ptr,len)` | 诊断输出，宿主决定要不要显示 |
+
+没有文件、没有 socket、没有钥匙串、没有起进程。和原生 `.dll` 插件的区别是结构性的：
+dll 一旦加载进进程就和宿主同权限，拦不住。
+
+**凭据不交给插件。** manifest 里声明 `auth.kind`，宿主在 `fetch` 时注入请求头；
+插件自己设的 `Authorization` 会被丢掉。所以第三方模块只能「以这个身份干活」，
+拿不到也带不走 token。
+
+**权威是 manifest，不是模块。** 工具清单、允许访问的主机都来自签名过的 manifest，
+所以风险披露（要访问哪台主机、有几个写工具）在任何第三方代码跑起来之前就能摆给
+用户，模块也无法给自己扩权。写开关同样在插件跑之前判定。
+
+### 这个原型验了什么
+
+拿已有的 GitHub connector 做对照：同一组工具，一份走声明式执行器，一份走第三方
+风格手写的 wasm 插件（`plugins/github/main.go`，不 import hub 的任何包），对同一台
+仿真服务比对结果。
+
+| 验的事 | 结果 |
+|---|---|
+| 6 个工具的结果、meta、请求路径、query、请求体 | 逐字节一致 |
+| 对比测试本身会不会失败 | 变异验证过：插件少回一个字段 -> 测试失败 |
+| 真实 api.github.com | 通（令牌从钥匙串惰性取用，宿主注入） |
+| 插件打未声明的主机 | 沙箱拒绝并记录 |
+| 明文 http / `file://` / 非常规方法 | 拒绝 |
+| 插件自己塞 `Authorization` | 被丢掉，宿主注入的是最终值 |
+| 写开关关着时调写工具 | 插件没有执行，服务端没收到任何请求 |
+
+```bash
+plugins/build.sh                      # 构建全部插件模块到 plugins/dist/（不入库）
+go test ./internal/wasmplug/          # 仿真对比 + 沙箱边界
+MCPHUB_PLUGIN_REAL=1 GITHUB_ACCOUNT=<你的用户名> \
+  go test ./internal/wasmplug/ -run Real -v   # 真实环境
+```
+
+### 要知道的代价
+
+- **ABI 一旦发布就改不动**：已发布的模块是照这套函数签名编译的。所以 manifest 必须
+  声明 `abi` 版本，宿主对不认识的版本干净地拒绝（`ABIVersion` 常量 + 加载期握手，
+  模块报的版本和 manifest 不一致也拒绝加载）。
+- **体积**：Go 编译出来 3.2MB（运行时固定开销）。Rust / TinyGo 会小一个数量级。
+- **一个实例不能并发调用**（里面是一份 Go 运行时），所以 `Plugin.Call` 是串行的。
+  要并发得起实例池，原型没做。
+- **超时会连带关掉模块实例**（`WithCloseOnContextDone`）：一个跑飞的第三方模块该被
+  拆掉，但现在拆掉之后不会自动重建。
+- **wasm 做不到的事仍然做不到**：WASI 没有原始 TCP、不能监听端口，所以 IMAP 那类
+  协议、以及 OAuth 回调，都得由宿主以高层能力的形式提供，不是模块自己能解决的。
+- **沙箱挡不住数据外流到已声明的主机**：那是它正常工作所必需的能力。所以「这个
+  connector 会执行代码、要访问哪台主机」必须在用户点「添加」之前就摆出来。
+
 ## 渠道命名规矩
 
 渠道 `id` 和工具名要对得上**具体那套接口**，不是厂商、也不是产品大类：
@@ -478,3 +547,4 @@ mcp-hub -catalog-sync https://.../cat.json  抓取并验签远端目录，写入
 | IMAP | `github.com/emersion/go-imap/v2` |
 | MIME / 字符集 | `github.com/emersion/go-message`（导入 `charset` 即注册 GB2312/GBK/GB18030 等） |
 | SMTP | `github.com/wneessen/go-mail` |
+| wasm 运行时（插件沙箱） | `github.com/tetratelabs/wazero`（纯 Go、零依赖、不用 CGO，交叉编译照常） |
