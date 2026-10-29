@@ -252,7 +252,11 @@ MCP 规范较新的修订允许 `structuredContent` 是任意 JSON 值，但现�
 **校验在加载时就做**（`Spec.Validate`，远端下发的内容走同一个入口），几条底线：
 
 - `baseUrl` 只能是 https，且不允许含占位符——主机名不能由目录模板拼出。
-  自建系统用 `baseUrlField` 让**用户自己**填站点地址，运行时再校一次 https。
+  自建系统用 `baseUrlField` 让**用户自己**填站点地址，运行时再校一次。
+  唯一的例外是 `local: true`（渠道连的是本机另一个程序，见下面的 napcat）：
+  那里允许明文 http，但主机被**收紧**成「必须是字面的回环地址」——域名不行，
+  连 `localhost` 也不行。两条一起换，不是单方面放宽，所以没有「明文发到
+  任意主机」这条路径。
 - 路径只能用 `{name}` 占位，每个占位都要有对应的 `in: path` 参数；
   参数值里的 `/` 会被转义，模型给 `../../x` 也逃不出声明的路径。
 - 工具名必须以渠道 id 为前缀，避免两个渠道的工具互相覆盖。
@@ -381,6 +385,53 @@ Basic(邮箱:Token)。Jira Server / Data Center 自建版接口不完全相同�
   是富文本：v3 的 `description` 和评论 `body` 是 ADF（深层嵌套的 JSON 文档），
   v2 是纯文本字符串。模型读不了 ADF，也没法可靠地构造 ADF，所以这两个工具
   刻意用 v2。搜索用 v3 是因为它只返回标量字段，不碰富文本。
+
+### QQ 渠道（`napcat`）
+
+这是**第一个 `local: true` 渠道**：它连的不是某个网站，而是用户自己机器上
+[NapCat](https://github.com/NapNeko/NapCatQQ) 在回环地址上开的 OneBot 11 接口。
+地址默认 `http://127.0.0.1:3000`，令牌是 NapCat 网络配置里那个 token。
+
+七个工具：
+
+| 读 | 写（要开写开关） |
+|---|---|
+| `napcat_whoami` 当前 QQ 身份 | `napcat_send_group_msg` 发群消息 |
+| `napcat_list_groups` 我的群 | `napcat_send_private_msg` 发私聊 |
+| `napcat_list_friends` 我的好友 | |
+| `napcat_group_history` 群聊记录 | |
+| `napcat_friend_history` 私聊记录 | |
+
+四个决定值得记下来：
+
+- **读操作走 GET。** OneBot 11 的 `/:action` 同时接受 GET 和 POST
+  （NapCat 的 http-server 里 `req.method === 'GET'` 时取 `req.query`），
+  所以这份声明**不需要** `postReads` 那个「方法本身不能作证」的逃生口。
+  参数在 query 里全是字符串，NapCat 那侧靠 typebox 的 `Value.Parse`
+  转回 number / boolean。
+- **必须声明 `failWhen`。** 这套接口无论成败都回 HTTP 200，失败藏在
+  `status: "failed"` 里，连「不支持的 API」也是 200。不认出来的话，一次
+  「群号不存在」会变成一个空结果，模型会据它编出「那个群最近没人说话」。
+- **发消息钉死 `auto_escape: true`。** 不钉的话 NapCat 会把正文送进
+  `decodeCQCode`，正文里的 `[CQ:...]` 就成了结构化元素——`[CQ:at,qq=all]`
+  是 @全体，`[CQ:image,file=...]` 更危险。这个开关写在 `bodyConst` 里而
+  **不作为参数暴露**，模型没有关掉它的途径，所以这两个工具只能发纯文本。
+- **地址在每次调用前重校。** `channels.json` 是可手改的，而这个渠道走明文，
+  所以把 endpoint 改成一台外网主机必须在**发请求之前**失败，不能只在保存时
+  校一次。
+
+两件要在页面上告诉用户、代码解决不了的事：
+
+- NapCat 的 token **默认是空的**，而空 token 等于不鉴权——本机任何程序、
+  任何打开的网页都能用你的 QQ 发消息。另外 OneBot 的默认 host 是 `0.0.0.0`，
+  同局域网的人也连得上。这两条写在了令牌字段的帮助文字里。
+- NapCat 用的是**非官方协议**（基于 NTQQ 客户端），账号风险落在登录的那个
+  QQ 号上，社区有被风控后稳定掉线的案例。这条写在表单顶部的披露框里。
+  所以这个渠道适合自己用，不适合放进发给业务人员的包。
+
+**未经真实 NapCat 验证**：协议细节（GET 路由、Bearer 鉴权、响应包装、各
+action 的参数和返回字段）都是从 NapCat 源码核的，执行器是对着一个仿真的
+OneBot 11 网关测通的。真机要你自己装好 NapCat 并登录 QQ。
 
 ## 渠道目录的三层来源
 

@@ -95,9 +95,10 @@ func (r Runtime) BaseURL() (string, error) {
 		if raw == "" {
 			return "", fmt.Errorf("缺少站点地址（字段 %s）", r.Spec.BaseURLField)
 		}
-		// 用户填的地址同样必须是 https，并且在这里再校一遍：
-		// 配置文件是可手改的，不能信任落盘时校过。
-		if err := checkBaseURL(raw); err != nil {
+		// 用户填的地址同样要过校验，并且在这里再校一遍：配置文件是可手改的，
+		// 不能信任落盘时校过。local 渠道在这里也只认字面回环地址 —— 把
+		// endpoint 手改成一台外网主机，就等于在明文里把令牌发出去。
+		if err := checkBaseURL(raw, r.Spec.Local); err != nil {
 			return "", fmt.Errorf("站点地址 %w", err)
 		}
 	}

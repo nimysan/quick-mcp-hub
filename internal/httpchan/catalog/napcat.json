@@ -1,0 +1,244 @@
+{
+  "id": "napcat",
+  "name": "QQ（本机 NapCat）",
+  "version": 1,
+  "icon": "🐧",
+  "summary": "读写你自己的 QQ 消息 · 需要先在本机装好 NapCat",
+  "tags": [
+    "im"
+  ],
+  "integration": "napcat",
+  "helpUrl": "https://github.com/NapNeko/NapCatQQ",
+  "local": true,
+  "baseUrlField": "endpoint",
+  "account": {
+    "name": "self_id",
+    "label": "QQ 号",
+    "placeholder": "10000",
+    "help": "NapCat 里登录的那个 QQ 号。只用来标识这份令牌存在哪个条目下；实际以谁的身份收发由 NapCat 登录的账号决定"
+  },
+  "secret": {
+    "name": "token",
+    "label": "NapCat 访问令牌 (token)",
+    "help": "NapCat 的 网络配置 → HTTP 服务器 里那个 token。它默认是空的，而空 token 等于不鉴权——本机任何程序、任何打开的网页都能用你的 QQ 发消息，所以请先去设一个。顺手确认 host 是 127.0.0.1：OneBot 的默认值 0.0.0.0 会让同一局域网的人也连得上"
+  },
+  "auth": {
+    "kind": "bearer"
+  },
+  "fields": [
+    {
+      "name": "endpoint",
+      "label": "NapCat 地址",
+      "required": true,
+      "default": "http://127.0.0.1:3000",
+      "placeholder": "http://127.0.0.1:3000",
+      "help": "NapCat 的 HTTP 服务器地址，端口填你在它的网络配置里设的那个（自带示例配置是 3000）。只接受 127.0.0.1 或 ::1——这个渠道走明文 http，成立的前提就是流量不出本机"
+    }
+  ],
+  "failWhen": {
+    "path": "status",
+    "equals": "failed",
+    "messagePath": "message"
+  },
+  "test": {
+    "method": "GET",
+    "path": "/get_login_info",
+    "result": {
+      "path": "data",
+      "fields": [
+        "user_id",
+        "nickname"
+      ]
+    }
+  },
+  "tools": [
+    {
+      "name": "napcat_whoami",
+      "title": "当前 QQ 身份",
+      "description": "确认现在以哪个 QQ 账号收发消息：返回 QQ 号和昵称。用户问「我是谁」、或者不确定 NapCat 是否还在线时用它——它是最轻的一次探活。",
+      "readOnly": true,
+      "method": "GET",
+      "path": "/get_login_info",
+      "result": {
+        "path": "data",
+        "fields": [
+          "user_id",
+          "nickname"
+        ]
+      }
+    },
+    {
+      "name": "napcat_list_groups",
+      "title": "我的群",
+      "description": "列出当前账号加入的群，返回群号、群名和人数。用户用群名提到一个群时（「技术交流群里聊了什么」），先用它把群名换成 group_id，再调 napcat_group_history。",
+      "readOnly": true,
+      "method": "GET",
+      "path": "/get_group_list",
+      "result": {
+        "path": "data",
+        "limit": 100,
+        "fields": [
+          "group_id",
+          "group_name",
+          "member_count"
+        ]
+      }
+    },
+    {
+      "name": "napcat_list_friends",
+      "title": "我的好友",
+      "description": "列出当前账号的好友，返回 QQ 号、昵称和备注。用户用名字提到某个人时，先用它把名字换成 user_id，再调 napcat_friend_history 或发消息。注意备注（remark）常常才是用户记得的那个名字。",
+      "readOnly": true,
+      "method": "GET",
+      "path": "/get_friend_list",
+      "result": {
+        "path": "data",
+        "limit": 200,
+        "fields": [
+          "user_id",
+          "nickname",
+          "remark"
+        ]
+      }
+    },
+    {
+      "name": "napcat_group_history",
+      "title": "群聊记录",
+      "description": "读一个群最近的聊天记录，按时间正序返回发言人、时间和内容。group_id 从 napcat_list_groups 来。要往更早翻，把本次结果里最早那条的 message_id 作为下一次的 message_seq。",
+      "readOnly": true,
+      "method": "GET",
+      "path": "/get_group_msg_history",
+      "params": [
+        {
+          "name": "group_id",
+          "in": "query",
+          "required": true,
+          "description": "群号，从 napcat_list_groups 拿"
+        },
+        {
+          "name": "count",
+          "in": "query",
+          "type": "number",
+          "default": "20",
+          "description": "取几条，默认 20"
+        },
+        {
+          "name": "message_seq",
+          "in": "query",
+          "description": "从哪条往前取；留空取最新的。翻页时填上一次结果里最早那条的 message_id"
+        }
+      ],
+      "result": {
+        "path": "data.messages",
+        "limit": 50,
+        "fields": [
+          "message_id",
+          "time",
+          "sender.user_id",
+          "sender.nickname",
+          "sender.card",
+          "raw_message"
+        ]
+      }
+    },
+    {
+      "name": "napcat_friend_history",
+      "title": "私聊记录",
+      "description": "读和某个人的私聊记录，按时间正序返回发言人、时间和内容。user_id 从 napcat_list_friends 来。要往更早翻，把本次结果里最早那条的 message_id 作为下一次的 message_seq。",
+      "readOnly": true,
+      "method": "GET",
+      "path": "/get_friend_msg_history",
+      "params": [
+        {
+          "name": "user_id",
+          "in": "query",
+          "required": true,
+          "description": "对方 QQ 号，从 napcat_list_friends 拿"
+        },
+        {
+          "name": "count",
+          "in": "query",
+          "type": "number",
+          "default": "20",
+          "description": "取几条，默认 20"
+        },
+        {
+          "name": "message_seq",
+          "in": "query",
+          "description": "从哪条往前取；留空取最新的。翻页时填上一次结果里最早那条的 message_id"
+        }
+      ],
+      "result": {
+        "path": "data.messages",
+        "limit": 50,
+        "fields": [
+          "message_id",
+          "time",
+          "sender.user_id",
+          "sender.nickname",
+          "raw_message"
+        ]
+      }
+    },
+    {
+      "name": "napcat_send_group_msg",
+      "title": "发群消息",
+      "description": "以用户本人的身份在群里发一条纯文本消息。这是在真人面前以用户的名义说话，发出去撤不回（QQ 的撤回有时限且留痕），所以发送前必须把群和原文给用户确认。只支持纯文本：@某人、图片、表情这类都发不出去，不要尝试用方括号语法去拼。",
+      "method": "POST",
+      "path": "/send_group_msg",
+      "bodyConst": {
+        "auto_escape": true
+      },
+      "params": [
+        {
+          "name": "group_id",
+          "in": "body",
+          "required": true,
+          "description": "群号，从 napcat_list_groups 拿"
+        },
+        {
+          "name": "message",
+          "in": "body",
+          "required": true,
+          "description": "消息正文，纯文本"
+        }
+      ],
+      "result": {
+        "path": "data",
+        "fields": [
+          "message_id"
+        ]
+      }
+    },
+    {
+      "name": "napcat_send_private_msg",
+      "title": "发私聊消息",
+      "description": "以用户本人的身份给某个人发一条纯文本私聊消息。这是在真人面前以用户的名义说话，发出去撤不回，所以发送前必须把收件人和原文给用户确认——尤其要确认 user_id 对应的是哪个人，发错人比发错内容更难收场。只支持纯文本。",
+      "method": "POST",
+      "path": "/send_private_msg",
+      "bodyConst": {
+        "auto_escape": true
+      },
+      "params": [
+        {
+          "name": "user_id",
+          "in": "body",
+          "required": true,
+          "description": "对方 QQ 号，从 napcat_list_friends 拿"
+        },
+        {
+          "name": "message",
+          "in": "body",
+          "required": true,
+          "description": "消息正文，纯文本"
+        }
+      ],
+      "result": {
+        "path": "data",
+        "fields": [
+          "message_id"
+        ]
+      }
+    }
+  ]
+}

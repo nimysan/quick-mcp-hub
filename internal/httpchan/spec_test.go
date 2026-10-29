@@ -216,3 +216,57 @@ func TestBuiltinCatalogMetadata(t *testing.T) {
 		}
 	}
 }
+
+// local 渠道换掉一条约束，不是关掉它：明文放行，但主机被钉在字面回环地址上。
+// 这两条必须成对成立 —— 只要能分开，就有了「明文发到任意主机」的路径。
+func TestLocalSwapsHTTPSForLoopback(t *testing.T) {
+	cases := []struct {
+		name  string
+		local bool
+		url   string
+		ok    bool
+	}{
+		{"普通渠道只能 https", false, "https://api.example.com", true},
+		{"普通渠道不能明文", false, "http://api.example.com", false},
+		{"local 渠道可以明文回环", true, "http://127.0.0.1:3000", true},
+		{"local 渠道回环的其他地址也算", true, "http://127.0.0.2:5700", true},
+		{"local 渠道可以 IPv6 回环", true, "http://[::1]:3000", true},
+		{"local 渠道也可以 https 回环", true, "https://127.0.0.1:3000", true},
+		// 这三条是这个例外成立的全部依据：它成立只因为字节不离开本机。
+		{"local 渠道不能是外网主机", true, "http://napcat.example.com:3000", false},
+		{"local 渠道不能是内网主机", true, "http://10.0.0.5:3000", false},
+		{"local 渠道连 localhost 也不行", true, "http://localhost:3000", false},
+		// 一个把回环地址做成前缀的域名：靠字符串判断的实现会在这里放行。
+		{"看着像回环的域名不算", true, "http://127.0.0.1.example.com:3000", false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			s := base()
+			s.Local, s.BaseURL = c.local, c.url
+			err := s.Validate()
+			if c.ok && err != nil {
+				t.Fatalf("%s 应当合法: %v", c.url, err)
+			}
+			if !c.ok && err == nil {
+				t.Fatalf("%s 应当被拒", c.url)
+			}
+		})
+	}
+}
+
+// local 不放宽 OAuth 那三个地址：授权服务在本机上没有意义，而「把用户送去
+// 输密码的那一页」更不能是明文。
+func TestLocalDoesNotRelaxOAuthURLs(t *testing.T) {
+	s := base()
+	s.Local = true
+	s.BaseURL = "http://127.0.0.1:3000"
+	s.OAuth = &OAuthSpec{
+		Flow:          "device",
+		ClientID:      "cid",
+		DeviceCodeURL: "http://127.0.0.1:3000/device",
+		TokenURL:      "https://example.com/token",
+	}
+	if err := s.Validate(); err == nil {
+		t.Fatal("明文的 deviceCodeUrl 应当被拒，即使渠道是 local")
+	}
+}

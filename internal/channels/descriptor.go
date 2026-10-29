@@ -105,7 +105,11 @@ type Descriptor struct {
 	// 自己声明的那台主机。
 	ThirdPartyCode bool     `json:"thirdPartyCode,omitempty"`
 	AllowedHosts   []string `json:"allowedHosts,omitempty"`
-	Fields         []Field  `json:"fields"`
+	// LocalProgram 表示这个渠道连的不是某个网站，而是用户自己机器上另一个
+	// 程序开的本地接口（见 httpchan.Spec.Local）。这件事同样必须在点「添加」
+	// 之前看得见：它意味着「还要先去装一个别的东西」，而不是填完就能用。
+	LocalProgram bool    `json:"localProgram,omitempty"`
+	Fields       []Field `json:"fields"`
 }
 
 // OAuthInfo 是页面渲染「连接」按钮要知道的事。
@@ -310,6 +314,7 @@ func httpDescriptor(s httpchan.Spec) Descriptor {
 		SecretField:  s.Secret.Name,
 		Available:    true,
 		NeedsReview:  s.PostReads,
+		LocalProgram: s.Local,
 		Tools:        tools,
 		WriteTools:   writeTools,
 		WriteSwitch:  writeSwitch,

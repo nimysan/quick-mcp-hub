@@ -9,6 +9,9 @@
 //   - baseUrl 只能是 https，且要么写死在 spec 里，要么来自用户自己填的字段
 //     （比如自建 Jira 的站点地址）——绝不允许用 spec 里的模板拼出主机名，
 //     否则一份被篡改的目录就能把用户凭据送去任意地址。
+//   - 唯一的例外是 local 渠道（连本机上另一个程序，见 Spec.Local）：那里
+//     允许明文 http，但主机被收紧成「必须是字面的回环地址」。两条一起换，
+//     不是单方面放宽。
 //   - 路径只能用 {name} 占位，且每个占位都必须有对应的已声明参数。
 //   - 工具名必须以渠道类型为前缀，避免多个渠道的工具互相覆盖。
 //   - 非只读工具（会改外部系统的）要渠道上显式打开写开关才注册给模型。
@@ -16,6 +19,7 @@ package httpchan
 
 import (
 	"fmt"
+	"net"
 	"net/url"
 	"regexp"
 	"strings"
@@ -199,6 +203,21 @@ type Spec struct {
 	// 两者必须且只能有一个。
 	BaseURLField string `json:"baseUrlField,omitempty"`
 
+	// Local 声明这个渠道连的不是某个网站，而是**用户自己机器上另一个程序**
+	// 在回环地址上开的接口（NapCat 那类本地网关）。
+	//
+	// 它换掉一条约束，不是关掉它：允许明文 http（回环流量不出网卡，没有
+	// 可供窃听的网络路径），但主机必须是字面的回环地址 —— 域名不行，连
+	// localhost 也不行，因为域名要靠 DNS 解析，解析到哪里不由这里决定，
+	// 而这个例外成立的全部理由正是「这些字节不离开本机」。
+	//
+	// 代价要说清：同机的其他进程仍可能看到这条明文流量，所以本地网关的
+	// 令牌只该是那个网关自己的令牌，不该复用别处的凭据。
+	//
+	// 页面据它做披露：这类渠道要用户另外装一个程序，必须在点「添加」之前
+	// 就看得见，而不是保存失败了才发现。
+	Local bool `json:"local,omitempty"`
+
 	Account Credential        `json:"account"`
 	Secret  Credential        `json:"secret"`
 	Auth    Auth              `json:"auth"`
@@ -341,7 +360,7 @@ func (s Spec) Validate() error {
 	case s.BaseURL != "" && s.BaseURLField != "":
 		return fmt.Errorf("%s: baseUrl 和 baseUrlField 只能有一个", s.ID)
 	case s.BaseURL != "":
-		if err := checkBaseURL(s.BaseURL); err != nil {
+		if err := checkBaseURL(s.BaseURL, s.Local); err != nil {
 			return fmt.Errorf("%s: baseUrl %w", s.ID, err)
 		}
 	case s.BaseURLField != "":
@@ -614,14 +633,16 @@ func (s Spec) checkOAuth() error {
 			return fmt.Errorf("clientIdField %q 在 fields 里不存在", o.ClientIDField)
 		}
 	}
-	if err := checkBaseURL(o.DeviceCodeURL); err != nil {
+	// 这三个地址一律按远端的严格规则校（不吃 Local 的例外）：授权服务在
+	// 本机上没有意义，而「把用户送去输密码的那一页」更不能是明文。
+	if err := checkBaseURL(o.DeviceCodeURL, false); err != nil {
 		return fmt.Errorf("deviceCodeUrl %w", err)
 	}
-	if err := checkBaseURL(o.TokenURL); err != nil {
+	if err := checkBaseURL(o.TokenURL, false); err != nil {
 		return fmt.Errorf("tokenUrl %w", err)
 	}
 	if o.SetupURL != "" {
-		if err := checkBaseURL(o.SetupURL); err != nil {
+		if err := checkBaseURL(o.SetupURL, false); err != nil {
 			return fmt.Errorf("setupUrl %w", err)
 		}
 	}
@@ -633,7 +654,7 @@ func (s Spec) checkOAuth() error {
 	return nil
 }
 
-func checkBaseURL(raw string) error {
+func checkBaseURL(raw string, local bool) error {
 	// 先查占位符：主机名里带 { 会让 url.Parse 以「非法字符」失败，
 	// 那个报错看不出真正的原因是「不允许用模板拼主机名」。
 	if strings.ContainsAny(raw, "{}") {
@@ -643,12 +664,34 @@ func checkBaseURL(raw string) error {
 	if err != nil {
 		return fmt.Errorf("%q 解析失败: %w", raw, err)
 	}
-	// 只允许 https：凭据在请求头里，明文 http 等于把令牌交给网络。
-	if u.Scheme != "https" {
-		return fmt.Errorf("%q 必须是 https", raw)
-	}
 	if u.Host == "" {
 		return fmt.Errorf("%q 缺少主机名", raw)
+	}
+	// 回环地址必须是字面 IP 才算数。域名（包括 localhost）要靠 DNS 解析，
+	// 解析到哪里不由这里决定，而「允许明文」这个例外成立的全部理由就是
+	// 这些字节不离开本机 —— 一个待解析的名字证明不了这件事。
+	ip := net.ParseIP(u.Hostname())
+	loopback := ip != nil && ip.IsLoopback()
+
+	switch {
+	case local && !loopback:
+		return fmt.Errorf("%q 不是本机地址：local 渠道的主机必须写成字面的回环地址"+
+			"（127.0.0.1 或 ::1），不能用域名——包括 localhost", raw)
+	case local:
+		// 明文只在这一支里放行，而这一支已经被上面那条钉在回环地址上。
+		// 这两条合起来就是整个例外的全部：没有「http 到任意主机」的路径。
+		if u.Scheme != "http" && u.Scheme != "https" {
+			return fmt.Errorf("%q 必须是 http 或 https", raw)
+		}
+	default:
+		// 只允许 https：凭据在请求头里，明文 http 等于把令牌交给网络。
+		//
+		// 这里刻意不反向要求「指向回环就必须声明 local」：那只是页面披露上
+		// 的讲究，不是安全控制（https 到本机没有任何泄露），而它会连带禁掉
+		// 「把普通渠道指向一台本机测试服务」这种完全正当的用法。
+		if u.Scheme != "https" {
+			return fmt.Errorf("%q 必须是 https", raw)
+		}
 	}
 	return nil
 }

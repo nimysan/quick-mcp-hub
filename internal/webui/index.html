@@ -268,10 +268,12 @@ function renderMarket(){
         ${d.version?`<span class="ver">v${d.version}</span>`:''}
         ${d.needsReview?'<span class="rv" title="这个系统的读操作也是 POST，声明需人工复核">复核</span>':''}
         ${d.thirdPartyCode?'<span class="tp" title="这个渠道会在你的机器上执行第三方代码（wasm 沙箱）">🧩 第三方代码</span>':''}
+        ${d.localProgram?'<span class="tp" title="这个渠道连的是你自己机器上另一个程序，要先装好它">💻 需本机程序</span>':''}
         <code style="margin-left:auto">${esc(d.type)}</code>
       </div>
       <div class="sm">${esc(d.summary)}</div>
       ${d.thirdPartyCode?`<div class="tl" style="color:var(--warn)">沙箱只允许它访问：${esc((d.allowedHosts||[]).join(" "))}</div>`:''}
+      ${d.localProgram?`<div class="tl" style="color:var(--warn)">要先在这台机器上装好并运行那个程序，填完表单不会自己装</div>`:''}
       ${tools?`<div class="tl" title="${esc(tools)}">${esc(tools)}</div>`:''}
       ${wn?`<div class="tl" style="color:var(--warn)">其中 ${wn} 个写操作，默认不启用</div>`:''}
       <div class="act">
@@ -348,10 +350,19 @@ async function openForm(type, account){
         凭据由本程序注入请求头，插件代码看不到你的令牌。</div>
       ${(d.writeTools||[]).length?`<div class="help" style="color:var(--warn)">其中 ${(d.writeTools||[]).length} 个写操作，写开关关着时不会注册给模型</div>`:''}
     </div>` : "";
+  const localHTML = d.localProgram ? `
+    <div class="risk">
+      <div class="oauth-head">💻 这个渠道连的是你机器上另一个程序</div>
+      <div class="help">本程序只向下面那个回环地址发请求，流量不出网卡${
+        d.helpUrl?`。那个程序要你自己先装好并保持运行：<a href="${esc(d.helpUrl)}" target="_blank" rel="noreferrer">说明</a>`:"，要你自己先装好并保持运行"}。</div>
+      <div class="help" style="color:var(--warn)">两件事要先知道：回环上走的是明文，同机的其他程序可能看到这里的令牌，所以别拿别处在用的密码来填；
+        而这类网关用的是非官方协议，账号风险落在你自己的号上。</div>
+    </div>` : "";
   $("#modal").innerHTML = `
     <h3>${d.icon} ${esc(d.name)}</h3>
     <div class="hint">密码类字段只存进系统密码管理器，不写配置文件、不进日志</div>
     ${riskHTML}
+    ${localHTML}
     ${basic.map(fieldHTML).join("")}
     ${adv.length?`<div class="adv-toggle" id="advtoggle">▸ 高级设置（主机 / 端口）</div>
       <div class="adv" id="adv">${adv.map(fieldHTML).join("")}</div>`:""}
