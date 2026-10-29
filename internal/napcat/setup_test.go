@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -412,5 +413,77 @@ func TestDetectIgnoresUnknownExecutable(t *testing.T) {
 func TestAccountEndpointFallsBackToDefaultPort(t *testing.T) {
 	if got := (Account{}).Endpoint(); got != "http://127.0.0.1:3000" {
 		t.Errorf("Endpoint() = %q", got)
+	}
+}
+
+// 各系统的默认位置依据官方文档 https://napneko.github.io/guide/boot/Shell
+//
+// mac 版由 NapCat-Mac-Installer 装，配置被 QQ 的沙箱容器固定在一个七十来字符
+// 的路径上——让用户手打它是荒谬的，所以这条必须有。Windows 上用户解压到哪都
+// 行，猜不出来，刻意返回空。
+func TestDefaultDirs(t *testing.T) {
+	mac := DefaultDirs("darwin", "/Users/me")
+	if len(mac) != 1 || !strings.Contains(mac[0], "com.tencent.qq") {
+		t.Errorf("darwin = %v，想要 QQ 沙箱容器下的 napcat 目录", mac)
+	}
+	if !strings.HasSuffix(mac[0], filepath.Join("Documents", "napcat")) {
+		t.Errorf("darwin 路径结尾不对: %s", mac[0])
+	}
+	lin := DefaultDirs("linux", "/home/me")
+	if len(lin) < 1 || !strings.Contains(lin[0], "app_launcher") {
+		t.Errorf("linux = %v", lin)
+	}
+	if got := DefaultDirs("windows", `C:\Users\me`); len(got) != 0 {
+		t.Errorf("windows 应当返回空（解压到哪都行，猜不出来），得到 %v", got)
+	}
+}
+
+// 找不到时必须把试过的位置列出来：用户据此才能判断是没装、还是装在了别处，
+// 而不是只知道「失败了」。
+func TestDetectAutoErrorListsWhereItLooked(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	_, err := DetectAuto()
+	if err == nil {
+		t.Skip("这台机器上真的装了 NapCat，跳过")
+	}
+	msg := err.Error()
+	if runtime.GOOS == "windows" {
+		if !strings.Contains(msg, "粘进来") {
+			t.Errorf("Windows 上应当直接要路径，得到: %v", msg)
+		}
+		return
+	}
+	if !strings.Contains(msg, "这些常见位置") {
+		t.Errorf("报错里没有列出试过的位置: %v", msg)
+	}
+	for _, d := range DefaultDirs(runtime.GOOS, os.Getenv("HOME")) {
+		if !strings.Contains(msg, d) {
+			t.Errorf("报错里缺了试过的位置 %s", d)
+		}
+	}
+}
+
+// 默认位置里真的有一份时，用户一个字都不用填。
+func TestDetectAutoFindsInstallAtDefaultLocation(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	dirs := DefaultDirs(runtime.GOOS, home)
+	if len(dirs) == 0 {
+		t.Skip("这个系统没有固定位置")
+	}
+	cfgDir := filepath.Join(dirs[0], "config")
+	if err := os.MkdirAll(cfgDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	raw, _ := json.MarshalIndent(httpServerCfg(true, "127.0.0.1", 3000, "t"), "", "  ")
+	if err := os.WriteFile(filepath.Join(cfgDir, "onebot11_10020.json"), raw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	in, err := DetectAuto()
+	if err != nil {
+		t.Fatalf("DetectAuto: %v", err)
+	}
+	if len(in.Accounts) != 1 || in.Accounts[0].QQ != "10020" {
+		t.Errorf("accounts = %+v", in.Accounts)
 	}
 }

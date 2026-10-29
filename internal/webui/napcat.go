@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net/http"
 	"runtime"
+	"strings"
 	"time"
 
 	"github.com/nimysan/mcp-hub/internal/napcat"
@@ -31,7 +32,9 @@ func (s *Server) handleNapcatDetect(w http.ResponseWriter, r *http.Request) {
 	if !decodeJSON(w, r, &req) {
 		return
 	}
-	in, err := napcat.Detect(req.Dir)
+	// 目录留空时在这个系统的常见位置里找。mac 版的配置被 QQ 的沙箱容器
+	// 固定在一个七十来字符的路径上，让用户手打它是荒谬的。
+	in, err := detect(req.Dir)
 	if err != nil {
 		writeJSON(w, http.StatusOK, map[string]any{"ok": false, "error": err.Error()})
 		return
@@ -53,7 +56,7 @@ func (s *Server) handleNapcatConfigure(w http.ResponseWriter, r *http.Request) {
 	if !decodeJSON(w, r, &req) {
 		return
 	}
-	in, err := napcat.Detect(req.Dir)
+	in, err := detect(req.Dir)
 	if err != nil {
 		writeJSON(w, http.StatusOK, map[string]any{"ok": false, "error": err.Error()})
 		return
@@ -71,7 +74,7 @@ func (s *Server) handleNapcatStart(w http.ResponseWriter, r *http.Request) {
 	if !decodeJSON(w, r, &req) {
 		return
 	}
-	in, err := napcat.Detect(req.Dir)
+	in, err := detect(req.Dir)
 	if err != nil {
 		writeJSON(w, http.StatusOK, map[string]any{"ok": false, "error": err.Error()})
 		return
@@ -104,4 +107,15 @@ func joinArgs(args []string) string {
 		out += a
 	}
 	return out
+}
+
+// detect 是三个端点共用的入口：给了目录就用它，没给就在这个系统的常见位置里找。
+//
+// configure 和 start 也走这里，所以「自动找到的那个目录」接着就能用，用户不必
+// 先把路径抄回输入框。
+func detect(dir string) (*napcat.Install, error) {
+	if strings.TrimSpace(dir) == "" {
+		return napcat.DetectAuto()
+	}
+	return napcat.Detect(dir)
 }

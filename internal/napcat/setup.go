@@ -109,6 +109,56 @@ var configSubdirs = []string{
 	".",
 }
 
+// DefaultDirs 返回这个系统上 NapCat 配置的常见位置。
+//
+// 为什么只有部分系统有值：mac 版由 NapCat-Mac-Installer 装，配置被 QQ 的沙箱
+// 容器**固定**在一个七十来字符的路径上，让用户手打它是荒谬的；Linux 一键安装
+// 装到 ~/Napcat 下，也是固定的。而 Windows 上用户自己解压到哪都行——那正是
+// 要他粘路径的原因，猜不出来。
+//
+// 位置依据官方文档 https://napneko.github.io/guide/boot/Shell
+func DefaultDirs(goos, home string) []string {
+	switch goos {
+	case "darwin":
+		return []string{filepath.Join(home,
+			"Library", "Containers", "com.tencent.qq", "Data", "Documents", "napcat")}
+	case "linux":
+		return []string{
+			filepath.Join(home, "Napcat", "opt", "QQ", "resources", "app", "app_launcher", "napcat"),
+			filepath.Join(home, "Napcat"),
+		}
+	default:
+		return nil
+	}
+}
+
+// DetectAuto 在这个系统的常见位置里找 NapCat，用户一个字都不用填。
+//
+// 找不到时报错要**把试过的位置列出来**：用户据此才能判断是没装、还是装在了
+// 别处（那就该去粘路径），而不是只知道「失败了」。
+func DetectAuto() (*Install, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return nil, err
+	}
+	dirs := DefaultDirs(runtime.GOOS, home)
+	if len(dirs) == 0 {
+		return nil, fmt.Errorf("这个系统上 NapCat 装在哪没有固定位置（你自己解压到哪都行），" +
+			"请把它的文件夹地址粘进来")
+	}
+	var last error
+	for _, d := range dirs {
+		in, err := Detect(d)
+		if err == nil {
+			return in, nil
+		}
+		last = err
+	}
+	return nil, fmt.Errorf("在这些常见位置都没找到 NapCat：\n  %s\n"+
+		"装好了的话请把它的文件夹地址粘进来。最后一次尝试的结果：%w",
+		strings.Join(dirs, "\n  "), last)
+}
+
 // Detect 检查一个目录是不是 NapCat 的安装位置，并读出它现在的状态。
 //
 // 只读，不改任何东西。

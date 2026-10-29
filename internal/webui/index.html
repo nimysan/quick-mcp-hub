@@ -377,10 +377,15 @@ async function openForm(type, account){
   const setupHTML = (d.type==='napcat') ? `
     <div class="oauth-box">
       <div class="oauth-head">⚡ 自动配置</div>
-      <div class="help">把 NapCat 解压出来的那个文件夹地址粘进来，下面三个字段我来填。
-        前提是你已经启动过一次 NapCat 并用手机扫码登录过。</div>
+      <div class="help">下面三个字段我来填。前提是你已经装好 NapCat、启动过一次并用手机扫码登录过
+        —— 还没装的话，<a href="https://napneko.github.io/guide/boot/Shell" target="_blank" rel="noreferrer">按官方文档装一个</a>
+        （Windows、macOS、Linux、Docker 都在那一页；Windows 下载的是
+        <code>NapCat.Shell.Windows.Node.zip</code>）。</div>
       <div class="field" style="margin:8px 0 0">
-        <input type="text" id="ncdir" placeholder="C:\\Users\\Administrator\\Downloads\\NapCat.Shell.Windows.Node">
+        <label>NapCat 的文件夹（留空就让我自己找）</label>
+        <input type="text" id="ncdir" placeholder="留空直接点检测；找不到再把文件夹地址粘进来">
+        <div class="help">macOS 和 Linux 上这个位置是固定的，不用填。Windows 上你解压到哪都行，
+          所以要粘一下 —— 在资源管理器里 Shift + 右键 → 复制文件地址。</div>
       </div>
       <button id="ncbtn" style="margin-top:8px">检测</button>
       <div id="ncpanel"></div>
@@ -438,11 +443,14 @@ const ncPost = (path, body) => api(path, {method:"POST",
 async function ncDetect(){
   const dir = $("#ncdir").value.trim();
   const panel = $("#ncpanel");
-  if(!dir){ panel.innerHTML = `<div class="status bad">先把 NapCat 的文件夹地址粘进来</div>`; return; }
-  panel.innerHTML = `<div class="help">正在看这个文件夹…</div>`;
+  // 留空是正当用法：服务端会去这个系统的常见位置找（mac 上那个路径被 QQ 的
+  // 沙箱容器固定在七十来字符，让用户手打它是荒谬的）。
+  panel.innerHTML = `<div class="help">${dir?"正在看这个文件夹…":"正在常见位置里找 NapCat…"}</div>`;
   const r = await ncPost("/api/napcat/detect", {dir});
-  if(!r.ok){ panel.innerHTML = `<div class="status bad">${esc(r.error)}</div>`; return; }
-  NC = {dir, install:r.install, cmd:r.command, qq:(r.install.accounts[0]||{}).qq};
+  // 报错里有换行（「试过哪些位置」那几行），不保留换行会挤成一团
+  if(!r.ok){ panel.innerHTML = `<div class="status bad" style="white-space:pre-wrap">${esc(r.error)}</div>`; return; }
+  // 用服务端认定的那个目录，而不是输入框里的 —— 自动找到时输入框是空的
+  NC = {dir:r.install.root, install:r.install, cmd:r.command, qq:(r.install.accounts[0]||{}).qq};
   ncRender();
 }
 
@@ -460,7 +468,8 @@ function ncRender(extra){
     ? `<div class="field" style="margin:8px 0 0"><label>用哪个 QQ</label>
          <select id="ncqq">${accs.map(x=>`<option value="${esc(x.qq)}" ${x.qq===NC.qq?"selected":""}>${esc(x.qq)}</option>`).join("")}</select></div>` : "";
   const noLauncher = NC.install.launcher ? ""
-    : `<div class="help" style="color:var(--warn)">这个文件夹里没找到认识的启动器，所以配置完要你自己双击启动 NapCat</div>`;
+    : `<div class="help" style="color:var(--warn)">这个文件夹里没有认识的启动器，所以配置完要你自己启动 NapCat。
+         macOS 上本来就没有：用 NapCat-Mac-Installer 那个安装器里的「启动 NapCat」。</div>`;
 
   panel.innerHTML = `
     <div class="ncl" style="margin-top:8px">✅ 找到 NapCat · 配置目录 <code>${esc(NC.install.configDir)}</code></div>
