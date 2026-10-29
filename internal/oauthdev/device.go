@@ -81,12 +81,46 @@ func (t TokenSet) CanRefresh(now time.Time) bool {
 	return t.RefreshExpiresAt.IsZero() || now.Before(t.RefreshExpiresAt)
 }
 
+// 授权服务的线上格式。RFC 8628 规定了字段名，但不是每家都照着写。
+const (
+	// DialectRFC8628 是标准形态：form 编码请求、snake_case 响应、
+	// 顶层 error 码。GitHub 走这条。空字符串等同于它。
+	DialectRFC8628 = "rfc8628"
+	// DialectYunzhijia 是云之家：JSON 请求（参数名 appId/deviceCode）、
+	// camelCase 响应、而且整个响应裹在 {data,error,errorCode,success}
+	// 信封里，真正的授权状态在 data 里面。错误码本身仍用 RFC 8628 的
+	// 标准串（authorization_pending / expired_token），所以 describe
+	// 能原样复用。
+	DialectYunzhijia = "yunzhijia"
+)
+
 // Config 是一个渠道的设备流参数。没有 client_secret —— 公共客户端存不住它。
 type Config struct {
 	ClientID      string
 	DeviceCodeURL string
 	TokenURL      string
 	Scopes        []string
+
+	// Dialect 选择线上格式，空＝RFC 8628。
+	Dialect string
+
+	// VerificationURI 是用户去输码的那一页。RFC 8628 要求授权服务在
+	// 出码响应里返回它，但云之家不返回 —— 只能由声明给出，而声明里
+	// 的这个地址按和 baseUrl 同样严格的规则校验：一份被篡改的目录
+	// 若能改掉它，用户就会把自己真实账号的密码输给攻击者。
+	VerificationURI string
+
+	// RefreshURL 是刷新令牌的地址。留空表示和 TokenURL 是同一个
+	// （RFC 8628 就是这样）；云之家的刷新在另一个端点上。
+	RefreshURL string
+}
+
+// refreshEndpoint 返回实际要打的刷新地址。
+func (c Config) refreshEndpoint() string {
+	if strings.TrimSpace(c.RefreshURL) != "" {
+		return c.RefreshURL
+	}
+	return c.TokenURL
 }
 
 // Pending 是第一步的产物：给用户看的码，和用来轮询的设备码。
@@ -118,6 +152,15 @@ var (
 func (c Config) Start(ctx context.Context, hc *http.Client) (Pending, error) {
 	if strings.TrimSpace(c.ClientID) == "" {
 		return Pending{}, fmt.Errorf("缺少 client id")
+	}
+	switch c.Dialect {
+	case "", DialectRFC8628:
+	case DialectYunzhijia:
+		return c.startYunzhijia(ctx, hc)
+	default:
+		// 认不出的方言一律拒绝，不要退回默认实现：按错误的线上格式去打
+		// 一个真实的授权服务，错法是「一直等待授权」这种看不出原因的样子。
+		return Pending{}, fmt.Errorf("不支持的授权方言 %q", c.Dialect)
 	}
 	form := url.Values{"client_id": {c.ClientID}}
 	if len(c.Scopes) > 0 {
@@ -166,6 +209,13 @@ func (c Config) Start(ctx context.Context, hc *http.Client) (Pending, error) {
 
 // Poll 查一次授权状态。调用方按 Interval 节流，收到 ErrSlowDown 要加间隔。
 func (c Config) Poll(ctx context.Context, hc *http.Client, deviceCode string) (TokenSet, error) {
+	switch c.Dialect {
+	case "", DialectRFC8628:
+	case DialectYunzhijia:
+		return c.pollYunzhijia(ctx, hc, deviceCode)
+	default:
+		return TokenSet{}, fmt.Errorf("不支持的授权方言 %q", c.Dialect)
+	}
 	form := url.Values{
 		"client_id":   {c.ClientID},
 		"device_code": {deviceCode},
@@ -181,6 +231,13 @@ func (c Config) Poll(ctx context.Context, hc *http.Client, deviceCode string) (T
 // offline_access，让令牌长期有效，被吊销时重新点连接。这个函数留着是因为
 // 别的提供方（支持公共客户端刷新的那些）用得上。
 func (c Config) Refresh(ctx context.Context, hc *http.Client, refreshToken string) (TokenSet, error) {
+	switch c.Dialect {
+	case "", DialectRFC8628:
+	case DialectYunzhijia:
+		return c.refreshYunzhijia(ctx, hc, refreshToken)
+	default:
+		return TokenSet{}, fmt.Errorf("不支持的授权方言 %q", c.Dialect)
+	}
 	form := url.Values{
 		"client_id":     {c.ClientID},
 		"grant_type":    {"refresh_token"},

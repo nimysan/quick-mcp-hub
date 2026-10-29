@@ -66,6 +66,10 @@
   .modal h3{margin:0 0 4px}
   .modal .hint{color:var(--muted);font-size:12px;margin-bottom:14px}
   .oauth-box{border:1px solid var(--border);border-radius:10px;padding:12px 14px;margin:4px 0 14px}
+  /* lead：这个渠道的正路就是点按钮授权，所以它要比表单显眼。
+     不这样排的话，用户先看到的是两个输入框，会以为需要手动填。 */
+  .oauth-box.lead{border-color:var(--accent);border-width:1.5px;padding:16px}
+  .oauth-box.lead button{font-size:15px;padding:10px 20px;margin-top:10px}
   .risk{border:1px solid var(--warn);border-radius:10px;padding:12px 14px;margin:4px 0 14px}
   .tp{font-size:11px;padding:1px 6px;border-radius:5px;border:1px solid var(--warn);color:var(--warn)}
   .oauth-head{font-weight:600;font-size:13px;margin-bottom:6px}
@@ -98,8 +102,6 @@
       border:1px solid var(--border);color:var(--muted);user-select:none}
   .tg.on{border-color:var(--accent);color:var(--accent);font-weight:600;
          background:color-mix(in srgb,var(--accent) 10%,transparent)}
-  .rv{font-size:10px;font-weight:600;padding:1px 5px;border-radius:4px;vertical-align:1px;
-      color:#92400e;background:#fef3c7;border:1px solid #fcd34d;cursor:help}
   .ptype .s{font-size:11px;color:var(--muted);margin-top:2px}
   .field{margin-bottom:12px}
   .field label{display:block;font-size:12px;font-weight:600;margin-bottom:4px}
@@ -259,28 +261,35 @@ function renderMarket(){
   $("#grid").innerHTML = list.map((d,idx)=>{
     const n = mine(d.type);
     const cls = !d.available ? "soon" : (n ? "has" : "");
-    const tools = (d.tools||[]).join(" ");
     const wn = (d.writeTools||[]).length;
+    // 卡片上只放用户能据以决定的事。刻意不放的三样：
+    //
+    //   - 「复核」：那是我们发布声明时的内部状态（postReads 的信号），
+    //     对用户不构成任何可做的决定。机制还在，只是不摆在这里。
+    //   - 工具名清单：list_recent search_mail read_mail… 截断成一行
+    //     snake_case，对业务人员等于乱码；summary 已经用人话说了它能干什么。
+    //   - 工具个数：数字不帮人决定要不要加这个渠道。
+    //
+    // 留下的两条标记是真风险（会在你机器上跑别人的代码 / 要你另外装一个
+    // 程序），它们改变用户要做的事，所以必须看得见。
     return `<div class="mk ${cls}">
       <div class="top">
         <span>${d.icon||"🔌"}</span>
         <span class="nm">${esc(d.name)}</span>
         ${d.version?`<span class="ver">v${d.version}</span>`:''}
-        ${d.needsReview?'<span class="rv" title="这个系统的读操作也是 POST，声明需人工复核">复核</span>':''}
-        ${d.thirdPartyCode?'<span class="tp" title="这个渠道会在你的机器上执行第三方代码（wasm 沙箱）">🧩 第三方代码</span>':''}
+        ${d.thirdPartyCode?'<span class="tp" title="这个渠道的代码不是本程序写的，它跑在隔离环境里，不能读你的文件和密码">🧩 第三方扩展</span>':''}
         ${d.localProgram?'<span class="tp" title="这个渠道连的是你自己机器上另一个程序，要先装好它">💻 需本机程序</span>':''}
         <code style="margin-left:auto">${esc(d.type)}</code>
       </div>
       <div class="sm">${esc(d.summary)}</div>
-      ${d.thirdPartyCode?`<div class="tl" style="color:var(--warn)">沙箱只允许它访问：${esc((d.allowedHosts||[]).join(" "))}</div>`:''}
+      ${d.thirdPartyCode?`<div class="tl" style="color:var(--warn)">它只能访问：${esc((d.allowedHosts||[]).join(" "))}</div>`:''}
       ${d.localProgram?`<div class="tl" style="color:var(--warn)">要先在这台机器上装好并运行那个程序，填完表单不会自己装</div>`:''}
-      ${tools?`<div class="tl" title="${esc(tools)}">${esc(tools)}</div>`:''}
-      ${wn?`<div class="tl" style="color:var(--warn)">其中 ${wn} 个写操作，默认不启用</div>`:''}
+      ${wn?`<div class="tl" style="color:var(--warn)">默认只读。发送、修改类操作要你在表单里另外打开</div>`:''}
       <div class="act">
-        ${n?`<span class="mine">✓ 已集成 ${n} 个账号</span>`:'<span class="mine"></span>'}
+        ${n?`<span class="mine">✓ 已连接 ${n} 个账号</span>`:'<span class="mine"></span>'}
         ${d.available
           ? `<button class="${n?'':'primary'}" data-add="${idx}">${n?'再加一个账号':'添加'}</button>`
-          : '<button disabled>待实现</button>'}
+          : '<button disabled>暂未支持</button>'}
       </div>
     </div>`;
   }).join("");
@@ -332,15 +341,35 @@ async function openForm(type, account){
       ${f.help?`<div class="help">${esc(f.help)}</div>`:""}</div>`;
   };
   // 账号字段编辑时锁定（它是凭据键的一部分）
+  //
+  // oauthFirst：这个渠道不需要用户先填任何东西就能授权（没有 clientIdField），
+  // 那么正路就是点按钮，输入框是给「扫不了码」的少数人留的后路。所以把按钮
+  // 排在最前、做成主按钮，把姓名和令牌收到折叠里 —— 先摆两个输入框，所有人
+  // 都会以为需要手动填。
+  //
+  // GitHub 那种有 clientIdField 的不走这条：它必须先填 Client ID 才能连，
+  // 把那个框折起来等于让按钮点了就报错。
+  const oauthFirst = !!(d.oauth && !account && !d.oauth.clientIdField);
+  const credNames = [d.accountField, d.secretField].filter(Boolean);
+  const credFields = oauthFirst ? basic.filter(f=>credNames.includes(f.name)) : [];
+  const formFields = oauthFirst ? basic.filter(f=>!credNames.includes(f.name)) : basic;
   const oauthHTML = (d.oauth && !account) ? `
-    <div class="oauth-box">
-      <div class="oauth-head">🔗 用 OAuth 连接（不用手工生成令牌）</div>
+    <div class="oauth-box${oauthFirst?" lead":""}">
+      <div class="oauth-head">🔗 ${oauthFirst?`扫码连接，不用手工生成令牌`:`用 OAuth 连接（不用手工生成令牌）`}</div>
       <div class="help">点下面的按钮，会把你送到 <b>${esc(d.oauth.authHost)}</b> 授权${
         d.oauth.scopes?.length?`，申请的权限：<code>${esc(d.oauth.scopes.join(" "))}</code>`:""}</div>
       ${d.oauth.help?`<div class="help">${esc(d.oauth.help)}${
         d.oauth.setupUrl?` · <a href="${esc(d.oauth.setupUrl)}" target="_blank" rel="noreferrer">去注册</a>`:""}</div>`:""}
-      <button id="oauthbtn" style="margin-top:8px">连接 ${esc(d.name)}</button>
+      <button class="${oauthFirst?"primary":""}" id="oauthbtn" style="margin-top:8px">连接${esc(d.name)}</button>
       <div id="oauthpanel"></div>
+    </div>` : "";
+  // 手动填的后路：默认收起。里面放的是凭据字段，所以「只存进密码管理器」
+  // 那句提示也跟着挪进来 —— 折起来的时候它在上面只是噪音。
+  const manualHTML = credFields.length ? `
+    <div class="adv-toggle" id="manualtoggle">▸ 扫不了码？手动填${esc(credFields.map(f=>f.label).join("和"))}</div>
+    <div class="adv" id="manual">
+      <div class="hint">密码类字段只存进系统密码管理器，不写配置文件、不进日志</div>
+      ${credFields.map(fieldHTML).join("")}
     </div>` : "";
   const riskHTML = d.thirdPartyCode ? `
     <div class="risk">
@@ -360,13 +389,14 @@ async function openForm(type, account){
     </div>` : "";
   $("#modal").innerHTML = `
     <h3>${d.icon} ${esc(d.name)}</h3>
-    <div class="hint">密码类字段只存进系统密码管理器，不写配置文件、不进日志</div>
+    ${oauthFirst?"":`<div class="hint">密码类字段只存进系统密码管理器，不写配置文件、不进日志</div>`}
     ${riskHTML}
     ${localHTML}
-    ${basic.map(fieldHTML).join("")}
+    ${oauthFirst?oauthHTML:""}
+    ${formFields.map(fieldHTML).join("")}
     ${adv.length?`<div class="adv-toggle" id="advtoggle">▸ 高级设置（主机 / 端口）</div>
       <div class="adv" id="adv">${adv.map(fieldHTML).join("")}</div>`:""}
-    ${oauthHTML}
+    ${oauthFirst?manualHTML:oauthHTML}
     <div class="foot">
       <button class="primary" id="savebtn">测试并保存</button>
       <button id="cancelbtn">取消</button>
@@ -374,10 +404,22 @@ async function openForm(type, account){
     </div>`;
   // 挂闭包而不是拼内联 onclick：account 里出现引号会把 HTML 属性截断，
   // 按钮就变成点了没反应 —— 这个 bug 曾让「编辑」整个静默失效。
-  $("#savebtn").onclick = () => doSave(type, account);
+  $("#savebtn").onclick = () => {
+    // 凭据字段被折起来的时候，直接把「姓名不能为空」抛出来等于指向一个
+    // 看不见的输入框。先把折叠打开，并把两条路都说出来。
+    const missing = credFields.filter(f=>f.required && !(($("#f_"+f.name)||{}).value||"").trim());
+    if(missing.length){
+      const m=$("#manual"); if(m) m.classList.add("show");
+      $("#st").textContent = `先点上面的「连接${d.name}」，或在这里填${missing.map(f=>f.label).join("和")}`;
+      return;
+    }
+    doSave(type, account);
+  };
   $("#cancelbtn").onclick = close;
   const ob = $("#oauthbtn");
   if(ob) ob.onclick = () => startOAuth(type);
+  const manualToggle = $("#manualtoggle");
+  if(manualToggle) manualToggle.onclick = () => $("#manual").classList.toggle("show");
   const advToggle = $("#advtoggle");
   if(advToggle) advToggle.onclick = () => $("#adv").classList.toggle("show");
   if(account){const af=$("#f_"+d.accountField); if(af){af.readOnly=true; af.style.opacity=.6}}

@@ -274,6 +274,18 @@ type OAuthSpec struct {
 	TokenURL      string   `json:"tokenUrl"`
 	Scopes        []string `json:"scopes,omitempty"`
 
+	// Dialect 选择授权服务的线上格式。留空＝RFC 8628（GitHub 那种）。
+	// 写出来是因为「流程一样、字段名不一样」的提供方是常态，而按错误
+	// 的格式去打一个真实授权服务，表现是「一直等待授权」—— 看不出原因。
+	Dialect string `json:"dialect,omitempty"`
+
+	// VerificationURI 是用户去输码的那一页。RFC 8628 要求授权服务在出码
+	// 响应里返回它，所以标准方言不用填；云之家不返回，必须在这里给出。
+	VerificationURI string `json:"verificationUri,omitempty"`
+
+	// RefreshURL 是刷新令牌的地址，留空表示和 TokenURL 相同。
+	RefreshURL string `json:"refreshUrl,omitempty"`
+
 	// SetupURL 是「去哪注册 App」的地址，页面上给用户一个链接。
 	SetupURL string `json:"setupUrl,omitempty"`
 	// Help 是填 client id 前要知道的事，显示在输入框旁边。
@@ -297,10 +309,13 @@ func (s Spec) OAuthConfig(settings map[string]string) (oauthdev.Config, error) {
 		}
 	}
 	return oauthdev.Config{
-		ClientID:      clientID,
-		DeviceCodeURL: s.OAuth.DeviceCodeURL,
-		TokenURL:      s.OAuth.TokenURL,
-		Scopes:        s.OAuth.Scopes,
+		ClientID:        clientID,
+		DeviceCodeURL:   s.OAuth.DeviceCodeURL,
+		TokenURL:        s.OAuth.TokenURL,
+		Scopes:          s.OAuth.Scopes,
+		Dialect:         s.OAuth.Dialect,
+		VerificationURI: s.OAuth.VerificationURI,
+		RefreshURL:      s.OAuth.RefreshURL,
 	}, nil
 }
 
@@ -419,7 +434,26 @@ func (s Spec) Validate() error {
 			return fmt.Errorf("%s: test %w", s.ID, err)
 		}
 		if s.Test.Method != "GET" {
-			return fmt.Errorf("%s: test 必须是 GET——测试连通不能改动用户的系统", s.ID)
+			// 默认只许 GET：方法本身就是「这次测试不会改数据」的证据。
+			//
+			// 云之家这类系统一个 GET 都没有（GET 直接回认证失败），所以留
+			// 一条口子，但不是「postReads 就随便挑个 POST」——测试是在用户
+			// 点保存时自动打的，它改了什么用户没有机会先看。所以要求这个
+			// 端点必须同时是某个 readOnly 工具的端点：那样它至少和工具走
+			// 同一套审查，而不是一个没人看过的路径。
+			if !s.PostReads {
+				return fmt.Errorf("%s: test 必须是 GET——测试连通不能改动用户的系统（这个系统的读操作本身就是 POST 的话，在声明顶层加 \"postReads\": true）", s.ID)
+			}
+			matched := false
+			for _, t := range s.Tools {
+				if t.ReadOnly && t.Method == s.Test.Method && t.Path == s.Test.Path {
+					matched = true
+					break
+				}
+			}
+			if !matched {
+				return fmt.Errorf("%s: test 是 %s 而不是 GET，那它必须和某个 readOnly 工具是同一个端点（现在 %s %s 不是）", s.ID, s.Test.Method, s.Test.Method, s.Test.Path)
+			}
 		}
 	}
 	if len(s.Tools) == 0 {
@@ -640,6 +674,32 @@ func (s Spec) checkOAuth() error {
 	}
 	if err := checkBaseURL(o.TokenURL, false); err != nil {
 		return fmt.Errorf("tokenUrl %w", err)
+	}
+	switch o.Dialect {
+	case "", oauthdev.DialectRFC8628:
+		// 标准方言的验证地址由授权服务返回，声明里填了也用不上 —— 与其
+		// 留着一个不生效的字段让人误会，不如直接拒绝。
+		if o.VerificationURI != "" {
+			return fmt.Errorf("verificationUri 只有非标准方言才需要（标准设备流由授权服务返回）")
+		}
+	case oauthdev.DialectYunzhijia:
+		if strings.TrimSpace(o.VerificationURI) == "" {
+			return fmt.Errorf("dialect %s 必须给出 verificationUri（它的出码响应不返回验证地址）", o.Dialect)
+		}
+	default:
+		return fmt.Errorf("dialect %q 不支持", o.Dialect)
+	}
+	if o.VerificationURI != "" {
+		// 和 deviceCodeUrl 同理，而且更要紧：这是用户真正输入账号密码的
+		// 那一页。一份被篡改的目录若能改掉它，就等于指定了钓鱼地址。
+		if err := checkBaseURL(o.VerificationURI, false); err != nil {
+			return fmt.Errorf("verificationUri %w", err)
+		}
+	}
+	if o.RefreshURL != "" {
+		if err := checkBaseURL(o.RefreshURL, false); err != nil {
+			return fmt.Errorf("refreshUrl %w", err)
+		}
 	}
 	if o.SetupURL != "" {
 		if err := checkBaseURL(o.SetupURL, false); err != nil {
