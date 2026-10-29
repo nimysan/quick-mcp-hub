@@ -1,0 +1,271 @@
+{
+  "id": "yunzhijia",
+  "name": "云之家",
+  "version": 1,
+  "icon": "☁️",
+  "summary": "以你本人的身份读写云之家消息、审批、日程 · 扫码连接，不用找令牌",
+  "tags": ["im", "office"],
+  "integration": "yunzhijia",
+  "helpUrl": "https://www.yunzhijia.com/",
+  "baseUrl": "https://www.yunzhijia.com",
+  "account": {
+    "name": "name",
+    "label": "云之家姓名",
+    "placeholder": "张三",
+    "help": "点「连接云之家」后自动填好，不用自己打。它只用来标识这份凭据存在哪个条目下；实际以谁的身份读写由授权的那个账号决定。同名的两个账号会落到同一个条目上，真遇到的话给其中一个改个名字"
+  },
+  "secret": {
+    "name": "token",
+    "label": "访问令牌",
+    "help": "正常不用填 —— 点「连接云之家」扫码授权即可，令牌由程序自己取、自己续。这里留着手填是给无法扫码的场景用的"
+  },
+  "auth": { "kind": "bearer" },
+  "oauth": {
+    "flow": "device",
+    "dialect": "yunzhijia",
+    "clientId": "cli_bb115ff4d68c492e",
+    "deviceCodeUrl": "https://www.yunzhijia.com/gateway/open-apis/oauth2/device/genDeviceCode",
+    "tokenUrl": "https://www.yunzhijia.com/gateway/open-apis/cli/pollTokenByDeviceCode",
+    "refreshUrl": "https://www.yunzhijia.com/gateway/oauth2/token/refreshToken",
+    "verificationUri": "https://www.yunzhijia.com/developers/cli/device-auth.html",
+    "scopes": ["searchUserInfo"],
+    "setupUrl": "https://www.yunzhijia.com/home/?m=open&a=login",
+    "help": "不用注册应用、不用填 Client ID：点「连接云之家」会出一个验证码，在手机云之家里确认一次就好。当前借用的是云之家官方 CLI 的应用身份（cli_bb115ff4d68c492e，它的服务端对任何人公开），所以授权页上显示的申请方是「云之家 CLI」而不是本程序 —— 正式对外发布前要换成自己注册的应用"
+  },
+  "postReads": true,
+  "failWhen": { "path": "success", "equals": false, "messagePath": "error" },
+  "test": {
+    "method": "POST",
+    "path": "/gateway/openimport/contacts/getPersonInfos",
+    "result": { "path": "data", "fields": ["openId", "name", "department", "jobTitle"] }
+  },
+  "tools": [
+    {
+      "name": "yunzhijia_whoami",
+      "title": "当前云之家身份",
+      "description": "确认现在以哪个云之家账号读写：返回姓名、openId、部门、职位。用户问「我是谁」、或者要先拿到自己的 openId（比如给自己发消息）时用它。这是最轻的一次探活。",
+      "readOnly": true,
+      "method": "POST",
+      "path": "/gateway/openimport/contacts/getPersonInfos",
+      "result": {
+        "path": "data",
+        "fields": ["openId", "name", "department", "jobTitle", "isAdmin"]
+      }
+    },
+    {
+      "name": "yunzhijia_list_recent_groups",
+      "title": "最近会话",
+      "description": "列出最近的群聊和私聊会话，每条带最后一条消息和未读数。这是拿 groupId 的正路 —— 其它工具要的 groupId 一律从这里取，不要自己拼、也不要拿群名当 groupId。groupType 1 是私聊、2 是群聊、3 是公众号/官方会话。",
+      "readOnly": true,
+      "method": "POST",
+      "path": "/gateway/xtinterface/group/recentGroups",
+      "params": [
+        {
+          "name": "limit",
+          "in": "body",
+          "description": "返回多少条，默认由服务端定（约 20）"
+        }
+      ],
+      "result": {
+        "path": "data.list",
+        "fields": [
+          "groupId",
+          "groupName",
+          "groupType",
+          "unreadCount",
+          "lastMsgSendTime",
+          "lastMsg.content",
+          "lastMsg.fromOpenId",
+          "lastMsg.msgType"
+        ],
+        "meta": ["data.count", "data.more", "data.unreadTotal"]
+      }
+    },
+    {
+      "name": "yunzhijia_group_history",
+      "title": "读会话历史消息",
+      "description": "读某个会话里的历史消息，默认从最新往前。groupId 必须来自 yunzhijia_list_recent_groups 或 yunzhijia_search_group 的返回。图文卡片这类富消息的 content 只是标题，正文结构不在结果里 —— 回答时不要把标题当成全文。",
+      "readOnly": true,
+      "method": "POST",
+      "path": "/gateway/xtinterface/message/msgList",
+      "params": [
+        {
+          "name": "groupId",
+          "in": "body",
+          "required": true,
+          "description": "会话 ID，从 yunzhijia_list_recent_groups 取"
+        },
+        {
+          "name": "limit",
+          "in": "body",
+          "description": "返回多少条"
+        },
+        {
+          "name": "msgId",
+          "in": "body",
+          "description": "从这条消息开始往前翻（翻页用，值取上一页最后一条的 msgId）"
+        }
+      ],
+      "result": {
+        "path": "data.list",
+        "fields": ["msgId", "fromOpenId", "msgType", "content", "sendTime"],
+        "meta": ["data.count", "data.more"]
+      }
+    },
+    {
+      "name": "yunzhijia_group_members",
+      "title": "群成员",
+      "description": "列出某个会话里的成员和管理员，含每个人的 openId、姓名、部门、职位。要 @ 某人、或者要给群里某人发私聊时，先用它拿 openId —— 不要拿姓名当 openId。接口一次返回全量成员，没有翻页。",
+      "readOnly": true,
+      "method": "POST",
+      "path": "/gateway/xtinterface/group/getGroupUsers",
+      "params": [
+        {
+          "name": "groupId",
+          "in": "body",
+          "required": true,
+          "description": "会话 ID，从 yunzhijia_list_recent_groups 取"
+        }
+      ],
+      "result": { "path": "data" }
+    },
+    {
+      "name": "yunzhijia_search_user",
+      "title": "搜同事",
+      "description": "按姓名关键词搜通讯录，拿到 openId 用于发私聊或 @。搜不到会返回空列表（这不是错误，可能是这个账号不在任何企业里，或者对方不在你的通讯录范围内）。多条命中时必须让用户选定是哪一个，不要替他挑第一条。",
+      "readOnly": true,
+      "method": "POST",
+      "path": "/gateway/openorg/contacts/searchUser",
+      "params": [
+        {
+          "name": "keyword",
+          "in": "body",
+          "required": true,
+          "description": "姓名或姓名的一部分"
+        }
+      ],
+      "result": {
+        "path": "data.list",
+        "fields": ["openId", "name", "department", "jobTitle"],
+        "meta": ["data.numFound", "data.hasMore"]
+      }
+    },
+    {
+      "name": "yunzhijia_search_group",
+      "title": "按群名搜群",
+      "description": "按群名关键词搜群聊。注意它只覆盖真正的群聊：公众号/官方会话（groupType 3）搜不到，哪怕 yunzhijia_list_recent_groups 里明明有 —— 所以搜不到不等于会话不存在，找不到就改用 yunzhijia_list_recent_groups 翻。",
+      "readOnly": true,
+      "method": "POST",
+      "path": "/gateway/xtinterface/group/searchGroupOpen",
+      "params": [
+        {
+          "name": "keyword",
+          "in": "body",
+          "required": true,
+          "description": "群名或群名的一部分"
+        }
+      ],
+      "result": {
+        "path": "result.list",
+        "meta": ["result.numFound", "result.hasMore"]
+      }
+    },
+    {
+      "name": "yunzhijia_approval_todo",
+      "title": "待我审批的单据",
+      "description": "列出当前登录用户的审批待办。这是个人视角 —— 只能看自己的待办，查不到别人的。单据详情要另外取，本工具只给列表。",
+      "readOnly": true,
+      "method": "POST",
+      "path": "/gateway/workflow/flow/todoPageList",
+      "params": [
+        { "name": "pageNo", "in": "body", "description": "第几页，从 1 开始" },
+        { "name": "pageSize", "in": "body", "description": "每页多少条" },
+        { "name": "keyword", "in": "body", "description": "按关键词过滤单据" }
+      ],
+      "result": { "path": "data.list", "limit": 50, "meta": ["data.total"] }
+    },
+    {
+      "name": "yunzhijia_approval_myflow",
+      "title": "我发起的审批",
+      "description": "列出当前登录用户自己提交的审批单据，用于回答「我那张请款单到哪一步了」。同样是个人视角，查不到别人发起的。",
+      "readOnly": true,
+      "method": "POST",
+      "path": "/gateway/workflow/flow/myFlowPageList",
+      "params": [
+        { "name": "pageNo", "in": "body", "description": "第几页，从 1 开始" },
+        { "name": "pageSize", "in": "body", "description": "每页多少条" },
+        { "name": "keyword", "in": "body", "description": "按关键词过滤单据" }
+      ],
+      "result": { "path": "data.list", "limit": 50, "meta": ["data.total"] }
+    },
+    {
+      "name": "yunzhijia_calendar_list",
+      "title": "查日程",
+      "description": "查某段日期范围内当前用户的日程。start 和 end 都是 YYYY-MM-DD 的日期（给到秒也接受）。查「今天有什么安排」就把两者都填今天。",
+      "readOnly": true,
+      "method": "POST",
+      "path": "/gateway/cloudwork/calendar/queryByRange",
+      "params": [
+        {
+          "name": "start",
+          "in": "body",
+          "required": true,
+          "description": "开始日期，YYYY-MM-DD"
+        },
+        {
+          "name": "end",
+          "in": "body",
+          "required": true,
+          "description": "结束日期，YYYY-MM-DD"
+        }
+      ],
+      "result": { "path": "data", "limit": 50 }
+    },
+    {
+      "name": "yunzhijia_send_group_msg",
+      "title": "发群消息",
+      "description": "以用户本人的身份往某个会话发一条纯文本消息。这是在同事面前以用户的名义说话，发出去就到了，所以发送前必须把目标会话名和消息原文给用户确认 —— groupId 必须来自 yunzhijia_list_recent_groups 或 yunzhijia_search_group 的返回，发错群比发错内容更难收场。只支持纯文本：正文里写 @某人 不会真的提醒到人，也发不出 @全员。",
+      "method": "POST",
+      "path": "/gateway/xtinterface/message/send",
+      "bodyConst": { "msgType": "text" },
+      "params": [
+        {
+          "name": "groupId",
+          "in": "body",
+          "required": true,
+          "description": "会话 ID，从 yunzhijia_list_recent_groups 取"
+        },
+        {
+          "name": "content",
+          "in": "body",
+          "required": true,
+          "description": "消息正文，纯文本"
+        }
+      ],
+      "result": { "path": "data", "fields": ["msgId", "groupId", "sendTime"] }
+    },
+    {
+      "name": "yunzhijia_send_private_msg",
+      "title": "发私聊消息",
+      "description": "以用户本人的身份给某个人发一条纯文本私聊消息。openId 必须来自 yunzhijia_search_user、yunzhijia_group_members 或 yunzhijia_whoami 的返回，不要拿姓名、手机号、工号当 openId。搜人命中多条时让用户选定再发。只支持纯文本。",
+      "method": "POST",
+      "path": "/gateway/xtinterface/message/send",
+      "bodyConst": { "msgType": "text" },
+      "params": [
+        {
+          "name": "toOpenId",
+          "in": "body",
+          "required": true,
+          "description": "收件人 openId，从 yunzhijia_search_user / yunzhijia_group_members 取"
+        },
+        {
+          "name": "content",
+          "in": "body",
+          "required": true,
+          "description": "消息正文，纯文本"
+        }
+      ],
+      "result": { "path": "data", "fields": ["msgId", "groupId", "sendTime"] }
+    }
+  ]
+}
