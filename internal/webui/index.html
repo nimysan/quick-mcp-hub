@@ -355,13 +355,13 @@ async function openForm(type, account){
         d.oauth.scopes?.length?`，申请的权限：<code>${esc(d.oauth.scopes.join(" "))}</code>`:""}</div>
       ${d.oauth.help?`<div class="help">${esc(d.oauth.help)}${
         d.oauth.setupUrl?` · <a href="${esc(d.oauth.setupUrl)}" target="_blank" rel="noreferrer">去注册</a>`:""}</div>`:""}
-      <button class="${oauthFirst?"primary":""}" id="oauthbtn" style="margin-top:8px">连接 ${esc(d.name)}</button>
+      <button class="${oauthFirst?"primary":""}" id="oauthbtn" style="margin-top:8px">连接${esc(d.name)}</button>
       <div id="oauthpanel"></div>
     </div>` : "";
   // 手动填的后路：默认收起。里面放的是凭据字段，所以「只存进密码管理器」
   // 那句提示也跟着挪进来 —— 折起来的时候它在上面只是噪音。
   const manualHTML = credFields.length ? `
-    <div class="adv-toggle" id="manualtoggle">▸ 扫不了码？手动填${esc(credFields.map(f=>f.label).join(" 和 "))}</div>
+    <div class="adv-toggle" id="manualtoggle">▸ 扫不了码？手动填${esc(credFields.map(f=>f.label).join("和"))}</div>
     <div class="adv" id="manual">
       <div class="hint">密码类字段只存进系统密码管理器，不写配置文件、不进日志</div>
       ${credFields.map(fieldHTML).join("")}
@@ -405,7 +405,7 @@ async function openForm(type, account){
     const missing = credFields.filter(f=>f.required && !(($("#f_"+f.name)||{}).value||"").trim());
     if(missing.length){
       const m=$("#manual"); if(m) m.classList.add("show");
-      $("#st").textContent = `先点上面的「连接 ${d.name}」，或在这里填${missing.map(f=>f.label).join(" 和 ")}`;
+      $("#st").textContent = `先点上面的「连接${d.name}」，或在这里填${missing.map(f=>f.label).join("和")}`;
       return;
     }
     doSave(type, account);
