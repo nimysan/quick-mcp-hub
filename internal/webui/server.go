@@ -44,15 +44,65 @@ func New(mgr *channels.Manager, version string) *Server {
 
 func (s *Server) routes() {
 	s.mux.HandleFunc("/", s.handleIndex)
-	s.mux.HandleFunc("/api/descriptors", s.handleDescriptors)
-	s.mux.HandleFunc("/api/channels", s.handleChannels) // GET 列表 / POST 保存
-	s.mux.HandleFunc("/api/channels/test", s.handleTest)
-	s.mux.HandleFunc("/api/channels/delete", s.handleDelete)
+	// 每个 /api 端点都过一道同站闸，见 sameOrigin。
+	api := func(path string, h http.HandlerFunc) { s.mux.HandleFunc(path, guard(h)) }
+	api("/api/descriptors", s.handleDescriptors)
+	api("/api/channels", s.handleChannels) // GET 列表 / POST 保存
+	api("/api/channels/test", s.handleTest)
+	api("/api/channels/delete", s.handleDelete)
 	// OAuth 设备流：开始授权 / 查状态 / 放弃。轮询由服务端做（见 connect.go），
 	// 这里只是把状态端出来。
-	s.mux.HandleFunc("/api/oauth/start", s.handleOAuthStart)
-	s.mux.HandleFunc("/api/oauth/status", s.handleOAuthStatus)
-	s.mux.HandleFunc("/api/oauth/cancel", s.handleOAuthCancel)
+	api("/api/oauth/start", s.handleOAuthStart)
+	api("/api/oauth/status", s.handleOAuthStatus)
+	api("/api/oauth/cancel", s.handleOAuthCancel)
+	// NapCat 自动配置（见 napcat.go）。
+	s.napcatRoutes(api)
+}
+
+// guard 挡住跨站请求。
+//
+// 这个页面是一个**没有登录**的本机 HTTP 服务：用户在浏览器里打开的任何一个
+// 网页都能向 127.0.0.1:7801 发 POST。原先的端点最多改渠道配置，现在还能写
+// NapCat 的配置文件、启动一个进程 —— 没有这道闸，一个恶意网页就能借它在
+// 用户机器上运行程序。
+//
+// 浏览器对跨站 fetch 一定带 Origin，对同站 fetch 带 Sec-Fetch-Site: same-origin，
+// 而网页脚本**无法伪造**这两个头。两个头都没有时放过：那是 curl 这类非浏览器
+// 调用，而同机进程本来就能直接执行代码，不需要绕我们。
+func guard(h http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if !sameOrigin(r) {
+			writeErr(w, http.StatusForbidden, fmt.Errorf("跨站请求已拒绝"))
+			return
+		}
+		h(w, r)
+	}
+}
+
+func sameOrigin(r *http.Request) bool {
+	switch r.Header.Get("Sec-Fetch-Site") {
+	case "", "same-origin", "none":
+	default:
+		return false
+	}
+	if o := r.Header.Get("Origin"); o != "" && o != "http://"+r.Host {
+		return false
+	}
+	return true
+}
+
+// decodeJSON 读 POST 的 JSON 请求体，顺带把方法检查收在一处。
+// 返回 false 表示已经回过错误，调用方直接 return。
+func decodeJSON(w http.ResponseWriter, r *http.Request, v any) bool {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return false
+	}
+	if err := json.NewDecoder(r.Body).Decode(v); err != nil {
+		writeErr(w, http.StatusBadRequest, err)
+		return false
+	}
+	return true
 }
 
 // Listen 在 127.0.0.1 上监听。port 为 0 时由系统分配，返回实际地址。

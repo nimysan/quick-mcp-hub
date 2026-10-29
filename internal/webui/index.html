@@ -116,7 +116,13 @@
   .foot{display:flex;align-items:center;gap:8px;margin-top:8px;
     padding-top:14px;border-top:1px solid var(--border)}
   .foot .status{margin-left:auto;font-size:12px}
-  .foot .status.ok{color:var(--ok)} .foot .status.bad{color:var(--danger)}
+  .status.ok{color:var(--ok)} .status.bad{color:var(--danger)}
+  /* 这两条原先只在 .field / .foot 下生效，所以 oauth-box 和自动配置面板里
+     的说明文字是裸的默认样式。提成全局，值和原来一致。 */
+  .help{font-size:11px;color:var(--muted);margin-top:4px}
+  .ncl{font-size:12px;margin-top:5px;line-height:1.5}
+  .field select{width:100%;padding:7px 9px;border:1px solid var(--border);
+    border-radius:7px;background:var(--bg);color:var(--text);font:inherit}
   code{background:color-mix(in srgb,var(--text) 8%,transparent);padding:1px 5px;border-radius:4px;font-size:12px}
 </style>
 </head>
@@ -358,11 +364,26 @@ async function openForm(type, account){
       <div class="help" style="color:var(--warn)">两件事要先知道：回环上走的是明文，同机的其他程序可能看到这里的令牌，所以别拿别处在用的密码来填；
         而这类网关用的是非官方协议，账号风险落在你自己的号上。</div>
     </div>` : "";
+  // NapCat 自动配置。只对这个渠道出现：它是唯一一个要在本机改**另一个程序**
+  // 配置的渠道，而那件事手工做要先找 6099 端口、从 webui.json 翻登录密钥、
+  // 进页面新建 HTTP 服务器、自己想一个 token —— 全是实现细节。
+  const setupHTML = (d.type==='napcat') ? `
+    <div class="oauth-box">
+      <div class="oauth-head">⚡ 自动配置</div>
+      <div class="help">把 NapCat 解压出来的那个文件夹地址粘进来，下面三个字段我来填。
+        前提是你已经启动过一次 NapCat 并用手机扫码登录过。</div>
+      <div class="field" style="margin:8px 0 0">
+        <input type="text" id="ncdir" placeholder="C:\\Users\\Administrator\\Downloads\\NapCat.Shell.Windows.Node">
+      </div>
+      <button id="ncbtn" style="margin-top:8px">检测</button>
+      <div id="ncpanel"></div>
+    </div>` : "";
   $("#modal").innerHTML = `
     <h3>${d.icon} ${esc(d.name)}</h3>
     <div class="hint">密码类字段只存进系统密码管理器，不写配置文件、不进日志</div>
     ${riskHTML}
     ${localHTML}
+    ${setupHTML}
     ${basic.map(fieldHTML).join("")}
     ${adv.length?`<div class="adv-toggle" id="advtoggle">▸ 高级设置（主机 / 端口）</div>
       <div class="adv" id="adv">${adv.map(fieldHTML).join("")}</div>`:""}
@@ -378,6 +399,8 @@ async function openForm(type, account){
   $("#cancelbtn").onclick = close;
   const ob = $("#oauthbtn");
   if(ob) ob.onclick = () => startOAuth(type);
+  const ncb = $("#ncbtn");
+  if(ncb) ncb.onclick = () => ncDetect();
   const advToggle = $("#advtoggle");
   if(advToggle) advToggle.onclick = () => $("#adv").classList.toggle("show");
   if(account){const af=$("#f_"+d.accountField); if(af){af.readOnly=true; af.style.opacity=.6}}
@@ -392,6 +415,116 @@ function collect(type){
     values[f.name] = f.kind==="bool" ? (el.checked?"true":"false") : el.value;
   });
   return {d,values};
+}
+
+// ── NapCat 自动配置 ───────────────────────────────────────────
+// 用户只给一个文件夹地址，剩下的服务端做：读出 QQ 号、打开 HTTP 接口、
+// 把 host 收到回环、生成令牌、启动 NapCat，然后把三个字段填好。
+//
+// 每一步都把服务端做了什么说出来（改了哪个文件、备份在哪、跑了什么命令）：
+// 这是在动用户机器上**另一个程序**的配置，不该是个黑盒。
+let NC = null;
+
+const ncPost = (path, body) => api(path, {method:"POST",
+  headers:{"Content-Type":"application/json"}, body:JSON.stringify(body)});
+
+async function ncDetect(){
+  const dir = $("#ncdir").value.trim();
+  const panel = $("#ncpanel");
+  if(!dir){ panel.innerHTML = `<div class="status bad">先把 NapCat 的文件夹地址粘进来</div>`; return; }
+  panel.innerHTML = `<div class="help">正在看这个文件夹…</div>`;
+  const r = await ncPost("/api/napcat/detect", {dir});
+  if(!r.ok){ panel.innerHTML = `<div class="status bad">${esc(r.error)}</div>`; return; }
+  NC = {dir, install:r.install, cmd:r.command, qq:(r.install.accounts[0]||{}).qq};
+  ncRender();
+}
+
+function ncAccount(){ return (NC.install.accounts||[]).find(a=>a.qq===NC.qq) || {}; }
+
+function ncRender(extra){
+  const panel = $("#ncpanel"), accs = NC.install.accounts||[], a = ncAccount();
+  const state = a.answering && a.hasToken ? "已就绪"
+    : a.httpEnabled ? (a.hasToken ? "接口已开，但没在运行" : "接口已开，但没设令牌")
+    : "接口没开";
+  // host 是 0.0.0.0 的话同局域网的人也连得上，而那个口子能用这个 QQ 发消息。
+  const hostWarn = a.host === "0.0.0.0"
+    ? `<div class="help" style="color:var(--warn)">它现在监听 0.0.0.0，同一局域网的人也连得上 —— 会帮你收到 127.0.0.1</div>` : "";
+  const pick = accs.length > 1
+    ? `<div class="field" style="margin:8px 0 0"><label>用哪个 QQ</label>
+         <select id="ncqq">${accs.map(x=>`<option value="${esc(x.qq)}" ${x.qq===NC.qq?"selected":""}>${esc(x.qq)}</option>`).join("")}</select></div>` : "";
+  const noLauncher = NC.install.launcher ? ""
+    : `<div class="help" style="color:var(--warn)">这个文件夹里没找到认识的启动器，所以配置完要你自己双击启动 NapCat</div>`;
+
+  panel.innerHTML = `
+    <div class="ncl" style="margin-top:8px">✅ 找到 NapCat · 配置目录 <code>${esc(NC.install.configDir)}</code></div>
+    <div class="ncl">QQ <b>${esc(a.qq||"?")}</b> · HTTP 接口${esc(state)} · 端口 ${a.port||3000}</div>
+    ${hostWarn}${pick}${noLauncher}
+    <button id="ncgo" class="primary" style="margin-top:8px">开启接口并填好表单</button>
+    <div id="ncout">${extra||""}</div>`;
+  const sel = $("#ncqq");
+  if(sel) sel.onchange = () => { NC.qq = sel.value; ncRender(); };
+  $("#ncgo").onclick = ncConfigure;
+}
+
+async function ncConfigure(){
+  const out = $("#ncout"), btn = $("#ncgo");
+  btn.disabled = true;
+  out.innerHTML = `<div class="help">正在写 NapCat 的配置…</div>`;
+  const r = await ncPost("/api/napcat/configure", {dir:NC.dir, qq:NC.qq});
+  btn.disabled = false;
+  if(!r.ok){ out.innerHTML = `<div class="status bad">${esc(r.error)}</div>`; return; }
+  const res = r.result;
+  ncFill(NC.qq, res.token, res.endpoint);
+  const did = res.backupPath
+    ? `已开启 HTTP 接口、host 收到 127.0.0.1${res.tokenKept?"、沿用原有令牌":"、生成了新令牌"}。
+       原配置备份在 <code>${esc(res.backupPath)}</code>`
+    : `它本来就是这么配的，一个字节都没改${res.tokenKept?"，令牌沿用现成的":""}`;
+  if(!res.needsRestart){
+    out.innerHTML = `<div class="status ok">✅ ${did}</div>
+      <div class="ncl">三个字段已填好，点下面「测试并保存」即可</div>`;
+    return;
+  }
+  // 配置文件是 NapCat 启动时读的，所以改完必须重启才生效。
+  // 它还在跑的话我们不去杀它 —— 那是用户的 QQ，关不关由他决定。
+  const live = ncAccount().answering;
+  out.innerHTML = `<div class="status ok">✅ ${did}</div>
+    ${live ? `<div class="ncl" style="color:var(--warn)">NapCat 正在用<b>旧配置</b>运行。请先关掉它的窗口，再点下面这个按钮</div>`
+           : `<div class="ncl">配置文件是 NapCat 启动时读的，所以还要重启一次</div>`}
+    ${NC.install.launcher
+      ? `<button id="ncstart" style="margin-top:8px">启动 NapCat（不用再扫码）</button>
+         <div class="help">会跑：<code>${esc(NC.cmd||"")}</code></div>`
+      : `<div class="help">自己双击 NapCat 的启动器，起来之后点下面「测试并保存」</div>`}
+    <div id="ncstartout"></div>`;
+  const sb = $("#ncstart");
+  if(sb) sb.onclick = ncStart;
+}
+
+async function ncStart(){
+  const out = $("#ncstartout"), btn = $("#ncstart");
+  btn.disabled = true;
+  out.innerHTML = `<div class="help">正在启动，等它登录完成（要十几秒）…</div>`;
+  const r = await ncPost("/api/napcat/start", {dir:NC.dir, qq:NC.qq});
+  btn.disabled = false;
+  if(!r.ok){
+    out.innerHTML = `<div class="status bad">${esc(r.error)}</div>
+      ${r.command?`<div class="help">试过的命令：<code>${esc(r.command)}</code></div>`:""}`;
+    return;
+  }
+  if(r.answering){
+    out.innerHTML = `<div class="status ok">✅ NapCat 的 HTTP 接口已经在 ${esc(r.endpoint)} 上应答${
+      r.started?"":"（它本来就在跑）"}</div>
+      <div class="ncl">点下面「测试并保存」，会真打一次 get_login_info</div>`;
+    return;
+  }
+  // 起了但端口没答：最常见的原因是快速登录没成功，NapCat 又在等扫码。
+  out.innerHTML = `<div class="status bad">已经启动它了，但 ${esc(r.endpoint)} 还没有应答</div>
+    <div class="help">去 NapCat 的窗口看一眼：如果它在等扫码，用手机扫一下；
+      扫完回来点「测试并保存」。跑的命令是 <code>${esc(r.command)}</code></div>`;
+}
+
+function ncFill(qq, token, endpoint){
+  const set = (id,v) => { const el = document.getElementById(id); if(el && v) el.value = v; };
+  set("f_self_id", qq); set("f_token", token); set("f_endpoint", endpoint);
 }
 
 // ── OAuth 设备流 ──────────────────────────────────────────────
