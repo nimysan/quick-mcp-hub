@@ -377,10 +377,15 @@ async function openForm(type, account){
   const setupHTML = (d.type==='napcat') ? `
     <div class="oauth-box">
       <div class="oauth-head">⚡ 自动配置</div>
-      <div class="help">下面三个字段我来填。前提是你已经装好 NapCat、启动过一次并用手机扫码登录过
-        —— 还没装的话，<a href="https://napneko.github.io/guide/boot/Shell" target="_blank" rel="noreferrer">按官方文档装一个</a>
-        （Windows、macOS、Linux、Docker 都在那一页；Windows 下载的是
-        <code>NapCat.Shell.Windows.Node.zip</code>）。</div>
+      <div class="help">下面三个字段我来填。前提是你已经装好 NapCat、启动过一次并用手机扫码登录过。</div>
+      <div class="help">还没装？Windows 上最省事的是
+        <a href="https://github.com/NapNeko/NapCatQQ-Desktop/releases/latest" target="_blank" rel="noreferrer">NapCatQQ-Desktop</a>
+        （一个安装包，带界面，能引导你装 QQ 并一键启停）·
+        自己解压的话下
+        <a href="https://github.com/NapNeko/NapCatQQ/releases/latest" target="_blank" rel="noreferrer">NapCat.Shell.Windows.Node.zip</a>
+        · 各平台装法见
+        <a href="https://napneko.github.io/guide/boot/Shell" target="_blank" rel="noreferrer">官方文档</a>
+      </div>
       <div class="field" style="margin:8px 0 0">
         <label>NapCat 的文件夹（留空就让我自己找）</label>
         <input type="text" id="ncdir" placeholder="留空直接点检测；找不到再把文件夹地址粘进来">
