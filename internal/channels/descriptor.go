@@ -334,11 +334,13 @@ func httpDescriptor(s httpchan.Spec) Descriptor {
 // 不可添加。实现一个就把它从这里挪成真的描述符 —— 声明式渠道只要往
 // httpchan/catalog 里加一个 JSON 文件，不用碰这里的 Go 代码。
 //
+// planned 是「待实现」的占位卡片。
+//
+// 现在刻意为空：配置页面上只出现真实验证过的渠道。一张「待实现」的卡片对
+// 用户没有价值 —— 他看到的是一个点不动的东西，而那是我们的内部状态。
+//
 // Version 留 0：0 表示「还没有任何一版声明」，页面上也就不显示版本角标。
-var planned = []Descriptor{
-	{Type: "feishu", Name: "飞书", Icon: "💬", Summary: "待实现 · 消息与文档",
-		Integration: "feishu", Tags: []string{"im"}},
-}
+var planned = []Descriptor{}
 
 // All 返回全部渠道描述符，可用的在前。
 func All() []Descriptor {

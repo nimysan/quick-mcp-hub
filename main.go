@@ -25,12 +25,15 @@ import (
 	"os"
 	"os/signal"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"golang.org/x/term"
 
+	"github.com/nimysan/mcp-hub/internal/applog"
+	"github.com/nimysan/mcp-hub/internal/assets"
 	"github.com/nimysan/mcp-hub/internal/catalog"
 	"github.com/nimysan/mcp-hub/internal/channels"
 	"github.com/nimysan/mcp-hub/internal/config"
@@ -38,6 +41,7 @@ import (
 	"github.com/nimysan/mcp-hub/internal/httpchan"
 	"github.com/nimysan/mcp-hub/internal/mailbox"
 	"github.com/nimysan/mcp-hub/internal/tools"
+	"github.com/nimysan/mcp-hub/internal/tray"
 	"github.com/nimysan/mcp-hub/internal/wasmplug"
 	"github.com/nimysan/mcp-hub/internal/webui"
 )
@@ -76,7 +80,14 @@ func main() {
 
 	log.SetFlags(0)
 	log.SetPrefix("mcp-hub: ")
-	log.SetOutput(os.Stderr) // 显式声明：绝不能是 os.Stdout
+	// 日志同时写文件。Windows 上的 exe 用 -H windowsgui 编译，没有控制台，
+	// stderr 没有地方可去——没有这一步，程序出错就是彻底静默，用户看到的
+	// 是双击之后什么都没发生。
+	logWriter, logPath, logErr := applog.Open(config.Namespace)
+	log.SetOutput(logWriter) // 显式声明：绝不能是 os.Stdout
+	if logErr != nil {
+		log.Printf("日志文件打不开，只写 stderr: %v", logErr)
+	}
 	mailbox.Version = version
 
 	if *showVersion {
@@ -152,16 +163,7 @@ func main() {
 	// 辅助脚本」是不能接受的，所以把默认值做对，而不是写进文档。
 	// -ui / -serve 两个显式参数仍然保留：自动判断只是默认值，猜错了也有救。
 	if *uiFlag || (!*serveFlag && !stdinIsPipe()) {
-		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-		defer stop()
-		srv := webui.New(mgr, version)
-		if !*noBrowser {
-			srv.OnReady = func(url string) { webui.OpenInBrowser(url) }
-		}
-		if err := srv.Listen(ctx, *uiPort); err != nil {
-			log.Fatalf("配置页面退出: %v", err)
-		}
-		return
+		os.Exit(runUI(mgr, logPath, *uiPort, *noBrowser))
 	}
 
 	// 邮件渠道仍走环境变量那套配置；缺失不再是致命错误 —— 只配了
@@ -279,6 +281,92 @@ func main() {
 	if err := server.Run(ctx, &mcp.StdioTransport{}); err != nil {
 		log.Fatalf("服务退出: %v", err)
 	}
+}
+
+// runUI 跑配置页面，并让这个程序表现得像一个普通软件。
+//
+// 三件事合起来才成立，单做任何一件都更糟：
+//
+// 单实例。第二次双击主程序时，旧行为是绑端口失败，用户看到一句
+// address already in use——而在没有控制台的 Windows 上是什么都看不到。
+// 现在先探一下那个端口，认出是自己就把已经在跑的那份的页面打开。
+//
+// 托盘图标。去掉黑窗口之后，如果再没有托盘，用户关掉配置页面就只剩一个
+// 看不见的进程：没有入口把页面叫回来，也没有办法退出它。
+//
+// 失败要看得见。-H windowsgui 下 log.Fatalf 只写进日志文件，所以起不来
+// 时弹一个消息框——否则「双击了没反应」是用户唯一的信息。
+func runUI(mgr *channels.Manager, logPath string, port int, noBrowser bool) int {
+	if url, ok := webui.ProbeRunning(port); ok {
+		log.Printf("已经有一份 mcp-hub 在运行，打开它的页面：%s", url)
+		// -no-browser 在这条路上也得算数：服务器场景下不该弹窗口。
+		if !noBrowser {
+			webui.OpenInBrowser(url)
+		}
+		return 0
+	}
+
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	srv := webui.New(mgr, version)
+	srv.LogPath = logPath
+
+	// 端口为 0 时由系统分配，真实地址只有 OnReady 知道，所以页面地址用
+	// atomic 存——托盘的回调在另一个 goroutine 上读它。
+	var pageURL atomic.Value
+	pageURL.Store(fmt.Sprintf("http://127.0.0.1:%d", port))
+	srv.OnReady = func(url string) {
+		pageURL.Store(url)
+		if !noBrowser {
+			webui.OpenInBrowser(url)
+		}
+	}
+
+	srvErr := make(chan error, 1)
+	go func() {
+		err := srv.Listen(ctx, port)
+		srvErr <- err
+		if err != nil {
+			// 服务没起来就别留一个点了没反应的托盘图标。
+			tray.Quit()
+		}
+	}()
+
+	openPage := func() { webui.OpenInBrowser(pageURL.Load().(string)) }
+	err := tray.Run(tray.Options{
+		Icon:    assets.Icon,
+		Tooltip: "mcp-hub · 渠道配置",
+		OnOpen:  openPage,
+		OnLog:   func() { webui.OpenInBrowser(pageURL.Load().(string) + "/api/log") },
+		ShowLog: logPath != "",
+		OnQuit:  stop,
+	})
+	if errors.Is(err, tray.ErrUnsupported) {
+		// 没有托盘的平台退回原来的行为：等服务结束或收到退出信号。
+		select {
+		case <-ctx.Done():
+		case e := <-srvErr:
+			return reportUIError(e)
+		}
+	}
+	// 托盘退出后给服务一点时间收尾，顺带把它的错误取出来。
+	select {
+	case e := <-srvErr:
+		return reportUIError(e)
+	case <-time.After(2 * time.Second):
+		return 0
+	}
+}
+
+func reportUIError(err error) int {
+	if err == nil {
+		return 0
+	}
+	log.Printf("配置页面退出: %v", err)
+	tray.Alert("mcp-hub 起不来", err.Error()+
+		"\n\n最常见的原因是那个端口被别的程序占用了。可以用 -ui-port 换一个端口。")
+	return 1
 }
 
 func runCatalogList() int {

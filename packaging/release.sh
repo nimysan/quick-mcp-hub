@@ -58,12 +58,20 @@ for t in "${targets[@]}"; do
   dir="${OUT}/${name}"
   mkdir -p "$dir"
 
+  # Windows 上额外加 -H windowsgui：链成 GUI 子系统程序，双击时**不弹控制台
+  # 窗口**。那个黑框是业务用户最先抱怨的东西。代价是 stderr 没有地方可去，
+  # 所以程序把日志同时写到文件（internal/applog），页面和托盘都有查看入口。
+  #
+  # 这不影响 MCP 服务模式：stdio 的句柄是客户端 spawn 时给的管道，子系统
+  # 标志只决定要不要分配控制台。
+  ldflags="$LDFLAGS"
   if [ "$goos" = "windows" ]; then
+    ldflags="$LDFLAGS -H windowsgui"
     go run "github.com/akavel/rsrc@${RSRC_VER}" \
       -ico packaging/windows/mcp-hub.ico -arch "$goarch" \
       -o "rsrc_windows_${goarch}.syso"
   fi
-  GOOS="$goos" GOARCH="$goarch" go build -trimpath -ldflags="$LDFLAGS" -o "$dir/$exe" .
+  GOOS="$goos" GOARCH="$goarch" go build -trimpath -ldflags="$ldflags" -o "$dir/$exe" .
   cp "packaging/快速开始.md" "$dir/快速开始.md"
 
   for p in $PLUGINS; do

@@ -16,6 +16,7 @@
     PYTHONPATH=<pillow 所在目录> python3 packaging/logo.py
 """
 import os
+import shutil
 import sys
 
 from PIL import Image, ImageDraw
@@ -88,9 +89,15 @@ def main() -> int:
     # Windows 的 .ico：带上 16 到 256 的各档，让系统在每种显示场景下都能挑到
     # 不用缩放的那一档。Pillow 对大尺寸会用 PNG 压缩存，Vista 以后都认。
     ico = os.path.join(OUT, "windows", "mcp-hub.ico")
+    # 同一份还要有一个副本在 Go 包目录里：go:embed 只能嵌入自己包目录下的
+    # 文件，而页面的 favicon 和 Windows 托盘图标都要嵌进二进制。两份必须
+    # 一致，由 internal/assets/assets_test.go 钉住。
+    embedded = os.path.join(os.path.dirname(OUT), "internal", "assets", "mcp-hub.ico")
     os.makedirs(os.path.dirname(ico), exist_ok=True)
+    os.makedirs(os.path.dirname(embedded), exist_ok=True)
     icon.save(ico, format="ICO",
               sizes=[(16, 16), (24, 24), (32, 32), (48, 48), (64, 64), (128, 128), (256, 256)])
+    shutil.copyfile(ico, embedded)
 
     # 顺手出 macOS 的 iconset，以后做 .app / dmg 时 iconutil 直接用。
     iconset = os.path.join(OUT, "macos", "MCPHub.iconset")

@@ -8,7 +8,7 @@
     "im"
   ],
   "integration": "napcat",
-  "helpUrl": "https://github.com/NapNeko/NapCatQQ",
+  "helpUrl": "https://napneko.github.io/guide/boot/Shell",
   "local": true,
   "baseUrlField": "endpoint",
   "account": {

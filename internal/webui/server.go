@@ -13,22 +13,30 @@ import (
 	"embed"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"net"
 	"net/http"
 	"time"
 
+	"github.com/nimysan/mcp-hub/internal/applog"
+	"github.com/nimysan/mcp-hub/internal/assets"
 	"github.com/nimysan/mcp-hub/internal/channels"
 )
 
 //go:embed index.html
-var assets embed.FS
+var assetsFS embed.FS
 
 // Server 承载渠道配置页面。
 type Server struct {
 	mgr     *channels.Manager
 	mux     *http.ServeMux
 	version string
+
+	// LogPath 是本次运行的日志文件，页面和托盘的「查看日志」要用它。
+	// 空表示这次没写日志文件，那两个入口就不显示——一个点了没反应的
+	// 菜单比没有菜单更糟。
+	LogPath string
 
 	// OnReady 在监听端口绑定成功、开始服务之前调用一次，参数是页面地址。
 	// 用来自动把窗口打开 —— 放在绑定之后才调，是为了不让用户看到一个指向
@@ -44,15 +52,133 @@ func New(mgr *channels.Manager, version string) *Server {
 
 func (s *Server) routes() {
 	s.mux.HandleFunc("/", s.handleIndex)
-	s.mux.HandleFunc("/api/descriptors", s.handleDescriptors)
-	s.mux.HandleFunc("/api/channels", s.handleChannels) // GET 列表 / POST 保存
-	s.mux.HandleFunc("/api/channels/test", s.handleTest)
-	s.mux.HandleFunc("/api/channels/delete", s.handleDelete)
+	s.mux.HandleFunc("/favicon.ico", s.handleFavicon)
+	// healthz 刻意不过同站闸：它是**单实例探测**用的，由第二次双击起来的那个
+	// 进程发起（非浏览器，不带那两个头，本来就会被放过），而且只回版本号。
+	s.mux.HandleFunc("/healthz", s.handleHealthz)
+	// 每个 /api 端点都过一道同站闸，见 sameOrigin。
+	api := func(path string, h http.HandlerFunc) { s.mux.HandleFunc(path, guard(h)) }
+	api("/api/descriptors", s.handleDescriptors)
+	api("/api/channels", s.handleChannels) // GET 列表 / POST 保存
+	api("/api/channels/test", s.handleTest)
+	api("/api/channels/delete", s.handleDelete)
+	api("/api/log", s.handleLog)
 	// OAuth 设备流：开始授权 / 查状态 / 放弃。轮询由服务端做（见 connect.go），
 	// 这里只是把状态端出来。
-	s.mux.HandleFunc("/api/oauth/start", s.handleOAuthStart)
-	s.mux.HandleFunc("/api/oauth/status", s.handleOAuthStatus)
-	s.mux.HandleFunc("/api/oauth/cancel", s.handleOAuthCancel)
+	api("/api/oauth/start", s.handleOAuthStart)
+	api("/api/oauth/status", s.handleOAuthStatus)
+	api("/api/oauth/cancel", s.handleOAuthCancel)
+	// NapCat 自动配置（见 napcat.go）。
+	s.napcatRoutes(api)
+}
+
+// healthApp 是 /healthz 回的标记。端口被别的程序占着时，探测要能区分
+// 「另一份 mcp-hub」和「某个无关服务」——后者不该被当成自己人。
+const healthApp = "mcp-hub"
+
+// handleFavicon 回程序图标。
+//
+// 没有它，Chromium 的 --app 窗口在标题栏和任务栏里显示的是一个**地球**——
+// 对「看起来像个正规软件」这件事，这是最便宜也最显眼的一处。
+func (s *Server) handleFavicon(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "image/x-icon")
+	w.Header().Set("Cache-Control", "public, max-age=86400")
+	_, _ = w.Write(assets.Icon)
+}
+
+// handleHealthz 让另一个进程认出「这个端口上跑的是 mcp-hub」。
+//
+// 用途是单实例：用户第二次双击主程序时，旧行为是绑端口失败——他看到的是
+// 一句 address already in use，而在没有控制台的 Windows 上是**什么都看不到**。
+func (s *Server) handleHealthz(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, map[string]any{"app": healthApp, "version": s.version})
+}
+
+// handleLog 回日志文件的尾部。
+//
+// Windows 上的 exe 用 -H windowsgui 编译，没有控制台，所以日志只在文件里。
+// 这个端点让「查看日志」在页面和托盘菜单里都能用，不必让用户去找路径。
+func (s *Server) handleLog(w http.ResponseWriter, r *http.Request) {
+	if s.LogPath == "" {
+		http.Error(w, "这次运行没有写日志文件", http.StatusNotFound)
+		return
+	}
+	text, err := applog.Tail(s.LogPath, 256<<10)
+	if err != nil {
+		http.Error(w, "读日志失败: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-store")
+	_, _ = w.Write([]byte(text))
+}
+
+// ProbeRunning 探测这个端口上是否已经有一份 mcp-hub 在跑，返回它的页面地址。
+//
+// 超时给得很短：这是启动路径上的一步，用户正在等窗口弹出来。
+func ProbeRunning(port int) (string, bool) {
+	url := fmt.Sprintf("http://127.0.0.1:%d", port)
+	c := &http.Client{Timeout: 700 * time.Millisecond}
+	resp, err := c.Get(url + "/healthz")
+	if err != nil {
+		return "", false
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return "", false
+	}
+	var out struct{ App string }
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<10)).Decode(&out); err != nil {
+		return "", false
+	}
+	// 占着端口的是别的程序时不认——否则会把用户送到一个毫无关系的页面。
+	return url, out.App == healthApp
+}
+
+// guard 挡住跨站请求。
+//
+// 这个页面是一个**没有登录**的本机 HTTP 服务：用户在浏览器里打开的任何一个
+// 网页都能向 127.0.0.1:7801 发 POST。原先的端点最多改渠道配置，现在还能写
+// NapCat 的配置文件、启动一个进程 —— 没有这道闸，一个恶意网页就能借它在
+// 用户机器上运行程序。
+//
+// 浏览器对跨站 fetch 一定带 Origin，对同站 fetch 带 Sec-Fetch-Site: same-origin，
+// 而网页脚本**无法伪造**这两个头。两个头都没有时放过：那是 curl 这类非浏览器
+// 调用，而同机进程本来就能直接执行代码，不需要绕我们。
+func guard(h http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if !sameOrigin(r) {
+			writeErr(w, http.StatusForbidden, fmt.Errorf("跨站请求已拒绝"))
+			return
+		}
+		h(w, r)
+	}
+}
+
+func sameOrigin(r *http.Request) bool {
+	switch r.Header.Get("Sec-Fetch-Site") {
+	case "", "same-origin", "none":
+	default:
+		return false
+	}
+	if o := r.Header.Get("Origin"); o != "" && o != "http://"+r.Host {
+		return false
+	}
+	return true
+}
+
+// decodeJSON 读 POST 的 JSON 请求体，顺带把方法检查收在一处。
+// 返回 false 表示已经回过错误，调用方直接 return。
+func decodeJSON(w http.ResponseWriter, r *http.Request, v any) bool {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return false
+	}
+	if err := json.NewDecoder(r.Body).Decode(v); err != nil {
+		writeErr(w, http.StatusBadRequest, err)
+		return false
+	}
+	return true
 }
 
 // Listen 在 127.0.0.1 上监听。port 为 0 时由系统分配，返回实际地址。
@@ -88,7 +214,7 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	data, err := assets.ReadFile("index.html")
+	data, err := assetsFS.ReadFile("index.html")
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -104,6 +230,7 @@ func (s *Server) handleDescriptors(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{
 		"version":     s.version,
 		"configPath":  s.mgr.Store().Path(),
+		"logPath":     s.LogPath,
 		"descriptors": channels.All(),
 	})
 }

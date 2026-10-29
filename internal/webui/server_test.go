@@ -17,7 +17,7 @@ import (
 // 而配置文件根本没被写过。这类 bug 不会自己暴露，所以用测试钉住：
 // 事件处理一律在 JS 里挂闭包，不准拼进 HTML 属性。
 func TestNoInlineHandlersWithInterpolation(t *testing.T) {
-	data, err := assets.ReadFile("index.html")
+	data, err := assetsFS.ReadFile("index.html")
 	if err != nil {
 		t.Fatal(err)
 	}
