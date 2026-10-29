@@ -73,7 +73,8 @@
   .oauth-box.lead{border-color:var(--accent);border-width:1.5px;padding:16px}
   .oauth-box.lead button{font-size:15px;padding:10px 20px;margin-top:10px}
   .risk{border:1px solid var(--warn);border-radius:10px;padding:12px 14px;margin:4px 0 14px}
-  .tp{font-size:11px;padding:1px 6px;border-radius:5px;border:1px solid var(--warn);color:var(--warn)}
+  .tp{font-size:11px;padding:1px 6px;border-radius:5px;border:1px solid var(--warn);
+      color:var(--warn);white-space:nowrap}
   .oauth-head{font-weight:600;font-size:13px;margin-bottom:6px}
   .oauth-code{margin-top:10px}
   .code-row{display:flex;align-items:center;gap:10px;margin-top:4px}
@@ -85,10 +86,20 @@
   .mk.has{border-color:color-mix(in srgb,var(--ok) 45%,var(--border))}
   .mk.soon{opacity:.5}
   .mk .top{display:flex;align-items:center;gap:7px}
-  .mk .nm{font-weight:600}
+  /* 名字吃掉剩余宽度、id 角标不压缩。原来三者在一行里互相挤，长名字会被
+     压断在词中间（出现过「GitHub（wasm 插」/「件)」这种断行）。 */
+  .mk .nm{font-weight:600;flex:1;min-width:0}
+  .mk .top code{flex:none}
+  /* 风险徽标单独一行：和名字挤在一行时它自己也会断成两行（「第三方扩」/
+     「展」），而且把标题挤成三行高。 */
+  .mk .tags{display:flex;flex-wrap:wrap;align-items:center;gap:6px}
   .mk .sm{font-size:12px;color:var(--muted);flex:1}
+  /* tl 是给「工具名清单」那种一行等宽文本用的，截断是刻意的。整句提示
+     要用 note：正常字体、正常换行 —— 把一句话截掉会正好吃掉重点那半句
+     （「…要你在表单里另外打」）。 */
   .mk .tl{font-size:11px;color:var(--muted);font-family:ui-monospace,monospace;
           overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .mk .note{font-size:11px;line-height:1.5}
   .mk .act{display:flex;align-items:center;gap:8px;margin-top:2px}
   .mk .act .mine{font-size:11px;color:var(--ok);margin-right:auto}
   .mk button{padding:4px 10px;font-size:12px}
@@ -289,15 +300,17 @@ function renderMarket(){
       <div class="top">
         <span>${d.icon||"🔌"}</span>
         <span class="nm">${esc(d.name)}</span>
+        <code>${esc(d.type)}</code>
+      </div>
+      ${(d.version||d.thirdPartyCode||d.localProgram)?`<div class="tags">
         ${d.version?`<span class="ver">v${d.version}</span>`:''}
         ${d.thirdPartyCode?'<span class="tp" title="这个渠道的代码不是本程序写的，它跑在隔离环境里，不能读你的文件和密码">🧩 第三方扩展</span>':''}
         ${d.localProgram?'<span class="tp" title="这个渠道连的是你自己机器上另一个程序，要先装好它">💻 需本机程序</span>':''}
-        <code style="margin-left:auto">${esc(d.type)}</code>
-      </div>
+      </div>`:''}
       <div class="sm">${esc(d.summary)}</div>
-      ${d.thirdPartyCode?`<div class="tl" style="color:var(--warn)">它只能访问：${esc((d.allowedHosts||[]).join(" "))}</div>`:''}
-      ${d.localProgram?`<div class="tl" style="color:var(--warn)">要先在这台机器上装好并运行那个程序，填完表单不会自己装</div>`:''}
-      ${wn?`<div class="tl" style="color:var(--warn)">默认只读。发送、修改类操作要你在表单里另外打开</div>`:''}
+      ${d.thirdPartyCode?`<div class="note" style="color:var(--warn)">它只能访问：${esc((d.allowedHosts||[]).join(" "))}</div>`:''}
+      ${d.localProgram?`<div class="note" style="color:var(--warn)">要先在这台机器上装好并运行那个程序，填完表单不会自己装</div>`:''}
+      ${wn?`<div class="note" style="color:var(--warn)">默认只读。发送、修改类操作要你在表单里另外打开</div>`:''}
       <div class="act">
         ${n?`<span class="mine">✓ 已连接 ${n} 个账号</span>`:'<span class="mine"></span>'}
         ${d.available
