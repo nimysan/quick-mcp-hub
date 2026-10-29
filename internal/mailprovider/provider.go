@@ -32,6 +32,15 @@ type Provider struct {
 }
 
 // All 是支持的服务商，顺序即界面上的展示顺序。
+//
+// 只留真实验证过的那一个。163 / 126 / Gmail / Outlook 走的是**完全相同**的
+// IMAP/SMTP 实现，只是主机和授权码入口不同，所以它们极可能本来就能用 ——
+// 但「极可能」不是「验证过」，而配置页面上出现一个没连通过的卡片，代价是
+// 用户照着它走到一半卡住。验证过一个就把它加回来，这里加一条即可。
+//
+// 注意 internal/config/config.go 里还有一张域名→主机的映射表，仍然认
+// gmail.com / outlook.com：那是环境变量那条老路（MCPHUB_MAIL_USER）的
+// 自动识别，和配置页面无关，刻意保留 —— 删掉会让已经这么配的客户端直接坏掉。
 var All = []Provider{
 	{
 		Type: "qqmail", Name: "QQ 邮箱", Icon: "📧",
@@ -40,38 +49,6 @@ var All = []Provider{
 		SMTPHost: "smtp.qq.com", SMTPPort: 465,
 		SecretLabel: "授权码",
 		SecretHelp:  "QQ邮箱网页版 → 设置 → 账号与安全 → 安全设置 → 开启服务（会收一条短信）→ 生成授权码（16 位小写字母，不是 QQ 登录密码）",
-	},
-	{
-		Type: "mail163", Name: "网易 163", Icon: "📧",
-		Domains:  []string{"163.com"},
-		IMAPHost: "imap.163.com", IMAPPort: 993,
-		SMTPHost: "smtp.163.com", SMTPPort: 465,
-		SecretLabel: "授权码",
-		SecretHelp:  "设置 → POP3/SMTP/IMAP → 开启服务 → 新增授权密码",
-	},
-	{
-		Type: "mail126", Name: "网易 126", Icon: "📧",
-		Domains:  []string{"126.com"},
-		IMAPHost: "imap.126.com", IMAPPort: 993,
-		SMTPHost: "smtp.126.com", SMTPPort: 465,
-		SecretLabel: "授权码",
-		SecretHelp:  "设置 → POP3/SMTP/IMAP → 开启服务 → 新增授权密码",
-	},
-	{
-		Type: "gmail", Name: "Gmail", Icon: "📧",
-		Domains:  []string{"gmail.com", "googlemail.com"},
-		IMAPHost: "imap.gmail.com", IMAPPort: 993,
-		SMTPHost: "smtp.gmail.com", SMTPPort: 465,
-		SecretLabel: "应用专用密码",
-		SecretHelp:  "Google 账号 → 安全性 → 两步验证 → 应用专用密码",
-	},
-	{
-		Type: "outlook", Name: "Outlook", Icon: "📧",
-		Domains:  []string{"outlook.com", "hotmail.com", "live.com"},
-		IMAPHost: "outlook.office365.com", IMAPPort: 993,
-		SMTPHost: "smtp.office365.com", SMTPPort: 465,
-		SecretLabel: "应用密码",
-		SecretHelp:  "Microsoft 账号 → 安全信息 → 应用密码",
 	},
 }
 

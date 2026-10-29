@@ -143,7 +143,7 @@ func TestLayerPriority(t *testing.T) {
 	if ro, ok := c.ByID("remoteonly"); !ok || ro.Version != 1 {
 		t.Error("远端独有的渠道应当生效")
 	}
-	if _, ok := c.ByID("k3cloud"); !ok {
+	if _, ok := c.ByID("jira"); !ok {
 		t.Error("没被覆盖的内置渠道应当照常生效")
 	}
 }
