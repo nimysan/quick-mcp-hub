@@ -546,29 +546,68 @@ make package PLUGINS=ghwasm       # 把指定的 wasm 插件一起打进去
 ```
 
 输出在 `dist/pkg/`：五个平台各一个 zip，加一份 `SHA256SUMS.txt`。
-每个包里三样东西：
+每个包里两样东西：
 
 | 文件 | 作用 |
 |---|---|
-| `mcp-hub` / `mcp-hub.exe` | 主程序，单文件，无运行时依赖 |
-| `打开配置页面.bat` / `.command` / `.sh` | 双击就能开配置页面的入口 |
+| `mcp-hub` / `mcp-hub.exe` | 主程序，单文件，无运行时依赖。**双击它就是配置页面** |
 | `快速开始.md` | 给客户看的文档：装哪、怎么配、怎么接客户端、出问题怎么查 |
 
-### 为什么要那个启动入口
+### 像一个普通软件
 
-**双击主程序做的是错事。** 不带参数启动的是给 AI 客户端用的 stdio 服务，在
-Windows 上双击只会看到一个窗口一闪而过。启动入口帮客户走对那一步（`-ui`），
-顺手把浏览器也打开。
+这个产品的用户是财务和运营。「双击哪个文件」「自己在浏览器敲地址」「那个黑窗口
+别关」每一条都是不该存在的认知负担，所以它们是代码问题，不是文档问题。
 
-### 两处打包上的坑，都已经处理
+**双击主程序就是界面。** 不带参数时程序按 stdin 判断自己被谁启动：是管道就跑
+MCP 服务（AI 客户端 spawn），是终端 / NUL / 拿不到就打开配置页面（用户双击）。
+拿不到时按「用户启动」处理——双击比脚本调用常见得多，而且猜错的代价不对称。
+`-ui` / `-serve` 仍然保留，客户端配置里写显式参数，那条路就永不依赖这个猜测。
+
+**自己开一个干净窗口。** 优先探测 Chrome / Edge / Brave，用 `--app=` 开一个没有
+地址栏、没有标签栏、任务栏里独立图标的窗口。只有 Safari 时退回普通标签页。
+
+**没有黑窗口。** Windows 目标额外带 `-H windowsgui`（见 `packaging/release.sh`），
+链成 GUI 子系统程序，双击不弹控制台。这不影响 MCP 服务模式：stdio 的句柄是
+客户端 spawn 时给的管道，子系统标志只决定要不要分配控制台。
+
+**有托盘图标**（`internal/tray`，仅 Windows）。左键打开配置页面，右键给
+打开配置页面 / 查看日志 / 退出。这一条和上一条**必须一起做**：去掉控制台之后，
+如果再没有托盘，用户关掉配置页面就只剩一个看不见的进程——没有入口把页面叫
+回来，也没有办法退出它，只能去任务管理器。
+
+仅 Windows 是刻意的。`fyne.io/systray` 的 Windows 实现走
+`golang.org/x/sys/windows` 的纯 syscall，不需要 cgo；而它的 darwin 实现是唯一
+`import "C"` 的文件，一旦在 darwin 上也引用，`CGO_ENABLED=0` 的交叉编译立刻
+要 cgo。所以用 build tag 隔开，darwin 根本不链它（`go list -deps` 下
+darwin 是 0 个 systray 包，windows 是 2 个）。macOS 上「像普通软件」的对应物
+是包成 `.app`（Dock 图标），那是打包层的事。
+
+**日志写文件**（`internal/applog`）。没有控制台，stderr 就没有地方可去——没有
+这一步，程序出错是彻底静默，用户看到的是双击之后什么都没发生。日志同时写
+stderr 和文件（Windows `%LOCALAPPDATA%\mcp-hub\logs`、macOS `~/Library/Logs`、
+Linux `$XDG_STATE_HOME`），超过 2 MiB 把旧的挪成 `.old`。页面右上角和托盘菜单
+都有「查看日志」，所以「把日志发我」不需要客户去找路径。
+
+**页面有 favicon。** 没有它，`--app` 窗口在标题栏和任务栏里显示的是一个**地球**。
+图标嵌在 `internal/assets`（go:embed 只能嵌自己包目录下的文件），和
+`packaging/windows/mcp-hub.ico` 必须一致，这件事由 `assets_test.go` 钉住——
+不然改了 logo 只更新一边，页面和托盘会悄悄留着旧图标。
+
+**第二次双击不报错。** 旧行为是绑端口失败，用户看到一句 address already in use，
+而在没有控制台的 Windows 上是什么都看不到。现在新进程先探 `/healthz`，认出
+是自己就把已经在跑的那份的页面打开然后退出。占着端口的是别的程序时**不认**，
+否则会把用户送到一个毫无关系的页面。
+
+**起不来时弹消息框。** `-H windowsgui` 下 `log.Fatalf` 只写进日志文件，所以
+服务绑不上时走 `tray.Alert`（user32 的 MessageBox）——否则「双击了没反应」
+是用户唯一的信息。
+
+### 打包上的一个坑
 
 **zip 的文件名编码。** macOS 自带的 Info-ZIP 3.0 把非 ASCII 文件名按原始字节存，
 不置 UTF-8（EFS）标志位；中文 Windows 的资源管理器按系统代码页去解，解出来就是
 乱码文件名。所以打包走 `packaging/mkzip.py`（Python 的 `zipfile` 会置那个标志位），
 不用 `zip(1)`。可执行位也在那里写进 `external_attr`，客户解压后不必再 `chmod`。
-
-**`.bat` 要 CRLF 换行。** LF 换行的批处理在某些 Windows 版本上会出怪问题，
-所以 `packaging/打开配置页面.bat` 以 CRLF 保存。
 
 ### 交叉编译不需要目标机
 
