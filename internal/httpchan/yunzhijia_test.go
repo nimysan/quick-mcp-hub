@@ -130,6 +130,45 @@ func newYZJMock(t *testing.T) *yzjMock {
 		})
 	})
 
+	mux.HandleFunc("/gateway/workflow/flow/viewFormInst", func(w http.ResponseWriter, r *http.Request) {
+		body := record(r)
+		if body["formDefId"] == nil || body["formInstId"] == nil {
+			write(w, map[string]any{"data": nil, "success": false, "errorCode": 1201001, "error": "formDefId不能为空"})
+			return
+		}
+		write(w, map[string]any{
+			"data": map[string]any{
+				"formDefId": body["formDefId"], "formInstId": body["formInstId"],
+				"formCodeId": "code-1", "flowInstId": "flow-1",
+				"formStatus": "DOING", "flowType": "solid",
+				"webLink": "https://www.yunzhijia.com/cloudflow/x",
+				"formVo": map[string]any{
+					"widgetMap": map[string]any{"金额": "1280.00", "事由": "差旅"},
+					// widgetVos 是控件模板定义，不是填写的内容，刻意不取。
+					"widgetVos": []any{map[string]any{"noise": true}},
+				},
+			},
+			"success": true, "errorCode": 200, "error": nil,
+		})
+	})
+	mux.HandleFunc("/gateway/workflow/flow/agree", func(w http.ResponseWriter, r *http.Request) {
+		body := record(r)
+		// 真实接口要的是两个嵌套对象：flow 和 form，缺一层就报 "flow不能为空"
+		// / "form不能为空" / "form.formCodeId不能为空"。
+		flow, _ := body["flow"].(map[string]any)
+		form, _ := body["form"].(map[string]any)
+		switch {
+		case flow == nil || flow["flowInstId"] == nil:
+			write(w, map[string]any{"data": nil, "success": false, "errorCode": 1201001, "error": "flow不能为空"})
+		case form == nil:
+			write(w, map[string]any{"data": nil, "success": false, "errorCode": 1201001, "error": "form不能为空"})
+		case form["formCodeId"] == nil:
+			write(w, map[string]any{"data": nil, "success": false, "errorCode": 1201001, "error": "form.formCodeId不能为空"})
+		default:
+			write(w, map[string]any{"data": nil, "success": true, "errorCode": 200, "error": nil})
+		}
+	})
+
 	m.srv = httptest.NewServer(mux)
 	t.Cleanup(m.srv.Close)
 	return m
@@ -368,5 +407,149 @@ func TestYunzhijiaSendNeedsWriteSwitch(t *testing.T) {
 	res := got.(map[string]any)
 	if res["msgId"] != "m-new" {
 		t.Errorf("发送结果应带 msgId，实际 %#v", res)
+	}
+}
+
+// 看单据详情：把填写的内容（formVo.widgetMap）取出来，把控件模板定义
+// （widgetVos）那类噪音留下。同意一张单子之前要靠它给用户复述。
+func TestYunzhijiaApprovalDetail(t *testing.T) {
+	m := newYZJMock(t)
+	c := &Client{}
+	got, _, err := c.Call(context.Background(), m.runtime(t, false), "yunzhijia_approval_detail",
+		map[string]any{"formDefId": "def-1", "formInstId": "inst-1"})
+	if err != nil {
+		t.Fatalf("看详情失败: %v", err)
+	}
+	d := got.(map[string]any)
+	// formCodeId 必须带出来：同意那一步要它，而待办列表里可能没有。
+	if d["formCodeId"] != "code-1" {
+		t.Errorf("formCodeId 没取到（同意时要用）: %#v", d)
+	}
+	if d["formStatus"] != "DOING" {
+		t.Errorf("formStatus 没取到: %#v", d)
+	}
+	wm, ok := d["formVo.widgetMap"].(map[string]any)
+	if !ok || wm["金额"] != "1280.00" {
+		t.Errorf("填写的内容应从 formVo.widgetMap 取出来，实际 %#v", d)
+	}
+	if _, noisy := d["formVo.widgetVos"]; noisy {
+		t.Errorf("控件模板定义是噪音，不该带出来: %#v", d)
+	}
+	if tool, _ := m.runtime(t, false).Spec.Tool("yunzhijia_approval_detail"); !tool.ReadOnly {
+		t.Error("看详情是只读的")
+	}
+}
+
+// 同意审批是写操作：写开关关着时一个请求都不该发出去。
+// 这条比发消息更要紧 —— 它推进的是真实公司流程，不可逆。
+func TestYunzhijiaApprovalAgreeNeedsWriteSwitch(t *testing.T) {
+	m := newYZJMock(t)
+	c := &Client{}
+	args := map[string]any{
+		"formDefId": "def-1", "formInstId": "inst-1",
+		"formCodeId": "code-1", "flowInstId": "flow-1",
+	}
+
+	_, _, err := c.Call(context.Background(), m.runtime(t, false), "yunzhijia_approval_agree", args)
+	if err == nil {
+		t.Fatal("写开关没开时不该同意任何单据")
+	}
+	if !strings.Contains(err.Error(), "写开关") {
+		t.Errorf("报错应说明是写开关，实际 %v", err)
+	}
+	m.mu.Lock()
+	calls := len(m.calls)
+	m.mu.Unlock()
+	if calls != 0 {
+		t.Fatalf("被开关挡住时不该发出任何请求，实际发了 %d 次", calls)
+	}
+}
+
+// 四个 ID 要落到两个嵌套对象里：flow.flowInstId 和 form.{formDefId,
+// formInstId, formCodeId}。平铺发过去真实接口只回「flow不能为空」。
+func TestYunzhijiaApprovalAgreeNestsBody(t *testing.T) {
+	m := newYZJMock(t)
+	c := &Client{}
+	_, _, err := c.Call(context.Background(), m.runtime(t, true), "yunzhijia_approval_agree",
+		map[string]any{
+			"formDefId": "def-1", "formInstId": "inst-1",
+			"formCodeId": "code-1", "flowInstId": "flow-1",
+		})
+	if err != nil {
+		t.Fatalf("同意失败: %v", err)
+	}
+	body := m.body()
+	flow, ok := body["flow"].(map[string]any)
+	if !ok || flow["flowInstId"] != "flow-1" {
+		t.Errorf("flowInstId 应落在 flow 对象里，实际 body=%#v", body)
+	}
+	form, ok := body["form"].(map[string]any)
+	if !ok {
+		t.Fatalf("form 对象没拼出来，实际 body=%#v", body)
+	}
+	for k, want := range map[string]string{
+		"formDefId": "def-1", "formInstId": "inst-1", "formCodeId": "code-1",
+	} {
+		if form[k] != want {
+			t.Errorf("form.%s = %v, 想要 %s（body=%#v）", k, form[k], want, body)
+		}
+	}
+	// 平铺的键不该同时出现 —— 真实接口只认嵌套那份，留着平铺的只会让
+	// 「到底发出去的是什么」看不清。
+	for _, k := range []string{"formDefId", "formInstId", "formCodeId", "flowInstId"} {
+		if _, flat := body[k]; flat {
+			t.Errorf("%s 不该平铺在顶层: %#v", k, body)
+		}
+	}
+}
+
+// 缺任何一个 ID 都要在宿主侧拦下来并点名缺哪个：对一个不可逆的操作，
+// 「参数错误」这种笼统报错等于让模型去猜。
+func TestYunzhijiaApprovalAgreeRequiresAllIDs(t *testing.T) {
+	m := newYZJMock(t)
+	c := &Client{}
+	full := map[string]any{
+		"formDefId": "def-1", "formInstId": "inst-1",
+		"formCodeId": "code-1", "flowInstId": "flow-1",
+	}
+	for _, missing := range []string{"formDefId", "formInstId", "formCodeId", "flowInstId"} {
+		args := map[string]any{}
+		for k, v := range full {
+			if k != missing {
+				args[k] = v
+			}
+		}
+		_, _, err := c.Call(context.Background(), m.runtime(t, true), "yunzhijia_approval_agree", args)
+		if err == nil {
+			t.Errorf("缺 %s 时不该成功", missing)
+			continue
+		}
+		if !strings.Contains(err.Error(), missing) {
+			t.Errorf("缺 %s 的报错应点名它，实际 %v", missing, err)
+		}
+	}
+}
+
+// 云之家只开放了「同意」：不能有拒绝/退回/撤回/转交的工具，否则就是
+// 声明了一个打不通的接口 —— 模型会调它、失败、然后编一个理由。
+func TestYunzhijiaHasNoRejectTool(t *testing.T) {
+	spec, _ := ByID("yunzhijia")
+	for _, tool := range spec.Tools {
+		for _, banned := range []string{"reject", "rollback", "cancel", "transfer"} {
+			if strings.Contains(tool.Name, banned) {
+				t.Errorf("云之家没有开放 %s，不该声明工具 %s", banned, tool.Name)
+			}
+		}
+	}
+	// 同意这条要在描述里把这个不对称讲清楚，否则模型会以为能拒绝。
+	tool, ok := spec.Tool("yunzhijia_approval_agree")
+	if !ok {
+		t.Fatal("少了同意审批的工具")
+	}
+	if !strings.Contains(tool.Description, "拒绝") {
+		t.Error("同意工具的描述要说明拒绝/退回没有对应工具，该把链接给用户")
+	}
+	if tool.ReadOnly {
+		t.Error("同意审批绝不能标 readOnly —— 那会让它绕过写开关并被免确认直接调")
 	}
 }

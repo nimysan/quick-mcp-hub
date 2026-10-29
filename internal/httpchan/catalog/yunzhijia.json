@@ -199,6 +199,79 @@
       "result": { "path": "data.list", "limit": 50, "meta": ["data.total"] }
     },
     {
+      "name": "yunzhijia_approval_detail",
+      "title": "看审批单据详情",
+      "description": "读一张审批单据的内容：流程状态、各控件填了什么、以及打开它的链接。要同意一张单子之前**必须先用它把单据内容读出来给用户看**——待办列表只有标题，看不到金额和明细，而同意是不可逆的。formDefId 和 formInstId 从 yunzhijia_approval_todo 或 yunzhijia_approval_myflow 的列表项取。单据填写的内容在 formVo.widgetMap 里。只能看当前登录用户有权限访问的单据。",
+      "readOnly": true,
+      "method": "POST",
+      "path": "/gateway/workflow/flow/viewFormInst",
+      "params": [
+        {
+          "name": "formDefId",
+          "in": "body",
+          "required": true,
+          "description": "表单定义 ID，从审批列表项取"
+        },
+        {
+          "name": "formInstId",
+          "in": "body",
+          "required": true,
+          "description": "表单实例 ID，从审批列表项取"
+        }
+      ],
+      "result": {
+        "path": "data",
+        "fields": [
+          "formDefId",
+          "formCodeId",
+          "formInstId",
+          "flowInstId",
+          "formStatus",
+          "flowType",
+          "webLink",
+          "mobileLink",
+          "formVo.widgetMap"
+        ]
+      }
+    },
+    {
+      "name": "yunzhijia_approval_agree",
+      "title": "同意审批单据",
+      "description": "以用户本人的身份同意他待办里的一张审批单据。这是本渠道最危险的一个工具：它推进的是真实的公司流程，**不可逆**，而且影响的是别人（报销会被打款、合同会继续往下走）。所以调用前必须做到两件事：先用 yunzhijia_approval_detail 把单据内容读出来复述给用户（金额、事由、申请人），并拿到用户针对这一张单子的明确同意——「把我的待办都批了」这种笼统指令不算，要逐张确认。四个 ID 都必须来自 yunzhijia_approval_todo 的列表项或 yunzhijia_approval_detail 的返回，一个都不能自己拼。注意云之家只开放了「同意」：拒绝、退回、撤回、转交都没有对应工具，用户要做这些就把单据的 webUrl 以链接形式给他，让他自己在云之家里处理。",
+      "method": "POST",
+      "path": "/gateway/workflow/flow/agree",
+      "params": [
+        {
+          "name": "formDefId",
+          "in": "body",
+          "bodyPath": "form.formDefId",
+          "required": true,
+          "description": "表单定义 ID，从待办列表项取"
+        },
+        {
+          "name": "formInstId",
+          "in": "body",
+          "bodyPath": "form.formInstId",
+          "required": true,
+          "description": "表单实例 ID，从待办列表项取"
+        },
+        {
+          "name": "formCodeId",
+          "in": "body",
+          "bodyPath": "form.formCodeId",
+          "required": true,
+          "description": "表单编码 ID。待办列表项里没有的话，先调 yunzhijia_approval_detail 从它的返回里取"
+        },
+        {
+          "name": "flowInstId",
+          "in": "body",
+          "bodyPath": "flow.flowInstId",
+          "required": true,
+          "description": "流程实例 ID，从待办列表项取"
+        }
+      ]
+    },
+    {
       "name": "yunzhijia_calendar_list",
       "title": "查日程",
       "description": "查某段日期范围内当前用户的日程。start 和 end 都是 YYYY-MM-DD 的日期（给到秒也接受）。查「今天有什么安排」就把两者都填今天。",
