@@ -12,12 +12,12 @@
     "name": "name",
     "label": "云之家姓名",
     "placeholder": "张三",
-    "help": "点「连接云之家」后自动填好，不用自己打。它只用来标识这份凭据存在哪个条目下；实际以谁的身份读写由授权的那个账号决定。同名的两个账号会落到同一个条目上，真遇到的话给其中一个改个名字"
+    "help": "连接后自动填好，不用自己打"
   },
   "secret": {
     "name": "token",
     "label": "访问令牌",
-    "help": "正常不用填 —— 点「连接云之家」扫码授权即可，令牌由程序自己取、自己续。这里留着手填是给无法扫码的场景用的"
+    "help": "连接后由程序自己取、自己续"
   },
   "auth": { "kind": "bearer" },
   "oauth": {
@@ -29,8 +29,7 @@
     "refreshUrl": "https://www.yunzhijia.com/gateway/oauth2/token/refreshToken",
     "verificationUri": "https://www.yunzhijia.com/developers/cli/device-auth.html",
     "scopes": ["searchUserInfo"],
-    "setupUrl": "https://www.yunzhijia.com/home/?m=open&a=login",
-    "help": "不用注册应用、不用填 Client ID：点「连接云之家」会出一个验证码，在手机云之家里确认一次就好。当前借用的是云之家官方 CLI 的应用身份（cli_bb115ff4d68c492e，它的服务端对任何人公开），所以授权页上显示的申请方是「云之家 CLI」而不是本程序 —— 正式对外发布前要换成自己注册的应用"
+    "help": "不用注册应用、不用填 Client ID，手机上确认一次就好。授权页显示的申请方是「云之家 CLI」——本程序借用了它的公开应用身份"
   },
   "postReads": true,
   "failWhen": { "path": "success", "equals": false, "messagePath": "error" },

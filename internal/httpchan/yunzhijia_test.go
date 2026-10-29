@@ -224,6 +224,12 @@ func TestYunzhijiaSpecShape(t *testing.T) {
 	if spec.OAuth.ClientIDField != "" {
 		t.Error("不该让用户填 Client ID —— 借用的是官方 CLI 那个公开的应用身份")
 	}
+	// 借用别人的应用身份这件事必须留在页面上看得见的文案里：用户在授权页
+	// 上看到的申请方是「云之家 CLI」而不是本程序，这是他做安全决定时的
+	// 事实前提。文案被删掉的时候要有用例拦住。
+	if !strings.Contains(spec.OAuth.Help, "云之家 CLI") {
+		t.Error("oauth.help 必须说明授权页显示的申请方是「云之家 CLI」")
+	}
 	// 发消息只能发纯文本：msgType 钉死在 bodyConst 里，不作为参数暴露，
 	// 否则模型能改成 richText，而 richText 的正文会被当结构化元素解析
 	// （@全员就是这么发出去的）。

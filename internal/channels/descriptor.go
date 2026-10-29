@@ -245,8 +245,10 @@ func httpDescriptor(s httpchan.Spec) Descriptor {
 	var oauthInfo *OAuthInfo
 	if s.OAuth != nil {
 		// 有「连接」按钮时手填令牌就不是必填了：两条路取其一。
+		// 不说「上面/下面」——按钮排在表单前还是后由页面按渠道决定
+		// （不需要先填任何东西就能授权的渠道，按钮排在最前面）。
 		secretField.Required = false
-		secretField.Help = strings.TrimSpace(secretField.Help + "。也可以留空，用下面的「连接」按钮授权")
+		secretField.Help = strings.TrimSpace(secretField.Help + "。留空则用「连接」按钮授权")
 		host := ""
 		if u, err := url.Parse(s.OAuth.DeviceCodeURL); err == nil {
 			host = u.Hostname()
