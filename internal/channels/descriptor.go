@@ -87,7 +87,11 @@ type Descriptor struct {
 	// Available 为 false 表示「待实现」，页面上灰掉且不可添加。
 	Available bool `json:"available"`
 	// NeedsReview 表示这份声明里有「方法本身不能证明无害」的只读工具
-	// （见 httpchan.Spec.PostReads），页面上要标出来。
+	// （见 httpchan.Spec.PostReads）。
+	//
+	// 它是发布这份声明时的把关信号，不摆在渠道卡片上：那是我们的内部流程
+	// 状态，对用户不构成任何可做的决定。页面以后要加「显示技术细节」那类
+	// 视图时，它归在那边。
 	NeedsReview bool     `json:"needsReview,omitempty"`
 	Tools       []string `json:"tools,omitempty"`
 	// WriteTools 是 Tools 里会改动外部系统的那些，WriteSwitch 是控制它们的
@@ -245,8 +249,10 @@ func httpDescriptor(s httpchan.Spec) Descriptor {
 	var oauthInfo *OAuthInfo
 	if s.OAuth != nil {
 		// 有「连接」按钮时手填令牌就不是必填了：两条路取其一。
+		// 不说「上面/下面」——按钮排在表单前还是后由页面按渠道决定
+		// （不需要先填任何东西就能授权的渠道，按钮排在最前面）。
 		secretField.Required = false
-		secretField.Help = strings.TrimSpace(secretField.Help + "。也可以留空，用下面的「连接」按钮授权")
+		secretField.Help = strings.TrimSpace(secretField.Help + "。留空则用「连接」按钮授权")
 		host := ""
 		if u, err := url.Parse(s.OAuth.DeviceCodeURL); err == nil {
 			host = u.Hostname()

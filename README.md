@@ -670,6 +670,32 @@ Client ID 只能由你自己注册的 App 提供（公共客户端的 client_id 
 指向攻击者，而用户在那一页输入的是自己真实账号的密码。页面上也把这件事摆出来：
 点按钮前会显示「会把你送到 **github.com** 授权」和申请的权限。
 
+### 方言：流程一样，字段名不一样
+
+设备流的**流程**是通用的（出码 → 用户去确认 → 轮询 → 换令牌），但不是每家都
+照 RFC 8628 写字段名。`dialect` 选择线上格式，留空＝标准：
+
+```jsonc
+"oauth": {
+  "flow": "device",
+  "dialect": "yunzhijia",             // 留空＝rfc8628（GitHub 那种）
+  "clientId": "cli_bb115ff4d68c492e",
+  "deviceCodeUrl": "https://www.yunzhijia.com/gateway/open-apis/oauth2/device/genDeviceCode",
+  "tokenUrl": "https://www.yunzhijia.com/gateway/open-apis/cli/pollTokenByDeviceCode",
+  "refreshUrl": "https://www.yunzhijia.com/gateway/oauth2/token/refreshToken",
+  "verificationUri": "https://www.yunzhijia.com/developers/cli/device-auth.html"
+}
+```
+
+云之家和标准的差别全在格式：请求是 JSON（参数名 `appId`/`deviceCode`，没有
+`grant_type`）、响应裹着一层 `{data,error,errorCode,success}` 信封（授权状态在
+`data` 里面，两层都要判）、刷新在另一个端点上、而且出码响应**不返回验证地址**
+——所以那一页只能由声明给出，并且按和 `deviceCodeUrl` 同样严格的规则校验：它
+正是用户输自己账号密码的地方。
+
+认不出的方言一律拒绝，不退回默认实现：按错误格式去打一个真实授权服务，表现是
+「一直等待授权」这种看不出原因的样子。
+
 ### 轮询放在服务端
 
 授权服务规定了最小轮询间隔，收到 `slow_down` 还要把间隔**加 5 秒**（不是原速

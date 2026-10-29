@@ -234,7 +234,15 @@ func (m *Manager) adoptToken(ctx context.Context, d Descriptor, spec httpchan.Sp
 //
 // 结果的键是声明里写的字段路径（如 "login"），所以直接按名字取；取不到就
 // 返回空，由调用方报告，而不是在这里猜一个。
+//
+// 只有一条记录的数组按对象处理：有的系统没有「查我自己」这个接口，身份要
+// 走批量接口问（云之家的 getPersonInfos 不传 openId 时就返回只含自己的
+// 一条数组）。对「给这份凭据起个名字」来说，一条记录的数组和一个对象是
+// 同一件事；不认它的后果是连接成功了却报「问不出账号名」。
 func pickIdentityField(identity any, field string) string {
+	if arr, ok := identity.([]any); ok && len(arr) == 1 {
+		identity = arr[0]
+	}
 	m, ok := identity.(map[string]any)
 	if !ok {
 		return ""
