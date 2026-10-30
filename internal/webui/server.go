@@ -17,6 +17,8 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/nimysan/mcp-hub/internal/applog"
@@ -226,11 +228,31 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 	w.Write(data)
 }
 
+// exePath 返回本程序的绝对路径，给页面上的「接入 AI 客户端」用。
+//
+// 必须是运行时探测而不是写死安装路径：用户可能跑的是解压出来的绿色版
+// （放在下载目录里），也可能跑的是安装版。给错路径的后果是客户端报
+// 「not found on PATH」，而他完全看不出哪里错了 —— 这件事真实发生过。
+//
+// EvalSymlinks 是为了 macOS 上通过符号链接启动的情形：客户端 spawn 的是
+// 这个路径，所以要给出能真正执行到的那一个。
+func exePath() string {
+	p, err := os.Executable()
+	if err != nil {
+		return ""
+	}
+	if real, err := filepath.EvalSymlinks(p); err == nil {
+		p = real
+	}
+	return p
+}
+
 func (s *Server) handleDescriptors(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{
 		"version":     s.version,
 		"configPath":  s.mgr.Store().Path(),
 		"logPath":     s.LogPath,
+		"exePath":     exePath(),
 		"descriptors": channels.All(),
 	})
 }

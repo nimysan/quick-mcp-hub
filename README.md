@@ -2,17 +2,31 @@
 
 <img src="packaging/logo.png" width="96" alt="MCP Hub">
 
-单文件可执行的 MCP 服务器：把你用的各个系统当「渠道」接进来，凭据存在操作系统
-自己的密码管理器里。渠道分两类：
+**把企业系统接进 Amazon Quick。** 业务人员装一个程序、在页面上填一次账号，
+Quick 里就多出一批能用的功能：读写邮箱、查 GitHub 和 Jira、读写金蝶云之家和
+QQ 的消息。
 
-- **邮件**（QQ 邮箱 / 163 / 126 / Gmail / Outlook，走 IMAP/SMTP）——有状态协议，
-  实现编译在程序里。
-- **声明式 HTTPS 渠道**——一个系统怎么接全部写成 JSON 数据，由通用执行器去跑。
-  第一个是 GitHub。加一个这样的渠道**不写 Go 代码**，往
-  `internal/httpchan/catalog/` 放一个 JSON 文件即可，将来可以由服务器下发。
+这是这个项目存在的理由，也是所有取舍的判据：**用户是财务和运营，不是程序员**。
+出现一次命令行、一次手工编辑 JSON，对他们就等于不可用——否则直接让他们装
+Node 跑 `npx` 就好了，不需要这个程序。它吃掉的正是那条路上的四样负担：装运行时、
+编辑 JSON、明文管密码、每个系统一个 server。
+
+配置页面最上面那一节「🚀 快速接入 Amazon Quick」给出本机实际路径和可直接复制的
+配置；Claude Desktop、Cursor 这类读 MCP 配置的客户端同样能用，只是不是重点。
 
 目标机**不需要 Node、不需要 Python、不需要 npm**：一个二进制，Windows / macOS /
 Linux 都是本地交叉编译产出。
+
+渠道分三类：
+
+- **邮件**（QQ 邮箱，走 IMAP/SMTP）——有状态协议，实现编译在程序里。
+  163 / 126 / Gmail / Outlook 走的是同一套实现，但没有真实验证过，所以不在
+  页面上出现（见 `internal/mailprovider`）。
+- **声明式 HTTPS 渠道**——一个系统怎么接全部写成 JSON 数据，由通用执行器去跑。
+  现有 GitHub、Jira、金蝶云之家、QQ（本机 NapCat）。加一个这样的渠道**不写 Go
+  代码**，往 `internal/httpchan/catalog/` 放一个 JSON 文件即可，将来可以由服务器下发。
+- **wasm 插件**——第三方代码在沙箱里跑，宿主注入凭据（样板见 `plugins/ghwasm`）。
+  要手工安装，不出现在渠道市场里。
 
 ## 为什么是 Go
 
@@ -37,7 +51,7 @@ Linux 都是本地交叉编译产出。
 
 条目以 `Ref{集成, 账号}` 为单位，在密码管理器里按 `mcp-hub:<集成名>` 分段存放。
 每个集成一个**惰性句柄**：取句柄不访问后端，第一次真正用到它的 tool 被调用时才读，
-之后整个进程复用（`sync.Once`）。所以有 8 个渠道而本次只用邮件时，另外 7 份凭据
+之后整个进程复用（`sync.Once`）。所以配了 5 个渠道而本次只用邮件时，另外 4 份凭据
 不会被解出来放进内存；也不存在「每次调用都查钥匙串」的开销。
 
 ```bash
@@ -56,7 +70,7 @@ mcp-hub -rm-secret -account 12345@qq.com     # 删除
 | `list_recent` | 是 | 最近 N 封的信头摘要（UID/发件人/主题/时间/大小/未读），不含正文 |
 | `search_mail` | 是 | 按发件人、关键词、日期范围、未读状态检索，条件之间是「且」 |
 | `read_mail` | 是 | 按 UID 取纯文本正文 + 附件文件名。用 `BODY.PEEK` 读，不标记已读 |
-| `send_mail` | 否 | 发信。**默认不注册**，需 `MCPHUB_MAIL_ALLOW_SEND=true` 才启用 |
+| `send_mail` | 否 | 发信。**默认不注册**，要在页面上勾「允许发信」（或走环境变量 `MCPHUB_MAIL_ALLOW_SEND=true`）|
 
 三个只读 tool 都带 `readOnlyHint`，客户端据此区分查询和动作
 （Quick 的日志里会显示 `read=3 write=0` 而不是把全部归为 `unknown`）。
@@ -67,7 +81,7 @@ mcp-hub -rm-secret -account 12345@qq.com     # 删除
 |---|---|---|---|
 | `MCPHUB_MAIL_USER` | 是 | — | 完整邮箱地址，如 `12345@qq.com` |
 | `MCPHUB_MAIL_PASSWORD` | 否 | — | **16 位授权码**。建议改用 `-set-secret` 存进密码管理器，这个只是兜底 |
-| `MCPHUB_MAIL_ALLOW_SEND` | 否 | `false` | 置 `true` 才注册 `send_mail` |
+| `MCPHUB_MAIL_ALLOW_SEND` | 否 | `false` | 置 `true` 才注册 `send_mail`。页面上配的渠道用它自己的「允许发信」开关，不看这个变量 |
 | `MCPHUB_MAIL_IMAP_HOST` / `_IMAP_PORT` | 否 | 按域名推断 | 覆盖 IMAP 接入点 |
 | `MCPHUB_MAIL_SMTP_HOST` / `_SMTP_PORT` | 否 | 按域名推断 | 覆盖 SMTP 接入点 |
 | `MCPHUB_MAIL_MAX_BODY_BYTES` | 否 | `32768` | `read_mail` 正文上限，防止一封大信撑爆上下文 |
@@ -245,7 +259,7 @@ MCP 规范较新的修订允许 `structuredContent` 是任意 JSON 值，但现�
 
 ```
 单账号：… 当前邮箱是 7709433@qq.com。
-多账号：… 配了 3 个邮箱，必须用 channel_account 指定一个：a@gmail.com、b@163.com、c@qq.com。
+多账号：… 配了 3 个邮箱，必须用 channel_account 指定一个：a@qq.com、b@qq.com、c@foxmail.com。
          其中只有 c@qq.com 允许发信，其他邮箱会被拒绝。
 ```
 
