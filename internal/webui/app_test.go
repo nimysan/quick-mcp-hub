@@ -332,3 +332,75 @@ func jsonFieldsOf(v any) map[string]bool {
 	}
 	return out
 }
+
+// TestPageClassesHaveStyles 防「HTML 和 CSS 的类名对不上」这一类静默故障。
+//
+// 真实故障两处，都出在按稿重写时：样式表写 .adv-t 而页面用 .adv-toggle，于是
+// 「高级设置（主机 / 端口）」那行没有任何样式，看不出可点；OAuth 那一整块的
+// 五个类（.oauth-box / .lead / .risk-head / .oauth-code / .code-row）干脆整段
+// 没搬过来，扫码授权——云之家和 GitHub 的正路——界面是裸的。
+//
+// 类名对不上不会报错、不会打日志，页面照常渲染，只是长得不对。
+func TestPageClassesHaveStyles(t *testing.T) {
+	page := readIndex(t)
+	sheet := design.Load().Stylesheet()
+
+	styled := map[string]bool{}
+	// 必须先剥掉 /* ... */：注释里会提到类名（上面那段说明就同时写了 .adv-t
+	// 和 .adv-toggle），不剥的话一个只存在于注释里的名字也算「有样式」，
+	// 规则真写错了测试照样放行。
+	bare := regexp.MustCompile(`(?s)/\*.*?\*/`).ReplaceAllString(sheet, " ")
+	for _, m := range regexp.MustCompile(`\.([a-zA-Z][-\w]*)`).FindAllStringSubmatch(bare, -1) {
+		styled[m[1]] = true
+	}
+
+	// 只看 class="..." 里的字面量。先按大括号配对剥掉 ${...}：那里面是运行时
+	// 拼出来的状态类（on / show / lead ...），名字随分支变，放进来会一直误报。
+	// 必须在抓 class="..." 之前剥 —— 模板表达式里有自己的引号
+	// （class="oauth-box${f?" lead":""}"），不剥就会把属性值截断，
+	// 于是把表达式里的变量名当成类名。
+	clean := stripTemplates(page)
+	ident := regexp.MustCompile(`[a-zA-Z][-\w]*`)
+	for _, m := range regexp.MustCompile(`class="([^"]*)"`).FindAllStringSubmatch(clean, -1) {
+		for _, c := range ident.FindAllString(m[1], -1) {
+			if !styled[c] {
+				t.Errorf("页面用了 class %q，但样式表里没有这个选择器 —— "+
+					"类名对不上不会报错，页面只是长得不对", c)
+			}
+		}
+	}
+}
+
+// stripTemplates 把 ${...} 整段换成一个空格，支持嵌套大括号。
+func stripTemplates(s string) string {
+	var b strings.Builder
+	for i := 0; i < len(s); i++ {
+		if i+1 < len(s) && s[i] == '$' && s[i+1] == '{' {
+			depth, j := 1, i+2
+			for ; j < len(s) && depth > 0; j++ {
+				switch s[j] {
+				case '{':
+					depth++
+				case '}':
+					depth--
+				}
+			}
+			b.WriteByte(' ')
+			i = j - 1
+			continue
+		}
+		b.WriteByte(s[i])
+	}
+	return b.String()
+}
+
+// TestSpriteHasNoAnonymousSymbol 守住 sprite 的无名条目过滤。
+//
+// Figma 的提取会带出无名条目（稿子里的开关控件图形就是这样进来的）。不过滤
+// 就会生成一个 id="i-" 的 symbol：页面永远引用不到它，但它跟着每个页面发出去。
+func TestSpriteHasNoAnonymousSymbol(t *testing.T) {
+	if s := design.Load().IconSprite(); strings.Contains(s, `id="i-"`) {
+		t.Error(`sprite 里有 id="i-" 的无名 symbol —— ` +
+			"IconSprite 必须跳过 tokens.json 里键名为空的条目")
+	}
+}

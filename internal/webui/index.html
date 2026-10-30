@@ -404,8 +404,6 @@ document.addEventListener("keydown", e=>{
   if(e.key === "Escape" && $("#mask").classList.contains("show")) closeModal();
 });
 
-function openEdit(type,account){openForm(type,account)}
-
 async function openForm(type, account){
   const d = DESCRIPTORS.find(x=>x.type===type);
   let inst=null;
