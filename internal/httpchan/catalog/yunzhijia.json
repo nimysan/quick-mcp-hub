@@ -184,7 +184,9 @@
         { "name": "pageNumber", "in": "body", "type": "number", "default": "1", "description": "第几页，从 1 开始。data.total 比已拿到的条数多就继续翻下一页" },
         { "name": "pageSize", "in": "body", "type": "number", "default": "20", "description": "每页多少条，不传按服务端默认的 10" },
         { "name": "keyword", "in": "body", "description": "按关键词过滤单据（匹配标题、单号、正文）" },
-        { "name": "serialNo", "in": "body", "description": "按单号找单据，模糊匹配 —— 记得一截就行" }
+        { "name": "serialNo", "in": "body", "description": "按单号找单据，模糊匹配 —— 记得一截就行" },
+        { "name": "status", "in": "body", "enum": ["RUNNING", "FINISH", "DISAGREE", "SUSPEND", "RETURNED", "TOSUBMIT", "ABANDON", "DELETE"], "description": "按流程状态筛：RUNNING 审批中、FINISH 已同意结束、DISAGREE 已否决、SUSPEND 挂起、RETURNED 被退回待重提、TOSUBMIT 发起人自己撤回待重提、ABANDON 废弃、DELETE 已删除。一次只能传一个 —— 逗号多值写法接口会当成没传、照样回全量" },
+        { "name": "creator", "in": "body", "description": "按发起人筛，值是对方的 openId（不是姓名），从 yunzhijia_search_user 或 yunzhijia_group_members 的返回里取" }
       ],
       "result": {
         "path": "data.list",
@@ -216,7 +218,9 @@
         { "name": "pageNumber", "in": "body", "type": "number", "default": "1", "description": "第几页，从 1 开始。data.total 比已拿到的条数多就继续翻下一页" },
         { "name": "pageSize", "in": "body", "type": "number", "default": "20", "description": "每页多少条，不传按服务端默认的 10" },
         { "name": "keyword", "in": "body", "description": "按关键词过滤单据（匹配标题、单号、正文）" },
-        { "name": "serialNo", "in": "body", "description": "按单号找单据，模糊匹配 —— 记得一截就行（实测 QKSQD-2026 命中 7 条，完整单号命中 1 条）" }
+        { "name": "serialNo", "in": "body", "description": "按单号找单据，模糊匹配 —— 记得一截就行（实测 QKSQD-2026 命中 7 条，完整单号命中 1 条）" },
+        { "name": "status", "in": "body", "enum": ["RUNNING", "FINISH", "DISAGREE", "SUSPEND", "RETURNED", "TOSUBMIT", "ABANDON", "DELETE"], "description": "按流程状态筛：RUNNING 审批中、FINISH 已同意结束、DISAGREE 已否决、SUSPEND 挂起、RETURNED 被退回待重提、TOSUBMIT 发起人自己撤回待重提、ABANDON 废弃、DELETE 已删除。一次只能传一个 —— 逗号多值写法接口会当成没传、照样回全量" },
+        { "name": "creator", "in": "body", "description": "按发起人筛，值是对方的 openId（不是姓名），从 yunzhijia_search_user 或 yunzhijia_group_members 的返回里取" }
       ],
       "result": {
         "path": "data.list",
@@ -252,7 +256,9 @@
         { "name": "pageNumber", "in": "body", "type": "number", "default": "1", "description": "第几页，从 1 开始" },
         { "name": "pageSize", "in": "body", "type": "number", "default": "20", "description": "每页多少条，不传按服务端默认的 10" },
         { "name": "keyword", "in": "body", "description": "按关键词过滤单据（匹配标题、单号、正文）" },
-        { "name": "serialNo", "in": "body", "description": "按单号找单据，模糊匹配 —— 记得一截就行" }
+        { "name": "serialNo", "in": "body", "description": "按单号找单据，模糊匹配 —— 记得一截就行" },
+        { "name": "status", "in": "body", "enum": ["RUNNING", "FINISH", "DISAGREE", "SUSPEND", "RETURNED", "TOSUBMIT", "ABANDON", "DELETE"], "description": "按流程状态筛：RUNNING 审批中、FINISH 已同意结束、DISAGREE 已否决、SUSPEND 挂起、RETURNED 被退回待重提、TOSUBMIT 发起人自己撤回待重提、ABANDON 废弃、DELETE 已删除。一次只能传一个 —— 逗号多值写法接口会当成没传、照样回全量" },
+        { "name": "creator", "in": "body", "description": "按发起人筛，值是对方的 openId（不是姓名），从 yunzhijia_search_user 或 yunzhijia_group_members 的返回里取" }
       ],
       "result": {
         "path": "data.list",

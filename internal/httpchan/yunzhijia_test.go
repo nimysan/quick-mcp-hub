@@ -187,6 +187,19 @@ func newYZJMock(t *testing.T) *yzjMock {
 		if filtered && serial != "" {
 			totalRows = 1
 		}
+		// 状态和发起人同样只认这一个拼法：status 实测只接受单个取值
+		// （"RUNNING,FINISH" 会被当成没传、回全量），creator 要的是
+		// openId，而 creatorOpenId / creator_open_id 都被忽略。
+		if st, ok := body["status"].(string); ok && st != "" {
+			if strings.Contains(st, ",") {
+				totalRows = 23 // 多值写法 = 过滤失效，照样回全量
+			} else {
+				totalRows = 2
+			}
+		}
+		if cr, ok := body["creator"].(string); ok && cr != "" {
+			totalRows = 3
+		}
 		page, limit := 1, 10
 		if n, ok := body["pageNumber"].(float64); ok && n >= 1 {
 			page = int(n)
@@ -645,6 +658,95 @@ func TestYunzhijiaApprovalDoneTotalIsACap(t *testing.T) {
 			if !slices.Contains(tl.Result.Fields, f) {
 				t.Errorf("已办的结果要保留 %s：%v", f, tl.Result.Fields)
 			}
+		}
+	}
+}
+
+// 按状态和按发起人筛选。两个键名都是实测出来的，错的拼法接口不报错、
+// 照样回全量。
+//
+// 实测（张明星账号）：
+//
+//	已办 creator=<刘仕祥的 openId>  -> total 10000 变 1657，首条发起人正是他
+//	已办 creatorOpenId / creator_open_id -> total 10000，被当成没传
+//	已办 status=RUNNING            -> total 23
+//	待办 status=RUNNING            -> total 25 变 2
+//	已办 status=RUNNING,FINISH     -> total 10000  <- 多值写法等于没筛
+//
+// 最后那条是这组用例真正要防的事：模型想「看审批中和已完成的」，写成
+// 逗号多值，拿回来的是全部单据，而它会当成筛选结果念给用户。所以 status
+// 声明成取值表，由宿主在发请求前拒掉表外的值。
+func TestYunzhijiaApprovalFilterByStatusAndCreator(t *testing.T) {
+	spec, _ := ByID("yunzhijia")
+	lists := []string{"yunzhijia_approval_todo", "yunzhijia_approval_myflow", "yunzhijia_approval_done"}
+	for _, want := range lists {
+		var status, creator *Param
+		for _, tl := range spec.Tools {
+			if tl.Name != want {
+				continue
+			}
+			for i := range tl.Params {
+				switch tl.Params[i].Name {
+				case "status":
+					status = &tl.Params[i]
+				case "creator":
+					creator = &tl.Params[i]
+				case "creatorOpenId", "creator_open_id":
+					t.Errorf("%s: %s 是接口不认的拼法", want, tl.Params[i].Name)
+				}
+			}
+		}
+		if creator == nil {
+			t.Errorf("%s 要能按发起人筛", want)
+		} else if !strings.Contains(creator.Description, "openId") {
+			t.Errorf("%s: 要说明 creator 收的是 openId 而不是姓名：%s", want, creator.Description)
+		}
+		if status == nil {
+			t.Fatalf("%s 要能按状态筛", want)
+		}
+		if !slices.Equal(status.Enum, []string{"RUNNING", "FINISH", "DISAGREE", "SUSPEND", "RETURNED", "TOSUBMIT", "ABANDON", "DELETE"}) {
+			t.Errorf("%s: status 的取值表不对：%v", want, status.Enum)
+		}
+	}
+
+	m := newYZJMock(t)
+	c := &Client{}
+	rt := m.runtime(t, false)
+
+	got, meta, err := c.Call(context.Background(), rt, "yunzhijia_approval_done",
+		map[string]any{"status": "RUNNING"})
+	if err != nil {
+		t.Fatalf("按状态筛失败: %v", err)
+	}
+	if m.body()["status"] != "RUNNING" {
+		t.Errorf("status 要原样下发，实际 body=%#v", m.body())
+	}
+	if meta["total"] != float64(2) || len(got.([]any)) != 2 {
+		t.Errorf("按状态筛该只回命中的那些，实际 total=%#v 条数=%d", meta["total"], len(got.([]any)))
+	}
+
+	got, _, err = c.Call(context.Background(), rt, "yunzhijia_approval_done",
+		map[string]any{"creator": "34bab476-58f3-11e4-9273-dc8e3044c615"})
+	if err != nil {
+		t.Fatalf("按发起人筛失败: %v", err)
+	}
+	if m.body()["creator"] != "34bab476-58f3-11e4-9273-dc8e3044c615" {
+		t.Errorf("creator 要原样下发，实际 body=%#v", m.body())
+	}
+	if n := len(got.([]any)); n != 3 {
+		t.Errorf("按发起人筛该只回他发起的，实际 %d 条", n)
+	}
+
+	// 逗号多值在宿主侧就要被拒掉，而且报错要把可选值列出来 —— 不拦的话
+	// 接口会回全量，那是一个看不出来的错。
+	_, _, err = c.Call(context.Background(), rt, "yunzhijia_approval_done",
+		map[string]any{"status": "RUNNING,FINISH"})
+	if err == nil {
+		t.Fatal("status 的逗号多值写法必须被拒，否则接口回的是全量")
+	}
+	for _, want := range []string{"status", "RUNNING", "FINISH"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("报错要列出可选值，缺 %q：%v", want, err)
 		}
 	}
 }

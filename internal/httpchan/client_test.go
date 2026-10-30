@@ -164,6 +164,54 @@ func TestCallRequiredParamAndErrorBody(t *testing.T) {
 	}
 }
 
+// 声明里的 enum 要在发请求前真的拦住表外的值，不能只写进工具的 JSON
+// Schema 就算完 —— 那只是对客户端的建议，而这类值猜错往往不报错：接口
+// 把认不出的筛选值当成没传、回全量，模型就把「全部」当成筛选结果念出来。
+// 报错里必须列出可选值，否则模型只能再猜一次。
+func TestEnumParamRejectedBeforeRequest(t *testing.T) {
+	var called bool
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		called = true
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"items":[]}`))
+	}))
+	defer srv.Close()
+
+	spec := base()
+	spec.BaseURL = srv.URL
+	spec.Tools = []Tool{{
+		Name: "demo_list", Description: "列一下", ReadOnly: true,
+		Method: "GET", Path: "/items",
+		Params: []Param{{Name: "state", In: InQuery, Enum: []string{"open", "closed"}}},
+		Result: Result{Path: "items"},
+	}}
+	if err := spec.Validate(); err != nil {
+		t.Fatalf("声明不合法: %v", err)
+	}
+	rt := Runtime{Spec: spec, Account: "me", Secret: func() (string, error) { return "tok-123456", nil }}
+	c := &Client{HTTP: srv.Client()}
+
+	_, _, err := c.Call(context.Background(), rt, "demo_list", map[string]any{"state": "open,closed"})
+	if err == nil {
+		t.Fatal("取值表外的值该被拒")
+	}
+	for _, want := range []string{"state", "open", "closed"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("报错要列出可选值，缺 %q：%v", want, err)
+		}
+	}
+	if called {
+		t.Error("请求不该发出去 —— 拦在发请求之前才有意义")
+	}
+
+	if _, _, err := c.Call(context.Background(), rt, "demo_list", map[string]any{"state": "closed"}); err != nil {
+		t.Errorf("表内的值该放过: %v", err)
+	}
+	if !called {
+		t.Error("合法取值应当真的发出请求")
+	}
+}
+
 // 用户自己填的站点地址同样必须是 https —— 配置文件可手改，不能信任落盘时校过。
 func TestBaseURLFieldMustBeHTTPS(t *testing.T) {
 	spec := base()
