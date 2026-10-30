@@ -56,7 +56,7 @@ func dirFor(goos, namespace string) (string, error) {
 		}
 		return filepath.Join(base, namespace, "logs"), nil
 	case "darwin":
-		home, err := os.UserHomeDir()
+		home, err := homeDir()
 		if err != nil {
 			return "", err
 		}
@@ -65,12 +65,25 @@ func dirFor(goos, namespace string) (string, error) {
 		if xdg := os.Getenv("XDG_STATE_HOME"); xdg != "" {
 			return filepath.Join(xdg, namespace), nil
 		}
-		home, err := os.UserHomeDir()
+		home, err := homeDir()
 		if err != nil {
 			return "", err
 		}
 		return filepath.Join(home, ".local", "state", namespace), nil
 	}
+}
+
+// homeDir 显式读 $HOME，拿不到才退回 os.UserHomeDir()。
+//
+// 和上面 windows 分支直接读 %LOCALAPPDATA% 是同一个理由：os.UserHomeDir()
+// 在 Windows 上读的是 %USERPROFILE%，于是 darwin / linux 这两条分支在
+// Windows 上就测不了（设了 HOME 也不起作用）。darwin 和 linux 上
+// os.UserHomeDir() 做的本来就是读 $HOME，所以行为不变。
+func homeDir() (string, error) {
+	if h := os.Getenv("HOME"); h != "" {
+		return h, nil
+	}
+	return os.UserHomeDir()
 }
 
 // Path 返回日志文件路径。
@@ -82,27 +95,56 @@ func Path(namespace string) (string, error) {
 	return filepath.Join(dir, namespace+".log"), nil
 }
 
-// Open 打开日志文件并返回「stderr + 文件」的组合 writer，以及文件路径。
+// Log 是一次打开的日志目标。
 //
-// 任何一步失败都**不是**致命的：日志写不进去也不该让程序起不来。失败时
-// 返回 stderr 和空路径，调用方据此决定要不要在页面上展示日志入口。
-func Open(namespace string) (w io.Writer, path string, err error) {
-	path, err = Path(namespace)
+// 为什么是个有 Close 的结构体，而不是直接返回 io.Writer：原来返回的 writer
+// 把文件句柄藏在 MultiWriter 里，**谁都关不掉它**。进程退出时系统会收，所以
+// 程序里看不出问题；但 Windows 上删不掉被占用的文件，于是测试的临时目录清理
+// 直接失败。一个没有关闭路径的资源是设计缺口，不只是测试不好写。
+type Log struct {
+	// Writer 永远可用：打不开文件时它就是 stderr。
+	Writer io.Writer
+	// Path 是日志文件路径，空表示这次没写文件（调用方据此决定要不要在页面上
+	// 展示「查看日志」入口 —— 一个点了没反应的入口比没有更糟）。
+	Path string
+
+	file *os.File
+}
+
+// Close 关掉日志文件。没有文件时是空操作，可以重复调。
+func (l *Log) Close() error {
+	if l == nil || l.file == nil {
+		return nil
+	}
+	f := l.file
+	l.file = nil
+	return f.Close()
+}
+
+// Open 打开日志文件，返回「stderr + 文件」的组合目标。
+//
+// 任何一步失败都**不是**致命的：日志写不进去也不该让程序起不来。失败时返回
+// 的 Log 仍然可用（Writer 是 stderr，Path 为空），error 只说明文件那一半没成。
+func Open(namespace string) (*Log, error) {
+	path, err := Path(namespace)
 	if err != nil {
-		return os.Stderr, "", err
+		return &Log{Writer: os.Stderr}, err
 	}
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-		return os.Stderr, "", err
+		return &Log{Writer: os.Stderr}, err
 	}
 	// 太大就把上一份挪走，而不是无限增长 —— 用户机器上没人会去清它。
+	// rename 失败不算错：mcp-hub 正常就是两个进程在跑（配置页面 + MCP 服务），
+	// 两边写同一个文件，而 Windows 下占用中的文件改不了名。那种情况下继续
+	// 追加写是对的，总比起不来好。
 	if fi, err := os.Stat(path); err == nil && fi.Size() > maxBytes {
 		_ = os.Rename(path, path+".old")
 	}
 	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
 	if err != nil {
-		return os.Stderr, "", err
+		return &Log{Writer: os.Stderr}, err
 	}
-	return io.MultiWriter(os.Stderr, f), path, nil
+	return &Log{Writer: io.MultiWriter(os.Stderr, f), Path: path, file: f}, nil
 }
 
 // Tail 读日志的最后 n 字节，给页面上的「查看日志」用。

@@ -95,14 +95,18 @@ func pointLogDirAt(t *testing.T, base string) {
 // Open 必须真的能写进去，而且同时还能往 stderr 走。
 func TestOpenWritesToFile(t *testing.T) {
 	isolateLogDir(t)
-	w, path, err := Open("mcp-hub-test")
+	lgf, err := Open("mcp-hub-test")
+	// 必须关掉：Windows 上删不掉被占用的文件，不关的话 t.TempDir() 的清理
+	// 会失败（而且只在 Windows 上失败）。
+	t.Cleanup(func() { lgf.Close() })
 	if err != nil {
 		t.Fatalf("Open: %v", err)
 	}
-	if path == "" {
+	if lgf.Path == "" {
 		t.Fatal("路径是空的")
 	}
-	lg := log.New(w, "", 0)
+	path := lgf.Path
+	lg := log.New(lgf.Writer, "", 0)
 	lg.Println("写进日志的一行")
 
 	b, err := os.ReadFile(path)
@@ -123,15 +127,16 @@ func TestOpenFallsBackToStderr(t *testing.T) {
 	}
 	t.Setenv("HOME", bad)
 	pointLogDirAt(t, bad)
-	w, path, err := Open("mcp-hub-test")
+	lgf, err := Open("mcp-hub-test")
+	t.Cleanup(func() { lgf.Close() })
 	if err == nil {
 		t.Skip("这个平台下仍然能建目录，跳过")
 	}
-	if w == nil {
-		t.Fatal("退回的 writer 是 nil —— 调用方会往 nil 上写")
+	if lgf == nil || lgf.Writer == nil {
+		t.Fatal("退回的 Writer 是 nil —— 调用方会往 nil 上写")
 	}
-	if path != "" {
-		t.Errorf("失败时不该回一个路径，否则页面会显示一个点不开的日志入口: %q", path)
+	if lgf.Path != "" {
+		t.Errorf("失败时不该回一个路径，否则页面会显示一个点不开的日志入口: %q", lgf.Path)
 	}
 }
 
@@ -152,7 +157,9 @@ func TestOpenRotatesOversizeLog(t *testing.T) {
 	if err := os.WriteFile(path, big, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := Open("mcp-hub-test"); err != nil {
+	lgf, err := Open("mcp-hub-test")
+	t.Cleanup(func() { lgf.Close() })
+	if err != nil {
 		t.Fatal(err)
 	}
 	if fi, err := os.Stat(path); err != nil || fi.Size() != 0 {
@@ -184,5 +191,28 @@ func TestTailReturnsEndAndSaysSoWhenTruncated(t *testing.T) {
 	}
 	if strings.Count(out, "A") > 200 {
 		t.Error("读得太多了，没有按尾部截")
+	}
+}
+
+// Close 必须真的释放文件句柄，而不是只把字段置空。
+//
+// 这条用例的由来：原来 Open 把文件句柄藏在 MultiWriter 里，谁都关不掉。
+// 在 macOS / Linux 上看不出问题（能删掉打开着的文件），只有 Windows 上
+// t.TempDir() 的清理会失败。所以这里不验「目录能不能删」，而验「关掉之后
+// 还能不能写进去」—— 那个事实在三个平台上都一样。
+func TestCloseReleasesTheFile(t *testing.T) {
+	isolateLogDir(t)
+	lgf, err := Open("mcp-hub-test")
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	if err := lgf.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	if err := lgf.Close(); err != nil {
+		t.Errorf("重复 Close 应当是空操作，得到 %v", err)
+	}
+	if _, err := lgf.Writer.Write([]byte("x")); err == nil {
+		t.Error("Close 之后还能写进文件，说明句柄没被释放")
 	}
 }
