@@ -267,8 +267,31 @@ jobs:
             --cache-control "public, max-age=31536000, immutable" \
             --no-progress
 
-          echo "== 远端实际内容 =="
-          aws s3 ls "s3://${BUCKET}/${PREFIX}/${TAG}/" --recursive --human-readable
+          # 刻意不用 aws s3 ls 校验：那要 s3:ListBucket，而这个 OIDC 角色只有写权限，
+          # 所以 v0.1.5 那次 8 个文件全传上去了、却因为那一行报了整步失败
+          # （AccessDenied ListObjectsV2），连带下面的下载地址摘要被跳过。
+          #
+          # 而且要验的本来就不是「S3 里有这个 key」，是「客户点那个链接下得到东西」----
+          # 走公开地址把 CloudFront 那一段也一起验了（origin path、OAC 权限配错时
+          # S3 里有文件但链接是 403/404，aws s3 ls 看不见这类故障），还不需要任何 AWS 权限。
+          echo "== 公开地址实测 =="
+          for f in dist/pkg/*.exe dist/pkg/*.zip dist/pkg/SHA256SUMS*.txt; do
+            n="$(basename "$f")"
+            u="https://pub.itheone.org/mcp-hub/${TAG}/${n}"
+            code=""
+            # 首次请求要回源取对象，偶尔会慢或抖，所以重试几次再判失败。
+            for i in 1 2 3 4 5; do
+              code="$(curl -sS -o /dev/null -I -w '%{http_code}' "$u" || echo 000)"
+              [ "$code" = "200" ] && break
+              echo "  重试 ${i}：${n} 返回 ${code}"
+              sleep 3
+            done
+            if [ "$code" != "200" ]; then
+              echo "::error::${u} 返回 ${code} ---- S3 已写入但公开地址取不到，检查 CloudFront(E1S139XADZ4HWZ) 的 origin path 与 OAC 权限"
+              exit 1
+            fi
+            echo "  200  ${n}"
+          done
 
       - name: 写下载地址到任务摘要
         run: |
@@ -284,30 +307,7 @@ jobs:
             done
           } >> "$GITHUB_STEP_SUMMARY"
 
-  release:
-    name: 发布 Release
-    # 只有 tag 才发布。草稿形式产出，由人确认后再 Publish ——
-    # 自动发布一个没人看过的版本不是我们想要的默认行为。
-    if: startsWith(github.ref, 'refs/tags/v')
-    runs-on: ubuntu-latest
-    needs: [build, installer-windows]
-    permissions:
-      contents: write
-    steps:
-      - uses: actions/download-artifact@v4
-        with:
-          pattern: mcp-hub-*
-          merge-multiple: true
-          path: dist/pkg
-
-      - name: 建草稿 Release
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          ls -l dist/pkg
-          gh release create "${GITHUB_REF#refs/tags/}" \
-            --repo "${GITHUB_REPOSITORY}" \
-            --draft \
-            --title "${GITHUB_REF#refs/tags/}" \
-            --generate-notes \
-            dist/pkg/*.zip dist/pkg/*.exe dist/pkg/SHA256SUMS*.txt
+# 刻意没有「发布 GitHub Release」这个 job：客户拿到的是 pub.itheone.org 上的
+# 公开地址，Release 页面没人看，而它需要 contents: write（整个流水线唯一
+# 要写仓库的权限）并且产出一个要人去手动点发布的草稿。要加回来之前，
+# 先问清楚谁会去那个页面下载。
