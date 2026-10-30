@@ -19,6 +19,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/nimysan/mcp-hub/internal/applog"
@@ -26,6 +27,8 @@ import (
 	"github.com/nimysan/mcp-hub/internal/channels"
 	"github.com/nimysan/mcp-hub/internal/clientstat"
 	"github.com/nimysan/mcp-hub/internal/config"
+	"github.com/nimysan/mcp-hub/internal/credstore"
+	"github.com/nimysan/mcp-hub/internal/webui/design"
 )
 
 //go:embed index.html
@@ -223,11 +226,21 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
+	// 设计 token、样式和图标都在构建时注入，而不是另外几个 HTTP 请求：
+	// 页面是单文件，少几次往返也就少几种半加载状态（没有 CSS 的一瞬间闪白）。
+	// 三样的来源都是 Figma，见 internal/webui/design。
+	tok := design.Load()
+	page := strings.NewReplacer(
+		"/*TOKENS*/", tok.CSSVars(),
+		"/*STYLES*/", tok.Stylesheet(),
+		"<!--SPRITE-->", tok.IconSprite(),
+	).Replace(string(data))
+
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	// 页面是编译进二进制的，升级程序后浏览器必须拿到新的那份：没有这个头
 	// 浏览器会按启发式缓存，用户换了新版本却还在用旧页面。
 	w.Header().Set("Cache-Control", "no-store")
-	w.Write(data)
+	w.Write([]byte(page))
 }
 
 // exePath 返回本程序的绝对路径，给页面上的「接入 AI 客户端」用。
@@ -255,6 +268,9 @@ func (s *Server) handleDescriptors(w http.ResponseWriter, r *http.Request) {
 		"configPath": s.mgr.Store().Path(),
 		"logPath":    s.LogPath,
 		"exePath":    exePath(),
+		// 凭据后端的真实名字（macOS 钥匙串 / Windows 凭据管理器 / Linux Secret
+		// Service）。删除确认弹窗要把「凭据存在哪」说清楚，用真名而不是泛指。
+		"secretBackend": credstore.BackendName(),
 		// 最近一次成功握手的客户端。页面据此决定接入说明默认展开还是收起 ——
 		// 用户照着说明在 Quick 里加完连接器之后，否则完全没有反馈。
 		"lastClient":  lastClient(),
