@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"sync"
+	"time"
 
 	"github.com/nimysan/mcp-hub/internal/config"
 	"github.com/nimysan/mcp-hub/internal/credstore"
@@ -143,11 +144,13 @@ func (m *Manager) Test(ctx context.Context, typ, account string, values map[stri
 			return err
 		}
 		imapErr, smtpErr := mailbox.SelfTest(ctx, cfg)
+		// 不再加 "IMAP: " / "SMTP: " 前缀 —— mailbox 返回的错误里已经说了是
+		// 哪一侧，再包一层会得到「IMAP: IMAP 登录失败」这种读起来像坏了的提示。
 		if imapErr != nil {
-			return fmt.Errorf("IMAP: %w", imapErr)
+			return imapErr
 		}
 		if smtpErr != nil {
-			return fmt.Errorf("SMTP: %w", smtpErr)
+			return smtpErr
 		}
 		return nil
 	default:
@@ -173,6 +176,40 @@ func (m *Manager) Identify(ctx context.Context, typ, account string, values map[
 		return nil, err
 	}
 	return new(httpchan.Client).Test(ctx, rt)
+}
+
+// CheckSteps 分步检查一个渠道，而不是只回「成或败」。
+//
+// 为什么需要它：合成一句的话，失败时用户只知道「连不上」——分不清是网络不通、
+// 凭据错了，还是其中一个服务单独坏了，而这三种的处理完全不同。设计稿上的
+// 「连接检查」就是三条分开的。
+//
+// 只有邮件渠道能真分三步（IMAP 可达 / 凭据 / SMTP 可达）。声明式 HTTPS 渠道
+// 的一次调用里，可达性和鉴权是同一个请求，物理上分不开 —— 那种情况下如实回
+// 一条，不假装分了三步。
+func (m *Manager) CheckSteps(ctx context.Context, typ, account string, values map[string]string) ([]mailbox.CheckStep, error) {
+	d, ok := ByType(typ)
+	if !ok {
+		return nil, fmt.Errorf("未知渠道类型 %q", typ)
+	}
+	if d.Kind == KindMail {
+		cfg, err := m.mailConfig(d, account, values)
+		if err != nil {
+			return nil, err
+		}
+		return mailbox.Check(ctx, cfg), nil
+	}
+	// 其余渠道：跑原来那条单步检查，包装成一条 —— 与其编出三条假的分步，
+	// 不如如实说「这一种只能整体检查」。
+	step := mailbox.CheckStep{Key: "connect", Label: "连接与凭据验证"}
+	start := time.Now()
+	if _, err := m.Identify(ctx, typ, account, values); err != nil {
+		step.State, step.Error = "fail", err.Error()
+	} else {
+		step.State = "ok"
+	}
+	step.Took = time.Since(start).Milliseconds()
+	return []mailbox.CheckStep{step}, nil
 }
 
 // HTTPGroup 是同一个声明式渠道类型下的全部已启用实例。
@@ -327,6 +364,21 @@ func (m *Manager) mailConfig(d Descriptor, account string, values map[string]str
 		SMTPPort:             in.SettingInt(d, "smtpPort", 465),
 		AllowSend:            in.SettingBool(d, "allowSend"),
 		ProviderName:         d.Name,
+		SecretLabel:          secretLabelOf(d),
 		LegacyRSAKeyExchange: legacyRSA,
 	}), nil
+}
+
+// secretLabelOf 取这个渠道对凭据的叫法（「授权码」/「邮箱密码」）。
+//
+// 从表单字段上读，而不是另开一个字段：页面上显示的就是这个标签，错误提示
+// 用同一个词，用户才能对上 —— 「授权码不正确」对着一个写着「授权码」的
+// 输入框才说得通。
+func secretLabelOf(d Descriptor) string {
+	for _, f := range d.Fields {
+		if f.Kind == KindPassword {
+			return f.Label
+		}
+	}
+	return "密码"
 }

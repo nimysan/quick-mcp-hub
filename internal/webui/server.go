@@ -28,6 +28,7 @@ import (
 	"github.com/nimysan/mcp-hub/internal/clientstat"
 	"github.com/nimysan/mcp-hub/internal/config"
 	"github.com/nimysan/mcp-hub/internal/credstore"
+	"github.com/nimysan/mcp-hub/internal/mailprovider"
 	"github.com/nimysan/mcp-hub/internal/webui/design"
 )
 
@@ -68,6 +69,8 @@ func (s *Server) routes() {
 	api("/api/descriptors", s.handleDescriptors)
 	api("/api/channels", s.handleChannels) // GET 列表 / POST 保存
 	api("/api/channels/test", s.handleTest)
+	api("/api/channels/check", s.handleCheck)  // 分步检查，见设计稿的「连接检查」
+	api("/api/mail/guess", s.handleGuessHosts) // 按邮箱域名猜 IMAP/SMTP 主机
 	api("/api/channels/delete", s.handleDelete)
 	api("/api/log", s.handleLog)
 	// OAuth 设备流：开始授权 / 查状态 / 放弃。轮询由服务端做（见 connect.go），
@@ -431,4 +434,52 @@ func lastClient() any {
 		"version": r.Version,
 		"tools":   r.Tools,
 	}
+}
+
+// handleCheck 分步检查一个渠道：服务可达性、凭据、另一个服务可达性。
+//
+// 和 handleTest 的区别是粒度。合成一句的话，失败时用户只知道「连不上」——
+// 分不清该找 IT、重新生成授权码，还是只是发信那一侧坏了。
+func (s *Server) handleCheck(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Type    string            `json:"type"`
+		Account string            `json:"account"`
+		Values  map[string]string `json:"values"`
+	}
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	// 三步串着做，每步自己还有超时，所以总预算要给够。
+	ctx, cancel := context.WithTimeout(r.Context(), 90*time.Second)
+	defer cancel()
+	steps, err := s.mgr.CheckSteps(ctx, req.Type, req.Account, req.Values)
+	if err != nil {
+		writeJSON(w, http.StatusOK, map[string]any{"ok": false, "error": err.Error()})
+		return
+	}
+	ok := true
+	for _, st := range steps {
+		if st.State == "fail" {
+			ok = false
+		}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": ok, "steps": steps})
+}
+
+// handleGuessHosts 按邮箱地址猜 IMAP / SMTP 主机，供表单自动填写。
+//
+// 「我公司邮箱的 IMAP 主机叫什么」是财务人员答不出的问题，而大多数自建服务器
+// 就是 mail.<域名>。猜错的代价很小（同一个表单里改掉），猜对的收益是不用去
+// 问 IT。纯计算，不连网络、不碰凭据。
+func (s *Server) handleGuessHosts(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Address string `json:"address"`
+	}
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	imapHost, smtpHost := mailprovider.GuessHosts(req.Address)
+	writeJSON(w, http.StatusOK, map[string]any{
+		"imapHost": imapHost, "smtpHost": smtpHost,
+	})
 }

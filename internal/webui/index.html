@@ -44,7 +44,7 @@
       </div>
     </div>
     <nav class="nav">
-      <a href="#" class="on"><svg class="ic"><use href="#i-Plug"/></svg>连接与配置</a>
+      <a href="#" id="navhome" class="on"><svg class="ic"><use href="#i-Plug"/></svg>连接与配置</a>
       <a href="#" id="navlog"><svg class="ic"><use href="#i-Activity"/></svg>运行日志</a>
     </nav>
     <div class="side-note">
@@ -55,7 +55,11 @@
   </aside>
 
   <main class="main">
-    <div class="wrap">
+    <!-- 详情页。和列表页是同一个页面的两个视图（没有真路由，用 hash）——
+         稿子把它画成独立页面，但它只是同一份数据的另一种呈现。 -->
+    <div class="wrap" id="detailview" hidden></div>
+
+    <div class="wrap" id="listview">
       <section>
         <h1>连接与配置</h1>
         <div class="sub">连接你的工作渠道，将所需工具安全地交给 Amazon Quick。</div>
@@ -107,7 +111,7 @@ let DESCRIPTORS=[], CHANNELS=[], TAG="", EXEPATH="", LASTCLIENT=null, CFGPATH=""
 
 // 每个渠道用哪个图标：稿子里邮箱是 Mail、云之家是云、NapCat 是本机程序。
 // 没有对应的用 Plug 兜底 —— 新渠道加进来不会缺图标。
-const ICONS = {qqmail:"Mail", gotechmail:"Mail", github:"Blocks", jira:"ScrollText",
+const ICONS = {qqmail:"Mail", custommail:"Mail", github:"Blocks", jira:"ScrollText",
   napcat:"Monitor", yunzhijia:"Laptop", ghwasm:"Blocks"};
 const iconOf = t => ICONS[t] || "Plug";
 
@@ -124,9 +128,12 @@ async function boot(){
   $("#cfgpath").textContent = "本地配置 · " + CFGPATH.split(/[\\/]/).pop();
   $("#cfgpath").title = CFGPATH;
   if(LOGPATH){ const l=$("#loglink"); l.hidden=false; l.onclick=()=>window.open("/api/log","_blank"); }
+  // 侧栏的「连接与配置」是首页链接 —— 在详情页上点它要回列表。
+  $("#navhome").onclick = e => { e.preventDefault(); goList(); };
   $("#navlog").onclick = e => { e.preventDefault(); window.open("/api/log","_blank"); };
   $("#refresh").onclick = refresh;
   await refresh();
+  route();   // 直接用带 hash 的地址打开时，要落到详情页
 }
 
 async function refresh(){
@@ -162,9 +169,9 @@ function renderSteps(){
 function renderClient(){
   const tools = CHANNELS.reduce((n,v)=>n+activeTools(v).length,0);
   const lc = LASTCLIENT;
-  const name = lc ? (lc.client || "某个客户端") : "Amazon Quick";
+  const clientName = lc ? (lc.client || "某个客户端") : "Amazon Quick";
   const head = lc
-    ? `<span class="name">${esc(name)}</span>
+    ? `<span class="name">${esc(clientName)}</span>
        ${lc.version?`<span class="tag">${esc(lc.version)}</span>`:""}
        <span class="pill ok">已连接</span>
        <span class="right">最近一次连接 · ${ago(lc.at)}
@@ -236,7 +243,8 @@ function bindRowActions(){
     const [t,a]=b.dataset.test.split("|"); b.onclick=()=>testSaved(t,a);
   });
   $("#list").querySelectorAll("[data-edit]").forEach(b=>{
-    const [t,a]=b.dataset.edit.split("|"); b.onclick=()=>openForm(t,a);
+    // 进详情页，不再开弹窗 —— 稿子把单个渠道的配置画成了独立页面。
+    const [t,a]=b.dataset.edit.split("|"); b.onclick=()=>go(t,a,"account");
   });
   $("#list").querySelectorAll("[data-del]").forEach(b=>{
     const [t,a]=b.dataset.del.split("|"); b.onclick=()=>del(t,a);
@@ -360,6 +368,29 @@ function ago(iso){
   if(s<86400) return Math.round(s/3600)+" 小时前";
   return Math.round(s/86400)+" 天前";
 }
+
+// closeModal 关掉弹窗。
+//
+// 刻意不叫 close：那个名字在浏览器里是 window.close 的别名，所以一旦本地定义
+// 丢了，onclick = close 会静默变成「调用 window.close()」—— 浏览器对非脚本
+// 打开的页面直接忽略它，于是按钮毫无反应，而语法检查完全查不出来。
+// 这正是上一版的真实故障：取消关不掉，保存成功后弹窗也不自动关。
+function closeModal(){
+  $("#mask").classList.remove("show");
+  // 关弹窗就放弃正在进行的授权：服务端那个轮询协程不该在没人看的时候
+  // 继续打授权服务。
+  if(OAUTH_SESSION){
+    const id = OAUTH_SESSION; OAUTH_SESSION = null;
+    api("/api/oauth/cancel",{method:"POST",
+      headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({session:id})}).catch(()=>{});
+  }
+}
+
+// Esc 也要能关 —— 弹窗没有 Esc 等于把人关在里面。
+document.addEventListener("keydown", e=>{
+  if(e.key === "Escape" && $("#mask").classList.contains("show")) closeModal();
+});
 
 function openEdit(type,account){openForm(type,account)}
 
@@ -488,7 +519,7 @@ async function openForm(type, account){
     }
     doSave(type, account);
   };
-  $("#cancelbtn").onclick = close;
+  $("#cancelbtn").onclick = closeModal;
   const ob = $("#oauthbtn");
   if(ob) ob.onclick = () => startOAuth(type);
   const ncb = $("#ncbtn");
@@ -497,6 +528,23 @@ async function openForm(type, account){
   if(manualToggle) manualToggle.onclick = () => $("#manual").classList.toggle("show");
   const advToggle = $("#advtoggle");
   if(advToggle) advToggle.onclick = () => $("#adv").classList.toggle("show");
+  // 没有预设主机的渠道（通用的企业邮箱）：填完邮箱地址后自动猜主机。
+  // 「我公司的 IMAP 主机叫什么」是用户答不出的问题，而大多数自建服务器就是
+  // mail.<域名>。只在主机还空着时填，绝不覆盖用户已经输入的东西。
+  const addrEl = $("#f_" + d.accountField);
+  const needsHosts = d.fields.some(f => f.name === "imapHost" && f.required);
+  if(addrEl && needsHosts){
+    addrEl.onblur = async () => {
+      const ih = $("#f_imapHost"), sh = $("#f_smtpHost");
+      if(!addrEl.value || (ih && ih.value) || (sh && sh.value)) return;
+      const g = await api("/api/mail/guess", {method:"POST",
+        headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({address: addrEl.value})});
+      if(g.imapHost && ih && !ih.value) ih.value = g.imapHost;
+      if(g.smtpHost && sh && !sh.value) sh.value = g.smtpHost;
+      if(g.imapHost) toast("ok", "已按域名猜了服务器地址", "猜错了可以直接改");
+    };
+  }
   if(account){const af=$("#f_"+d.accountField); if(af){af.readOnly=true; af.style.opacity=.6}}
   $("#mask").classList.add("show");
 }
@@ -670,7 +718,7 @@ async function pollOAuth(type, id){
       el.className="st ok";
       el.textContent = "✅ 已连接为 " + st.account + "，渠道已保存";
       OAUTH_SESSION = null;
-      setTimeout(()=>{close();refresh();},1200);
+      setTimeout(()=>{closeModal();refresh();},1200);
       return;
     }
     el.className="st bad"; el.textContent = "授权失败：" + (st.error||"未知原因");
@@ -692,7 +740,7 @@ async function doSave(type, account){
     body:JSON.stringify({type,values})});
   if(r.error){ st.className="st bad"; st.textContent="保存失败：" + r.error; return; }
   st.className="st ok"; st.textContent="✅ 已连通并保存";
-  setTimeout(()=>{close();refresh();},600);
+  setTimeout(()=>{closeModal();refresh();},600);
 }
 
 // 测试已保存的渠道。
@@ -736,7 +784,7 @@ function del(type,account){
       <span class="st" id="delst"></span>
     </div>`;
   $("#mask").classList.add("show");
-  $("#delno").onclick = close;
+  $("#delno").onclick = closeModal;
   $("#delok").onclick = async () => {
     const b = $("#delok"); b.disabled = true;
     const r = await api("/api/channels/delete",{method:"POST",
@@ -747,7 +795,7 @@ function del(type,account){
       $("#delst").className = "st bad"; $("#delst").textContent = r.error;
       return;
     }
-    close(); refresh();
+    closeModal(); refresh();
     toast("ok", `已移除 ${esc(account)}`);
   };
 }
@@ -773,7 +821,340 @@ function toast(kind, title, detail){
   TOAST_TIMER = setTimeout(()=>{ box.className = "toast"; }, detail ? 9000 : 3500);
 }
 
-$("#mask").onclick=(e)=>{if(e.target.id==="mask")close()};
+$("#mask").onclick=(e)=>{if(e.target.id==="mask")closeModal()};
+
+// ── 详情页 ───────────────────────────────────────────────────
+// 稿子把它画成独立页面（面包屑 + 三个标签 + 左 832 / 右 336）。实现上它是同一个
+// 页面的另一个视图，用 hash 路由 —— 没有后端路由，刷新也能回到同一处。
+//
+// 稿子只画了「QQ 邮箱」这一个渠道。实现必须按描述符渲染：其他渠道字段差别很大
+// （NapCat 有自动配置、云之家是扫码授权），照着那一个硬写会在第二个渠道上崩。
+
+let DETAIL = null;   // {type, account, tab}
+let CHECK = null;    // 最近一次分步检查结果
+
+function parseHash(){
+  const m = location.hash.match(/^#\/c\/([^/]+)\/([^/]+)(?:\/(\w+))?$/);
+  if(!m) return null;
+  return {type:decodeURIComponent(m[1]), account:decodeURIComponent(m[2]), tab:m[3]||"account"};
+}
+
+function go(type, account, tab){
+  location.hash = `#/c/${encodeURIComponent(type)}/${encodeURIComponent(account)}/${tab||"account"}`;
+}
+function goList(){
+  // 不能只写 location.hash = ""：那样浏览器只把 #/x 剥成 #，不算一次变化，
+  // hashchange 不触发，于是面包屑点了没反应。显式清掉地址再自己走一次路由。
+  if(location.hash) history.replaceState(null, "", location.pathname + location.search);
+  route();
+}
+
+function route(){
+  DETAIL = parseHash();
+  const det = $("#detailview"), list = $("#listview");
+  if(DETAIL){
+    const inst = CHANNELS.find(v=>v.descriptor.type===DETAIL.type && v.instance.account===DETAIL.account);
+    if(!inst){ goList(); return; }   // 删掉之后回列表，别停在一个空页面
+    list.hidden = true; det.hidden = false;
+    renderDetail(inst);
+  }else{
+    det.hidden = true; list.hidden = false;
+    CHECK = null;
+  }
+}
+
+function renderDetail(v){
+  const d = v.descriptor, i = v.instance;
+  const tab = DETAIL.tab;
+  const writeOn = (d.writeSwitches||[]).some(s=>i.settings?.[s]==="true");
+  const active = activeTools(v);
+
+  const tabs = [["account","账号配置"],["perm","权限与工具"],["mcp","接入信息"]];
+  $("#detailview").innerHTML = `
+    <section>
+      <div class="bc">
+        <a href="#" id="bcback">${ic("ArrowLeft")}连接与配置</a>
+        ${ic("ChevronRight")}<span>${esc(d.name)}</span>
+      </div>
+      <div class="dt-head">
+        <span class="dt-ico">${ic(iconOf(d.type),"ic-18 ic")}</span>
+        <div>
+          <div class="dt-title">${esc(d.name)}
+            <span class="pill ok">已配置</span>
+            ${d.version?`<span class="tag">v${d.version}</span>`:""}</div>
+          <div class="dt-sub">${esc(i.account)}</div>
+        </div>
+      </div>
+      <div class="dtabs">
+        ${tabs.map(([k,t])=>`<a href="#" data-tab="${k}" class="${tab===k?'on':''}">${t}</a>`).join("")}
+      </div>
+    </section>
+
+    <div class="cols">
+      <div style="display:flex;flex-direction:column;gap:24px;min-width:0" id="dmain"></div>
+      <aside style="display:flex;flex-direction:column;gap:24px" id="dside"></aside>
+    </div>`;
+
+  $("#bcback").onclick = e => { e.preventDefault(); goList(); };
+  $("#detailview").querySelectorAll("[data-tab]").forEach(a=>{
+    a.onclick = e => { e.preventDefault(); go(d.type, i.account, a.dataset.tab); };
+  });
+
+  renderDetailMain(v, tab, {writeOn, active});
+  renderDetailSide(v, {writeOn, active});
+}
+
+function renderDetailMain(v, tab, st){
+  const d = v.descriptor, i = v.instance;
+  const box = $("#dmain");
+
+  if(tab === "account"){
+    // 账号配置：按描述符渲染，基础字段在前、高级（主机/端口）折起来。
+    // 稿子把服务器设置单独成一块并标「SSL / TLS 加密」—— 那是事实，保留。
+    const basic = d.fields.filter(f=>!f.advanced && f.kind!=="bool");
+    const adv   = d.fields.filter(f=>f.advanced);
+    box.innerHTML = `
+      <section class="card pad24">
+        <div class="sec-head"><h2>账号配置</h2>
+          <span class="meta">${esc(d.summary)}</span></div>
+        <div id="dfields">${basic.map(f=>detailField(f,i)).join("")}</div>
+        ${adv.length?`
+          <div class="hsep"></div>
+          <div class="sec-head" style="margin-bottom:12px">
+            <h2>服务器设置</h2>
+            <span class="meta">${ic("LockKeyhole")} SSL / TLS 加密</span></div>
+          <div class="dgrid">${adv.map(f=>detailField(f,i)).join("")}</div>`:""}
+      </section>
+      <div class="dsave">
+        <span class="tiny">${ic("LockKeyhole")} 凭据保存在本机，界面中保持隐藏</span>
+        <button id="dcancel">取消</button>
+        <button class="primary" id="dsave">保存配置</button>
+        <span class="st" id="dst"></span>
+      </div>`;
+    $("#dcancel").onclick = goList;
+    $("#dsave").onclick = () => saveDetail(d, i.account);
+    return;
+  }
+
+  if(tab === "perm"){
+    // 权限与工具：稿子把「权限」和「工具清单」分成两块，而且对关掉的工具
+    // 说明原因（「需开启『允许发送邮件』」）——光标一个「未注册」没用。
+    const sw = d.fields.filter(f=>f.kind==="bool");
+    const info = d.toolInfo || (d.tools||[]).map(n=>({name:n,title:n}));
+    const onNames = new Set(st.active);
+    box.innerHTML = `
+      <section class="card pad24">
+        <div class="sec-head"><h2>访问权限</h2>
+          <span class="meta">遵循最小权限原则，默认仅开放读取能力。</span></div>
+        <div class="prow">
+          <span class="pico">${ic("ShieldCheck","ic-16 ic")}</span>
+          <div><div class="pt">读取数据</div>
+            <div class="pd">${esc((d.tools||[]).filter(n=>!(d.writeTools||[]).includes(n)).length)} 个只读工具，默认启用</div></div>
+          <span class="pill">默认启用</span>
+        </div>
+        ${sw.map(f=>{
+          const on = i.settings?.[f.name]==="true";
+          return `<div class="prow">
+            <span class="pico">${ic("Send","ic-16 ic")}</span>
+            <div><div class="pt">${esc(f.label)}</div>
+              <div class="pd">${esc(f.help||"")}</div></div>
+            <label class="sw"><input type="checkbox" data-sw="${esc(f.name)}" ${on?"checked":""}>
+              <span>${on?"已开启":"已关闭"}</span></label>
+          </div>`;
+        }).join("")}
+      </section>
+
+      <section class="card pad24">
+        <div class="sec-head"><h2>渠道工具</h2>
+          <span class="meta">${st.active.length} 个已启用${info.length>st.active.length?` · ${info.length-st.active.length} 个因权限关闭`:""}</span>
+          <span class="pill">${info.length} 个工具</span></div>
+        <div class="tools">
+          ${info.map(t=>{
+            const on = onNames.has(t.name);
+            return `<div class="trow">
+              <span class="tmark ${on?'on':''}">${ic(on?"Check":"LockKeyhole")}</span>
+              <div class="tmain"><div class="tt">${esc(t.title)}</div>
+                <div class="tn mono">${esc(t.name)}</div></div>
+              <div class="td">${esc(t.desc||"")}</div>
+              <span class="pill ${on?'ok':''}">${on?"已启用":"未注册"}</span>
+            </div>`;
+          }).join("")}
+        </div>
+      </section>
+      <div class="dsave">
+        <span class="tiny">${ic("LockKeyhole")} 改完要保存，并在客户端刷新工具</span>
+        <button class="primary" id="dsave2">保存配置</button>
+        <span class="st" id="dst"></span>
+      </div>`;
+    $("#dsave2").onclick = () => saveSwitches(d, i.account);
+    box.querySelectorAll("[data-sw]").forEach(cb=>{
+      cb.onchange = () => cb.nextElementSibling.textContent = cb.checked ? "已开启" : "已关闭";
+    });
+    return;
+  }
+
+  // 接入信息：这个渠道在 MCP 里长什么样。
+  box.innerHTML = `
+    <section class="card pad24">
+      <div class="sec-head"><h2>接入信息</h2>
+        <span class="meta">这个渠道在客户端里以什么形式出现</span></div>
+      <div class="kv"><span class="k">渠道标识</span><span class="v mono">${esc(d.type)}</span></div>
+      <div class="kv"><span class="k">账号</span><span class="v">${esc(i.account)}</span></div>
+      <div class="kv"><span class="k">当前权限</span><span class="v">${st.writeOn?"可写":"只读"}</span></div>
+      <div class="kv"><span class="k">本渠道启用工具</span><span class="v">${st.active.length} 个</span></div>
+      <div class="hsep"></div>
+      <div class="tiny" style="margin-bottom:8px">模型会看到这些工具名：</div>
+      <div class="chips">${st.active.map(n=>`<span class="chip mono">${esc(n)}</span>`).join("")}</div>
+      <div class="hsep"></div>
+      <div class="note-box">${ic("CircleHelp")}
+        <div><b>保存后，记得更新 MCP 配置</b>
+          <div>权限变更不会自动同步到客户端。返回配置页生成，并在 Amazon Quick 中刷新。</div>
+          <a href="#" id="tomcp">前往生成 MCP 配置 →</a></div></div>
+    </section>`;
+  $("#tomcp").onclick = e => {
+    e.preventDefault(); goList();
+    setTimeout(()=>$("#onboard").scrollIntoView({behavior:"smooth",block:"center"}), 60);
+  };
+}
+
+function detailField(f, inst){
+  const v = f.name===inst.descriptorAccountField ? inst.account : (inst.settings?.[f.name] ?? f.default ?? "");
+  const val = (f.name==="user"||f.name===inst.accountField) ? inst.account : v;
+  if(f.kind==="password"){
+    return `<div class="field"><label>${esc(f.label)}
+        <span class="secret-tag">${ic("LockKeyhole")}已安全保存</span></label>
+      <input type="password" id="df_${f.name}" placeholder="留空表示不修改">
+      ${f.help?`<div class="help">${esc(f.help)}</div>`:""}</div>`;
+  }
+  const t = f.kind==="number" ? "number" : "text";
+  return `<div class="field"><label>${esc(f.label)}${f.required?' <span style="color:var(--status-danger-foreground)">*</span>':""}</label>
+    <input type="${t}" id="df_${f.name}" value="${esc(val)}" placeholder="${esc(f.placeholder||"")}">
+    ${f.help?`<div class="help">${esc(f.help)}</div>`:""}</div>`;
+}
+
+// 右栏：连接检查 / 接入摘要 / 配置帮助 / 移除连接 —— 稿子的四块。
+function renderDetailSide(v, st){
+  const d = v.descriptor, i = v.instance;
+  const steps = CHECK && CHECK.key===`${d.type}|${i.account}` ? CHECK.steps : null;
+  const running = CHECK && CHECK.key===`${d.type}|${i.account}` && CHECK.running;
+  $("#dside").innerHTML = `
+    <section class="card">
+      <div class="sec-head"><h2>连接检查</h2>
+        <span class="pill ${steps?(steps.every(s=>s.state==="ok")?"ok":""):""}">
+          ${running?"检查中":(steps?(steps.every(s=>s.state==="ok")?"全部通过":"有问题"):"尚未测试")}</span></div>
+      <div class="tiny">配置已保存不代表连接可用。测试仅检查服务与凭据，不会发送邮件。</div>
+      <div class="checks">${(steps||placeholderSteps(d)).map(s=>`
+        <div class="crow">
+          <span class="cmark ${s.state||''}">${ic(s.state==="ok"?"Check":(s.state==="fail"?"CircleHelp":"CircleDashed"))}</span>
+          <div class="cmain"><div>${esc(s.label)}</div>
+            ${s.error?`<div class="cerr">${esc(s.error)}</div>`:""}
+            ${s.note?`<div class="cnote">${esc(s.note)}</div>`:""}</div>
+          <span class="tiny">${s.state==="ok"?s.tookMs+"ms":(s.state==="fail"?"失败":(s.state==="skip"?"已跳过":"待检查"))}</span>
+        </div>`).join("")}</div>
+      <button class="block" id="dcheck" ${running?"disabled":""} style="margin-top:12px">
+        ${ic("FlaskConical")}${running?"检查中…":"测试连接"}</button>
+    </section>
+
+    <section class="card">
+      <div class="sec-head"><h2>MCP 接入摘要</h2></div>
+      <div class="kv"><span class="k">渠道标识</span><span class="v mono">${esc(d.type)}</span></div>
+      <div class="kv"><span class="k">账号</span><span class="v">${esc(i.account)}</span></div>
+      <div class="kv"><span class="k">当前权限</span><span class="v">${st.writeOn?"可写":"只读"}</span></div>
+      <div class="kv"><span class="k">本渠道启用工具</span><span class="v">${st.active.length} 个</span></div>
+      <div class="hsep"></div>
+      <div class="cl-head" style="font-size:11px">${ic("Monitor")}
+        <span style="font-weight:600">Amazon Quick</span>
+        <span class="pill ${LASTCLIENT?"ok":""}">${LASTCLIENT?"已连接":"未连接"}</span></div>
+      <div class="tiny" style="margin-top:7px">
+        ${LASTCLIENT
+          ? `客户端最近一次注册 ${LASTCLIENT.tools||0} 个工具（${ago(LASTCLIENT.at)}），与当前配置分开统计。`
+          : "还没有任何客户端连接过。"}</div>
+      <div class="note-box" style="margin-top:12px">${ic("CircleHelp")}
+        <div><b>保存后，记得更新 MCP 配置</b>
+          <div>权限变更不会自动同步到客户端。</div></div></div>
+    </section>
+
+    <section class="card">
+      <div class="sec-head"><h2>连接遇到问题？</h2></div>
+      <div class="tiny">${esc(d.fields.find(f=>f.kind==="password")?.help || "按渠道说明检查账号与凭据。")}</div>
+      <div style="margin-top:10px;display:flex;flex-direction:column;gap:7px">
+        ${d.helpUrl?`<a href="${esc(d.helpUrl)}" target="_blank" rel="noreferrer">${esc(d.name)}配置指南 ↗</a>`:""}
+        <a href="/api/log" target="_blank">查看运行日志 ↗</a>
+      </div>
+    </section>
+
+    <section class="card">
+      <div class="sec-head"><h2>移除连接</h2></div>
+      <div class="tiny">仅删除本机连接与凭据，不会删除对方系统里的任何数据。</div>
+      <button class="danger block" id="ddel" style="margin-top:12px">${ic("Trash")}删除此连接</button>
+    </section>`;
+  $("#dcheck").onclick = () => runCheck(d.type, i.account);
+  $("#ddel").onclick = () => del(d.type, i.account);
+}
+
+// 没测过时也要把三条列出来，让用户知道会检查什么 —— 稿子上就是「待检查」。
+function placeholderSteps(d){
+  if(d.kind === "mail"){
+    return [{label:"IMAP 服务可达性"},{label:"邮箱凭据验证"},{label:"SMTP 服务可达性"}];
+  }
+  return [{label:"连接与凭据验证"}];
+}
+
+async function runCheck(type, account){
+  CHECK = {key:`${type}|${account}`, running:true, steps:null};
+  route();
+  const r = await api("/api/channels/check",{method:"POST",
+    headers:{"Content-Type":"application/json"},
+    body:JSON.stringify({type,account,values:{}})});
+  if(r.error){
+    CHECK = {key:`${type}|${account}`, running:false, steps:null};
+    toast("bad", "检查没能进行", r.error);
+  }else{
+    CHECK = {key:`${type}|${account}`, running:false, steps:r.steps||[]};
+    const bad = (r.steps||[]).filter(s=>s.state==="fail");
+    if(!bad.length) toast("ok", `${account} 全部检查通过`);
+    else toast("bad", `${bad[0].label}未通过`, bad[0].error);
+  }
+  route();
+}
+
+async function saveDetail(d, account){
+  const st = $("#dst"); st.className="st"; st.textContent="测试连通中…";
+  const values = {};
+  d.fields.forEach(f=>{
+    const el = document.getElementById("df_"+f.name);
+    if(el && el.value !== "") values[f.name] = el.value;
+  });
+  // 账号字段不能改（它是凭据的键），但必须带上
+  values[d.accountField] = account;
+  const t = await api("/api/channels/test",{method:"POST",
+    headers:{"Content-Type":"application/json"},
+    body:JSON.stringify({type:d.type,account,values})});
+  if(!t.ok){ st.className="st bad"; st.textContent="连不上：" + t.error; return; }
+  const r = await api("/api/channels",{method:"POST",
+    headers:{"Content-Type":"application/json"},
+    body:JSON.stringify({type:d.type,values})});
+  if(r.error){ st.className="st bad"; st.textContent="保存失败：" + r.error; return; }
+  st.className="st ok"; st.textContent="已保存";
+  await refresh(); route();
+  toast("ok", "已保存并验证连通");
+}
+
+async function saveSwitches(d, account){
+  const st = $("#dst"); st.className="st"; st.textContent="保存中…";
+  const values = {};
+  $("#dmain").querySelectorAll("[data-sw]").forEach(cb=>{ values[cb.dataset.sw] = cb.checked ? "true" : "false"; });
+  values[d.accountField] = account;
+  const r = await api("/api/channels",{method:"POST",
+    headers:{"Content-Type":"application/json"},
+    body:JSON.stringify({type:d.type,values})});
+  if(r.error){ st.className="st bad"; st.textContent="保存失败：" + r.error; return; }
+  st.className="st ok"; st.textContent="已保存";
+  await refresh(); route();
+  toast("ok", "权限已更新 · 记得在客户端刷新工具");
+}
+
+window.addEventListener("hashchange", route);
 
 boot();
 </script>

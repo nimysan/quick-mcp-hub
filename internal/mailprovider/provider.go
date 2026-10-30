@@ -63,33 +63,63 @@ var All = []Provider{
 		SecretHelp:  "QQ邮箱网页版 → 设置 → 账号与安全 → 安全设置 → 开启服务（会收一条短信）→ 生成授权码（16 位小写字母，不是 QQ 登录密码）",
 	},
 	{
-		// GoTech 的自建邮件服务器：Postfix + Dovecot，不是 Exchange。
-		// 探测结论（2026-10-30）：
-		//   MX      mail.gotechcn.cn -> 221.4.223.109（SPF 只授权这一个 IP，-all）
-		//   SMTP    220 mail.gotechcn.cn ESMTP Postfix，25/465/587 开
-		//   IMAP    * OK [CAPABILITY IMAP4rev1 ... AUTH=PLAIN AUTH=LOGIN] Dovecot ready.
-		//           993 开，143 关（不给明文 IMAP）
-		//   TLS     只接受 8 个套件，全是静态 RSA；没有 ECDHE、没有 TLS 1.3
-		//   证书    CN=mail.gotechcn.cn，DigiCert DV
-		// autodiscover.gotechcn.cn 虽然解析到同一个 IP，但那是个幌子 ——
-		// Postfix/Dovecot 不做 Exchange 的 autodiscover，所以这是普通 IMAP/SMTP
-		// 渠道，不需要 EWS 或 Graph。
-		Type: "gotechmail", Name: "GoTech 邮箱", Icon: "📧",
-		Domains:  []string{"gotechcn.cn"},
-		IMAPHost: "mail.gotechcn.cn", IMAPPort: 993,
-		SMTPHost: "mail.gotechcn.cn", SMTPPort: 465,
-		// Dovecot/Postfix 没有「授权码」这个概念，填的就是登录密码本身 ——
+		// 通用的企业邮箱：主机和端口由用户填。
+		//
+		// 不绑定任何域名、不预置任何厂商的主机 —— 自建邮件服务器（Postfix +
+		// Dovecot 这类）没有「服务商」可言，每家的主机名都不一样，写死一家
+		// 等于只服务一家。页面上就是一张「企业邮箱」卡，客户填自己公司的
+		// 那两个地址。
+		//
+		// 端口给 993 / 465 的默认值：这两个是 IMAPS 和 SMTPS 的标准端口，
+		// 绝大多数服务器就是它们，填错了也能在同一个表单里改。
+		//
+		// 这里刻意**不开** LegacyRSAKeyExchange。老服务器只给静态 RSA 套件
+		// 这件事是真实存在的（实测有这样的服务器），但它不该由一张静态表来
+		// 断言 —— 通用渠道面对的是任意一台服务器。改成握手失败时自动降级
+		// 重试一次（见 internal/mailbox/tlsconfig.go 的 handshakeFailed），
+		// 这样默认连上的都是有前向保密的那条路，只有确实谈不拢的那台才降级，
+		// 而且降级会报出来。
+		Type: "custommail", Name: "企业邮箱", Icon: "📧",
+		Domains:  nil,
+		IMAPHost: "", IMAPPort: 993,
+		SMTPHost: "", SMTPPort: 465,
+		// 自建服务器通常没有「授权码」这个概念，填的就是登录密码本身 ——
 		// 这件事必须说清楚：它不能单独吊销，和 QQ 的授权码性质不同。
 		SecretLabel: "邮箱密码",
-		SecretHelp: "就是你登录这个邮箱用的密码（这台服务器没有「授权码」机制）。" +
-			"注意它不能像授权码那样单独吊销，所以这台机器上保存的就是你的真实密码——" +
+		SecretHelp: "就是你登录这个邮箱用的密码。自建邮件服务器一般没有「授权码」机制，" +
+			"所以它不能像授权码那样单独吊销——这台机器上保存的就是你的真实密码，" +
 			"它只进系统密码管理器，不写配置文件、不进日志。",
-		// 这台服务器只提供静态 RSA 密钥交换，Go 默认连不上。实测：默认设置
-		// handshake failure，显式启用静态 RSA 套件后才通。代价是这条连接没有
-		// 前向保密。正解是让对方在 Dovecot/Postfix 上加 ECDHE，加上之后这个
-		// 开关会自动失效（默认套件排在前面，服务器支持就会优先用）。
-		LegacyRSAKeyExchange: true,
 	},
+}
+
+// hostHints 是域名到接入点的提示表，只用于**自动填写**，不在界面上露出。
+//
+// 为什么不做成渠道卡片：一个客户的自建邮箱不该在所有人的配置页上占一张卡。
+// 但「我公司邮箱的 IMAP 主机叫什么」又是财务人员答不出的问题，所以这里留一张
+// 提示表：填了邮箱地址之后主机自动填好，仍然可改。
+//
+// 命名约定（mail./imap./smtp. + 域名）覆盖了大多数自建服务器，所以兜底就是
+// 按约定猜，而不是留空让用户去问 IT。
+var hostHints = map[string]struct{ IMAP, SMTP string }{
+	// 实测过的：MX 指向 221.4.223.109，Dovecot 的 IMAP 在 993，
+	// Postfix 的 SMTP 在 465，证书 CN=mail.gotechcn.cn。
+	"gotechcn.cn": {IMAP: "mail.gotechcn.cn", SMTP: "mail.gotechcn.cn"},
+}
+
+// GuessHosts 按邮箱地址猜 IMAP / SMTP 主机，供表单自动填写。
+//
+// 先查实测过的提示表，查不到就按 mail.<域名> 这个最常见的约定猜。猜错的代价
+// 很小（用户在同一个表单里改掉），猜对的收益很大（不用去问 IT）。
+func GuessHosts(addr string) (imapHost, smtpHost string) {
+	i := strings.LastIndex(addr, "@")
+	if i < 0 || i == len(addr)-1 {
+		return "", ""
+	}
+	domain := strings.ToLower(strings.TrimSpace(addr[i+1:]))
+	if h, ok := hostHints[domain]; ok {
+		return h.IMAP, h.SMTP
+	}
+	return "mail." + domain, "mail." + domain
 }
 
 // Default 是识别不出域名时的兜底（按 QQ 的接入点，并在名字里说明）。

@@ -73,6 +73,13 @@ func connect(cfg config.Config) (*session, error) {
 	}
 
 	c, err := imapclient.DialTLS(cfg.IMAPAddr(), opts)
+	if err != nil && !cfg.LegacyRSAKeyExchange && handshakeFailed(err) {
+		// 这台服务器只给静态 RSA 套件（老 Dovecot 的常见配置）。降级重试一次，
+		// 并把这件事写进日志 —— 这条连接没有前向保密，不该悄悄发生。
+		logf("IMAP %s 不接受默认加密套件，降级重试（这条连接无前向保密）", cfg.IMAPHost)
+		opts.TLSConfig = tlsConfigFor(cfg.IMAPHost, true)
+		c, err = imapclient.DialTLS(cfg.IMAPAddr(), opts)
+	}
 	if err != nil {
 		return nil, fmt.Errorf("连接 IMAP %s 失败: %w", cfg.IMAPAddr(), err)
 	}
@@ -92,7 +99,7 @@ func connect(cfg config.Config) (*session, error) {
 
 	if err := c.Login(cfg.User, password).Wait(); err != nil {
 		c.Close()
-		return nil, fmt.Errorf("IMAP 登录失败（QQ/163 需使用 16 位授权码而非登录密码）: %w", err)
+		return nil, loginError("IMAP", cfg, err)
 	}
 	return &session{c: c, cfg: cfg}, nil
 }

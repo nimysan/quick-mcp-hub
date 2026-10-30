@@ -92,7 +92,7 @@ func Send(ctx context.Context, cfg config.Config, req SendRequest) error {
 		return fmt.Errorf("构建 SMTP 客户端失败: %w", err)
 	}
 	if err := client.DialAndSendWithContext(ctx, msg); err != nil {
-		return fmt.Errorf("发信失败（%s:%d，QQ/163 需使用 16 位授权码）: %w", cfg.SMTPHost, cfg.SMTPPort, err)
+		return loginError("SMTP", cfg, err)
 	}
 	return nil
 }

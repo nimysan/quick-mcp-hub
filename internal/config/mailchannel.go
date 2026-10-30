@@ -13,6 +13,9 @@ type MailChannelInput struct {
 	SMTPPort     int
 	AllowSend    bool
 	ProviderName string
+	// SecretLabel 是这个渠道对凭据的叫法（「授权码」/「邮箱密码」）。
+	// 登录失败时要用它来说话 —— 对自建邮箱说「请用授权码」是错的。
+	SecretLabel string
 	// LegacyRSAKeyExchange 见 Config 上的同名字段。
 	LegacyRSAKeyExchange bool
 	MaxBodyBytes         int           // 0 取默认
@@ -32,6 +35,7 @@ type Secret interface {
 func FromMailChannel(in MailChannelInput) Config {
 	c := Config{
 		Provider:             in.ProviderName,
+		SecretLabel:          in.SecretLabel,
 		User:                 in.User,
 		secret:               in.Secret,
 		IMAPHost:             in.IMAPHost,

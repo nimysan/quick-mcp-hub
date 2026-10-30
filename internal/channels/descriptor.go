@@ -61,6 +61,18 @@ type Field struct {
 	Advanced bool `json:"advanced,omitempty"`
 }
 
+// ToolMeta 是一个工具对用户的说明。
+//
+// 设计稿的「渠道工具」清单要逐条列出工具，并对关掉的那些说明原因
+// （「需开启『允许发送邮件』」）—— 光给一个 snake_case 名字对业务人员等于乱码。
+type ToolMeta struct {
+	Name  string `json:"name"`
+	Title string `json:"title"`
+	Desc  string `json:"desc,omitempty"`
+	// Write 为真表示它受写开关控制，关着时不会注册给模型。
+	Write bool `json:"write,omitempty"`
+}
+
 // Descriptor 描述一类渠道。
 type Descriptor struct {
 	// Type 是渠道类型 id，写进配置文件，不随显示名变化。
@@ -94,6 +106,10 @@ type Descriptor struct {
 	// 视图时，它归在那边。
 	NeedsReview bool     `json:"needsReview,omitempty"`
 	Tools       []string `json:"tools,omitempty"`
+	// ToolInfo 是每个工具的标题和说明，供详情页的「渠道工具」清单用。
+	// 和 Tools 并存而不是替换它：Tools 是名字数组，别处（计数、写开关判断）
+	// 都在用。
+	ToolInfo []ToolMeta `json:"toolInfo,omitempty"`
 	// WriteTools 是 Tools 里会改动外部系统的那些，WriteSwitch 是控制它们的
 	// 开关字段名。页面靠这两样算出「客户端实际能看到几个工具」—— 开关关着
 	// 的工具不会注册，面板上的数字必须和真实状态对得上。
@@ -201,11 +217,18 @@ func mailDescriptor(p mailprovider.Provider) Descriptor {
 		Available:    true,
 		Tools:        []string{"list_recent", "search_mail", "read_mail", "send_mail"},
 		WriteTools:   []string{"send_mail"},
-		WriteSwitch:  "allowSend",
+		// 标题和说明用业务人员的话，不是 snake_case 的函数名。
+		ToolInfo: []ToolMeta{
+			{Name: "list_recent", Title: "最近邮件", Desc: "获取最近收到的邮件"},
+			{Name: "search_mail", Title: "搜索邮件", Desc: "按关键词检索邮件"},
+			{Name: "read_mail", Title: "读取邮件", Desc: "查看指定邮件的正文"},
+			{Name: "send_mail", Title: "发送邮件", Desc: "需开启「允许发送邮件」", Write: true},
+		},
+		WriteSwitch: "allowSend",
 		Fields: []Field{
 			{
 				Name: "user", Label: "邮箱地址", Kind: KindText, Required: true,
-				Placeholder: "someone@" + p.Domains[0],
+				Placeholder: addrPlaceholder(p.Domains),
 			},
 			{
 				Name: "password", Label: p.SecretLabel, Kind: KindPassword, Required: true,
@@ -217,20 +240,29 @@ func mailDescriptor(p mailprovider.Provider) Descriptor {
 				Help:    "关闭时 send_mail 不会注册给模型，只有读取类工具可用",
 			},
 			{
+				// 有预设主机时收进「高级设置」：那是已经验证过的值，用户不该
+				// 被迫看见。没有预设时（通用的企业邮箱渠道）必须露出来并标为
+				// 必填 —— 它们是空的，藏在折叠里等于让人对着一个连不上的表单
+				// 猜哪里不对。
 				Name: "imapHost", Label: "IMAP 主机", Kind: KindText,
-				Default: p.IMAPHost, Advanced: true,
+				Default: p.IMAPHost, Advanced: p.IMAPHost != "",
+				Required:    p.IMAPHost == "",
+				Placeholder: hostPlaceholder(p.IMAPHost, "imap"),
+				Help:        hostHelp(p.IMAPHost),
 			},
 			{
 				Name: "imapPort", Label: "IMAP 端口", Kind: KindNumber,
-				Default: fmt.Sprint(p.IMAPPort), Advanced: true,
+				Default: fmt.Sprint(p.IMAPPort), Advanced: p.IMAPHost != "",
 			},
 			{
 				Name: "smtpHost", Label: "SMTP 主机", Kind: KindText,
-				Default: p.SMTPHost, Advanced: true,
+				Default: p.SMTPHost, Advanced: p.SMTPHost != "",
+				Required:    p.SMTPHost == "",
+				Placeholder: hostPlaceholder(p.SMTPHost, "smtp"),
 			},
 			{
 				Name: "smtpPort", Label: "SMTP 端口", Kind: KindNumber,
-				Default: fmt.Sprint(p.SMTPPort), Advanced: true,
+				Default: fmt.Sprint(p.SMTPPort), Advanced: p.SMTPHost != "",
 				Help: "默认 465 直连 SSL。587 走 STARTTLS，在部分网络出口上不可达",
 			},
 		},
@@ -295,12 +327,19 @@ func httpDescriptor(s httpchan.Spec) Descriptor {
 	}
 
 	tools := make([]string, 0, len(s.Tools))
+	toolInfo := make([]ToolMeta, 0, len(s.Tools))
 	var writeTools []string
 	for _, t := range s.Tools {
 		tools = append(tools, t.Name)
 		if !t.ReadOnly {
 			writeTools = append(writeTools, t.Name)
 		}
+		// 标题取声明里的 title（已经是人话），说明取 description 的第一句 ——
+		// 完整的 description 是写给模型的，常常好几行，列表里放不下。
+		toolInfo = append(toolInfo, ToolMeta{
+			Name: t.Name, Title: firstNonEmpty(t.Title, t.Name),
+			Desc: firstSentence(t.Description), Write: !t.ReadOnly,
+		})
 	}
 	writeSwitch := ""
 	if len(writeTools) > 0 {
@@ -323,6 +362,7 @@ func httpDescriptor(s httpchan.Spec) Descriptor {
 		LocalProgram: s.Local,
 		Tools:        tools,
 		WriteTools:   writeTools,
+		ToolInfo:     toolInfo,
 		WriteSwitch:  writeSwitch,
 		HelpURL:      s.HelpURL,
 		OAuth:        oauthInfo,
@@ -369,4 +409,68 @@ func ByType(t string) (Descriptor, bool) {
 		}
 	}
 	return Descriptor{}, false
+}
+
+// firstNonEmpty 返回第一个非空串。
+func firstNonEmpty(ss ...string) string {
+	for _, s := range ss {
+		if strings.TrimSpace(s) != "" {
+			return s
+		}
+	}
+	return ""
+}
+
+// firstSentence 取一句话。
+//
+// 声明里的 description 是写给模型的，常常好几行、带使用时机和注意事项；
+// 详情页的工具清单每条只有一行的位置，塞整段进去会把表格撑烂。
+func firstSentence(s string) string {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return ""
+	}
+	// 中英文句号都算句末；换行也算 —— 多行描述的第一行通常就是摘要。
+	if i := strings.IndexAny(s, "。\n"); i >= 0 {
+		s = s[:i]
+	}
+	const max = 40 // 超过这个长度在一行里会挤掉右边的状态徽标
+	if r := []rune(s); len(r) > max {
+		return string(r[:max]) + "…"
+	}
+	return s
+}
+
+// hostPlaceholder 给没有预设主机的渠道一个像样的提示。
+//
+// 不写 "imap.example.com" 这种占位域名 —— 用户会照着填。写成「你公司的」
+// 这种话，意思是「这里要填你自己的东西」。
+func hostPlaceholder(preset, kind string) string {
+	if preset != "" {
+		return ""
+	}
+	return "例如 mail.你的公司域名 或 " + kind + ".你的公司域名"
+}
+
+// hostHelp 只在需要用户自己填的时候出现。
+func hostHelp(preset string) string {
+	if preset != "" {
+		return ""
+	}
+	// 多数自建服务器就是 mail.<域名>，所以先给这条最可能对的，
+	// 再说实在不知道该问谁 —— 而不是让用户在表单前卡住。
+	return "大多数公司是 mail.公司域名（填完邮箱地址会自动猜一个，可以改）。" +
+		"不确定就问公司 IT，或者看你现在用的邮件客户端里的「收件服务器」"
+}
+
+// addrPlaceholder 给邮箱地址字段一个提示。
+//
+// 预设服务商用它自己的域名（someone@qq.com 一看就懂）。通用渠道没有域名，
+// 这时**不能**写 someone@example.com —— 用户会照着填一个假域名。写成
+// 「你的公司邮箱」才说得清这里要填什么。
+func addrPlaceholder(domains []string) string {
+	if len(domains) > 0 {
+		return "someone@" + domains[0]
+	}
+	return "你的公司邮箱地址，例如 name@公司域名"
 }

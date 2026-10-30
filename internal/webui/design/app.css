@@ -79,6 +79,11 @@ svg.ic-18{width:18px;height:18px}
 /* ── 主体 ───────────────────────────────────────────────── */
 .main{flex:1;min-width:0;padding:32px;display:flex;flex-direction:column;gap:24px}
 .wrap{width:100%;max-width:1192px;display:flex;flex-direction:column;gap:24px}
+/* hidden 属性必须压过上面那个 display:flex。
+   浏览器自带的 [hidden]{display:none} 是 UA 样式，优先级比类选择器低 ——
+   所以 .wrap[hidden] 不加这一条就**根本不会隐藏**，两个视图会同时显示，
+   点返回像是没反应（列表其实在详情页下面）。这是真出过的故障。 */
+[hidden]{display:none !important}
 h1{font-size:26px;font-weight:700;letter-spacing:-.4px}
 .sub{font-size:12px;color:var(--text-secondary);margin-top:7px}
 
@@ -287,3 +292,85 @@ button:disabled{color:var(--text-disabled);cursor:not-allowed;background:var(--s
   color:var(--text-tertiary);font-size:15px;line-height:1;padding:0 2px;cursor:pointer;
 }
 .toast .x:hover{color:var(--text-primary);background:transparent}
+
+/* ── 详情页 ─────────────────────────────────────────────────
+   稿子把它画成独立页面：面包屑 + 标题 + 三标签，左 832 / 右 336。 */
+.bc{display:flex;align-items:center;gap:7px;font-size:11px;color:var(--text-tertiary)}
+.bc a{display:flex;align-items:center;gap:5px;color:var(--text-secondary)}
+.dt-head{display:flex;align-items:center;gap:16px;margin:16px 0 0}
+.dt-ico{
+  width:48px;height:48px;border-radius:12px;flex:none;display:grid;place-items:center;
+  background:var(--surface-subtle);color:var(--text-secondary);
+}
+.dt-title{font-size:26px;font-weight:700;letter-spacing:-.4px;display:flex;align-items:center;gap:8px}
+.dt-sub{font-size:12px;color:var(--text-secondary);margin-top:5px}
+.dt-head button{margin-left:auto;flex:none}
+/* 三个标签。下划线而不是胶囊 —— 稿子如此，而且它表示「同一个东西的不同面」，
+   胶囊更像是在筛选不同的东西。 */
+.dtabs{display:flex;gap:24px;margin-top:24px;border-bottom:1px solid var(--border-default)}
+.dtabs a{
+  padding:0 0 10px;font-size:12px;color:var(--text-secondary);
+  border-bottom:2px solid transparent;margin-bottom:-1px;
+}
+.dtabs a:hover{text-decoration:none;color:var(--text-primary)}
+.dtabs a.on{color:var(--brand-foreground);font-weight:600;border-bottom-color:var(--brand-action)}
+
+.dgrid{display:grid;grid-template-columns:1fr 100px 130px;gap:12px;align-items:start}
+@media (max-width:760px){.dgrid{grid-template-columns:1fr}}
+.dsave{
+  display:flex;align-items:center;gap:8px;
+  background:var(--surface-card);border:1px solid var(--border-default);
+  border-radius:12px;padding:12px 16px;
+}
+.dsave .tiny{margin-right:auto;display:flex;align-items:center;gap:7px}
+.dsave .st{margin-left:8px}
+
+/* 权限行 */
+.prow{display:flex;align-items:flex-start;gap:12px;padding:12px 0;border-top:1px solid var(--border-default)}
+.prow:first-of-type{border-top:none}
+.pico{width:28px;height:28px;border-radius:8px;flex:none;display:grid;place-items:center;
+  background:var(--surface-subtle);color:var(--text-secondary)}
+.prow .pt{font-size:12px;font-weight:600}
+.prow .pd{font-size:11px;color:var(--text-secondary);margin-top:3px}
+.prow .pill,.prow .sw{margin-left:auto;flex:none}
+.sw{display:flex;align-items:center;gap:7px;font-size:11px;color:var(--text-secondary);cursor:pointer}
+
+/* 工具清单。逐条列出来，并对关掉的说明原因 —— 光一个「未注册」没用。 */
+.tools{display:flex;flex-direction:column}
+.trow{display:flex;align-items:center;gap:12px;padding:10px 0;border-top:1px solid var(--border-default)}
+.trow:first-child{border-top:none}
+.tmark{width:20px;height:20px;border-radius:100px;flex:none;display:grid;place-items:center;
+  background:var(--surface-subtle);color:var(--text-disabled)}
+.tmark.on{background:var(--status-success-background);color:var(--status-success-foreground)}
+.tmain{flex:none;width:150px}
+.trow .tt{font-size:12px;font-weight:600}
+.trow .tn{font-size:10px;color:var(--text-tertiary);margin-top:2px}
+.trow .td{flex:1;min-width:0;font-size:11px;color:var(--text-secondary)}
+.trow .pill{flex:none}
+
+/* 连接检查三条 */
+.checks{display:flex;flex-direction:column;margin-top:12px}
+.crow{display:flex;align-items:flex-start;gap:10px;padding:8px 0;border-top:1px solid var(--border-default);font-size:11px}
+.crow:first-child{border-top:none}
+.cmark{width:18px;height:18px;border-radius:100px;flex:none;display:grid;place-items:center;
+  background:var(--surface-subtle);color:var(--text-disabled)}
+.cmark.ok{background:var(--status-success-background);color:var(--status-success-foreground)}
+.cmark.fail{color:var(--status-danger-foreground);
+  background:color-mix(in srgb,var(--status-danger-foreground) 14%,transparent)}
+.cmain{flex:1;min-width:0}
+/* 失败原因常常是对方服务器原样抛回来的，允许换行不截断 */
+.cerr{color:var(--status-danger-foreground);margin-top:3px;font-size:10px;line-height:1.5;word-break:break-word}
+.crow .tiny{flex:none}
+
+.note-box{display:flex;gap:8px;align-items:flex-start;background:var(--surface-subtle);
+  border-radius:8px;padding:10px 12px;font-size:11px;color:var(--text-secondary)}
+.note-box b{display:block;color:var(--text-primary);margin-bottom:3px}
+.note-box a{display:inline-block;margin-top:5px}
+.chips{display:flex;flex-wrap:wrap;gap:5px}
+.chip{font-size:10px;padding:3px 7px;border-radius:6px;background:var(--surface-subtle);color:var(--text-secondary)}
+/* 连接检查里的「通了，但有话要说」—— 目前只有一种：连接被降级到老式加密
+   套件。用警示色而不是失败色：连接确实是通的，但这件事不该悄悄发生。 */
+.cnote{
+  color:var(--status-warning-foreground,var(--text-secondary));
+  margin-top:3px;font-size:10px;line-height:1.5;word-break:break-word;
+}
