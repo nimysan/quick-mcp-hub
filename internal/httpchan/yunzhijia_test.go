@@ -3,9 +3,11 @@ package httpchan
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -65,8 +67,22 @@ func newYZJMock(t *testing.T) *yzjMock {
 			"success": true, "errorCode": 100, "error": "",
 		})
 	})
+	// 最近会话实测：一页固定 10 条，limit / pageSize / page / count / size 一律
+	// 被忽略，只有 pageIndex 真的翻页。所以这里只认 pageIndex。
 	mux.HandleFunc("/gateway/xtinterface/group/recentGroups", func(w http.ResponseWriter, r *http.Request) {
-		record(r)
+		body := record(r)
+		if n, ok := body["pageIndex"].(float64); ok && n >= 2 {
+			write(w, map[string]any{
+				"data": map[string]any{
+					"count": 1, "more": false, "unreadTotal": 0,
+					"list": []any{map[string]any{
+						"groupId": "g-11", "groupName": "第二页的群", "groupType": 2,
+					}},
+				},
+				"success": true, "errorCode": 0, "error": nil,
+			})
+			return
+		}
 		write(w, map[string]any{
 			"data": map[string]any{
 				"count": 2, "more": false, "unreadTotal": 0,
@@ -82,10 +98,30 @@ func newYZJMock(t *testing.T) *yzjMock {
 			"success": true, "errorCode": 0, "error": nil,
 		})
 	})
+	// 读历史实测：一次固定 10 条（limit / pageIndex 都被忽略），方向由 type 定，
+	// 而且 type 不传等于 new —— 往更新的方向。所以「只给 msgId 想往回翻」
+	// 在真实接口上是取不到更早记录的，这个 handler 照这个行为写。
 	mux.HandleFunc("/gateway/xtinterface/message/msgList", func(w http.ResponseWriter, r *http.Request) {
 		body := record(r)
 		if body["groupId"] == nil {
 			write(w, map[string]any{"data": nil, "success": false, "errorCode": 1110101, "error": "缺少必填参数，groupId"})
+			return
+		}
+		if body["type"] == "old" {
+			if body["msgId"] == nil {
+				write(w, map[string]any{"data": nil, "success": false, "errorCode": 1110101, "error": "缺少必填参数，msgId"})
+				return
+			}
+			write(w, map[string]any{
+				"data": map[string]any{
+					"groupId": body["groupId"], "count": 1, "more": true,
+					"list": []any{map[string]any{
+						"msgId": "m-0", "fromOpenId": "oid-b", "msgType": "text",
+						"content": "上周那张单子呢", "sendTime": "2026-10-22 09:14:02",
+					}},
+				},
+				"success": true, "errorCode": 0, "error": nil,
+			})
 			return
 		}
 		write(w, map[string]any{
@@ -129,6 +165,44 @@ func newYZJMock(t *testing.T) *yzjMock {
 			"success": true, "errorCode": 0, "error": nil,
 		})
 	})
+
+	// 审批列表。这个 handler 按真实接口实测的行为写：分页键只认
+	// pageNumber / pageSize，别的键（包括官方 CLI 的 flag 名 limit）
+	// 一律当没传、回服务端默认的 10 条 —— 这正是 pageNo 那版声明在
+	// 线上的表现（HTTP 200、success:true、永远只有前 10 条，翻页毫无
+	// 反应）。原来没有这个 handler，所以整组用例都没碰过这两个工具。
+	//
+	// 实测（张明星账号，www.yunzhijia.com）：
+	//   不传分页          -> 10 条，total 22
+	//   pageNumber=2      -> 另一批（更早的单子），说明页码生效
+	//   pageSize=3        -> 3 条；pageSize=100 -> 22 条全拿到
+	//   limit/size/rows/perPage/pageCount/maxCount -> 一律 10 条
+	pageList := func(w http.ResponseWriter, r *http.Request) {
+		body := record(r)
+		const totalRows = 23
+		page, limit := 1, 10
+		if n, ok := body["pageNumber"].(float64); ok && n >= 1 {
+			page = int(n)
+		}
+		if n, ok := body["pageSize"].(float64); ok && n >= 1 && n <= 100 {
+			limit = int(n)
+		}
+		rows := []any{}
+		for i := (page - 1) * limit; i < page*limit && i < totalRows; i++ {
+			rows = append(rows, map[string]any{
+				"formDefId":  "def-1",
+				"formInstId": fmt.Sprintf("inst-%d", i+1),
+				"flowInstId": fmt.Sprintf("flow-%d", i+1),
+				"title":      fmt.Sprintf("请款单 %d", i+1),
+			})
+		}
+		write(w, map[string]any{
+			"data":    map[string]any{"list": rows, "total": totalRows},
+			"success": true, "errorCode": 0, "error": nil,
+		})
+	}
+	mux.HandleFunc("/gateway/workflow/flow/todoPageList", pageList)
+	mux.HandleFunc("/gateway/workflow/flow/myFlowPageList", pageList)
 
 	mux.HandleFunc("/gateway/workflow/flow/viewFormInst", func(w http.ResponseWriter, r *http.Request) {
 		body := record(r)
@@ -323,12 +397,219 @@ func TestYunzhijiaResultPaths(t *testing.T) {
 	}
 }
 
+// 审批列表的分页键必须是 pageNumber / limit，而且要以 JSON 数字下发。
+//
+// 这条用例是补上来的：原来 24 组用例里没有一组碰过审批列表，声明里写的
+// pageNo / pageSize 这两个键在云之家那边根本不存在，于是调用照样成功、
+// 照样只回前 10 条，翻页参数像是「失效」—— 真实情况是服务端把它们当成
+// 没传过。能作证的只有「网关收到了什么」，不是「调用没报错」。
+func TestYunzhijiaApprovalPaging(t *testing.T) {
+	m := newYZJMock(t)
+	c := &Client{}
+	rt := m.runtime(t, false)
+
+	for _, tool := range []string{"yunzhijia_approval_todo", "yunzhijia_approval_myflow"} {
+		// 不传任何参数也要带上声明里的默认值，否则服务端给 10 条。
+		got, meta, err := c.Call(context.Background(), rt, tool, nil)
+		if err != nil {
+			t.Fatalf("%s 失败: %v", tool, err)
+		}
+		body := m.body()
+		if body["pageNumber"] != float64(1) {
+			t.Errorf("%s: pageNumber 要以数字 1 下发，实际 body=%#v", tool, body)
+		}
+		if body["pageSize"] != float64(20) {
+			t.Errorf("%s: pageSize 要以数字 20 下发，实际 body=%#v", tool, body)
+		}
+		// 旧键和「看起来对」的 CLI flag 名留在 body 里，会让
+		// 「到底哪个生效」看不清。
+		for _, dead := range []string{"pageNo", "limit"} {
+			if _, ok := body[dead]; ok {
+				t.Errorf("%s: %s 是云之家不认的键，不该下发: %#v", tool, dead, body)
+			}
+		}
+		if n := len(got.([]any)); n != 20 {
+			t.Errorf("%s: 默认该拿到 20 条（服务端默认只给 10），实际 %d", tool, n)
+		}
+		if meta["total"] != float64(23) {
+			t.Errorf("%s: meta 要带出 data.total，模型靠它判断还有没有下一页，实际 %#v", tool, meta)
+		}
+
+		// 第二页：拿到的是另一批，不是同一批。
+		got, _, err = c.Call(context.Background(), rt, tool,
+			map[string]any{"pageNumber": float64(2), "pageSize": float64(20)})
+		if err != nil {
+			t.Fatalf("%s 第二页失败: %v", tool, err)
+		}
+		rows := got.([]any)
+		if len(rows) != 3 {
+			t.Fatalf("%s: 23 条总量第二页该剩 3 条，实际 %d", tool, len(rows))
+		}
+		if first := rows[0].(map[string]any)["formInstId"]; first != "inst-21" {
+			t.Errorf("%s: 第二页该从第 21 条开始，实际 %v", tool, first)
+		}
+	}
+}
+
+// 群消息的翻页：读更早的记录只能靠 type=old 加锚点，而 type 不传在真实
+// 接口上等于 new（往更新的方向）—— 所以声明里必须有 type，而且默认值要是
+// newest。没有它，模型拿 msgId 想往回翻，取回来的是更新的消息，看起来就是
+// 「历史读不出来」。
+//
+// 实测（张明星账号的 SMT物料群，www.yunzhijia.com）：
+//
+//	不传 type            -> 16:16..16:26（更新的 9 条），more=false
+//	type=old + 锚点      -> 10-29 10:57..10-30 15:11，more=true  <- 这才是往回翻
+//	type=newest          -> 最新 10 条
+//	limit=3 / limit=50 / pageIndex=2 -> 一律 10 条，参数无效
+func TestYunzhijiaGroupHistoryPagesBackwards(t *testing.T) {
+	spec, _ := ByID("yunzhijia")
+	var tool *Tool
+	for i := range spec.Tools {
+		if spec.Tools[i].Name == "yunzhijia_group_history" {
+			tool = &spec.Tools[i]
+		}
+	}
+	var typ *Param
+	for i := range tool.Params {
+		switch tool.Params[i].Name {
+		case "type":
+			typ = &tool.Params[i]
+		case "limit", "pageIndex", "pageSize":
+			t.Errorf("接口忽略 %s，声明里留着它等于给模型一个没有作用的旋钮", tool.Params[i].Name)
+		}
+	}
+	if typ == nil {
+		t.Fatal("读历史必须有 type 参数，否则只能往更新的方向翻")
+	}
+	if typ.Default != "newest" {
+		t.Errorf("type 的默认值要是 newest（不传时服务端按 new 处理），实际 %q", typ.Default)
+	}
+	if !slices.Equal(typ.Enum, []string{"newest", "old", "new"}) {
+		t.Errorf("type 的取值应是 newest/old/new，实际 %v", typ.Enum)
+	}
+	if !strings.Contains(tool.Description, "第一条") {
+		t.Errorf("说明里要讲清往回翻的锚点取本页第一条（结果是从旧到新排的）：%s", tool.Description)
+	}
+
+	m := newYZJMock(t)
+	c := &Client{}
+	rt := m.runtime(t, false)
+
+	// 不传 type 要带上声明的默认值，不能让服务端按 new 处理。
+	if _, _, err := c.Call(context.Background(), rt, "yunzhijia_group_history",
+		map[string]any{"groupId": "g-1"}); err != nil {
+		t.Fatalf("取最新一页失败: %v", err)
+	}
+	if got := m.body()["type"]; got != "newest" {
+		t.Errorf("不传 type 时要下发 newest，实际 body=%#v", m.body())
+	}
+
+	// type=old + 锚点才取到更早的消息。
+	got, meta, err := c.Call(context.Background(), rt, "yunzhijia_group_history",
+		map[string]any{"groupId": "g-1", "type": "old", "msgId": "m-1"})
+	if err != nil {
+		t.Fatalf("往回翻失败: %v", err)
+	}
+	row := got.([]any)[0].(map[string]any)
+	if row["msgId"] != "m-0" {
+		t.Errorf("type=old 该取到更早的那条，实际 %#v", row)
+	}
+	if meta["more"] != true {
+		t.Errorf("meta 要带出 data.more，模型靠它判断还能不能继续往回翻：%#v", meta)
+	}
+}
+
+// 最近会话只有 pageIndex 能翻页（limit / pageSize / page / count / size 实测
+// 全部被忽略，一页固定 10 条）。留一个不起作用的 limit 比没有更糟：模型会以为
+// 自己已经把会话全取回来了。
+func TestYunzhijiaRecentGroupsPagesByPageIndex(t *testing.T) {
+	spec, _ := ByID("yunzhijia")
+	for _, tl := range spec.Tools {
+		if tl.Name != "yunzhijia_list_recent_groups" {
+			continue
+		}
+		var names []string
+		for _, p := range tl.Params {
+			names = append(names, p.Name)
+		}
+		if !slices.Equal(names, []string{"pageIndex"}) {
+			t.Errorf("最近会话的参数应只有 pageIndex，实际 %v", names)
+		}
+	}
+
+	m := newYZJMock(t)
+	c := &Client{}
+	rt := m.runtime(t, false)
+	if _, _, err := c.Call(context.Background(), rt, "yunzhijia_list_recent_groups", nil); err != nil {
+		t.Fatalf("第一页失败: %v", err)
+	}
+	if got := m.body()["pageIndex"]; got != float64(1) {
+		t.Errorf("不传时要以数字 1 下发 pageIndex，实际 body=%#v", m.body())
+	}
+	got, _, err := c.Call(context.Background(), rt, "yunzhijia_list_recent_groups",
+		map[string]any{"pageIndex": float64(2)})
+	if err != nil {
+		t.Fatalf("第二页失败: %v", err)
+	}
+	if id := got.([]any)[0].(map[string]any)["groupId"]; id != "g-11" {
+		t.Errorf("第二页该是另一批会话，实际 %v", id)
+	}
+}
+
+// 待办列表里混着外部系统接进来的单据，它们的 formDefId / formInstId 是
+// 空串 —— 实测张明星账号 22 条待办里有 20 条是金蝶云星空的（webUrl 指向
+// mkk3cloud.gotechcn.cn），四个 ID 全为空。detail / agree 对它们用不了，
+// 所以列表的说明里必须写明这件事，否则模型会拿空 ID 去调，或者自己拼一个
+// ID 去"同意"一张不知道是什么的单子。
+func TestYunzhijiaApprovalTodoWarnsAboutExternalForms(t *testing.T) {
+	spec, _ := ByID("yunzhijia")
+	var desc string
+	var fields []string
+	for _, tl := range spec.Tools {
+		if tl.Name == "yunzhijia_approval_todo" {
+			desc, fields = tl.Description, tl.Result.Fields
+		}
+	}
+	for _, want := range []string{"formDefId", "为空", "webUrl"} {
+		if !strings.Contains(desc, want) {
+			t.Errorf("待办列表的说明里要讲清外部系统单据没有 ID、只能给 webUrl，缺 %q：%s", want, desc)
+		}
+	}
+	// 判断「能不能 agree」靠的就是这几个 ID 在不在，裁掉任何一个，模型就
+	// 没法分辨哪张单子能处理。webUrl 是那类单子唯一的出路，也必须留。
+	for _, must := range []string{"formDefId", "formInstId", "flowInstId", "webUrl"} {
+		if !slices.Contains(fields, must) {
+			t.Errorf("result.fields 不能裁掉 %s：%v", must, fields)
+		}
+	}
+	// mobileUrl 和 webUrl 实测是同一个地址，留两份只是把一页的体积翻倍。
+	if slices.Contains(fields, "mobileUrl") {
+		t.Errorf("mobileUrl 和 webUrl 重复，不该带出来：%v", fields)
+	}
+}
+
+// 结果裁剪的上限不能低于接口允许的每页条数，否则模型要了 100 条、
+// 接口也给了 100 条，却被宿主静默砍掉一半 —— 那是同一个「只能拿到前 N 个」
+// 的坑换了个地方出现。
+func TestYunzhijiaApprovalResultLimitMatchesAPICap(t *testing.T) {
+	spec, _ := ByID("yunzhijia")
+	for _, tl := range spec.Tools {
+		if tl.Name != "yunzhijia_approval_todo" && tl.Name != "yunzhijia_approval_myflow" {
+			continue
+		}
+		if tl.Result.Limit < 100 {
+			t.Errorf("%s 的 result.limit 不能小于接口上限 100，实际 %#v", tl.Name, tl.Result)
+		}
+	}
+}
+
 // 读历史消息要把 param 那块富载荷裁掉，只留能读的几个字段。
 func TestYunzhijiaHistoryTrimsRichPayload(t *testing.T) {
 	m := newYZJMock(t)
 	c := &Client{}
 	got, _, err := c.Call(context.Background(), m.runtime(t, false), "yunzhijia_group_history",
-		map[string]any{"groupId": "g-1", "limit": 20})
+		map[string]any{"groupId": "g-1"})
 	if err != nil {
 		t.Fatalf("读历史失败: %v", err)
 	}
@@ -369,7 +650,7 @@ func TestYunzhijiaBusinessFailureIsReported(t *testing.T) {
 	c := &Client{}
 	// 不传 groupId，让仿真网关回 success:false。
 	_, _, err := c.Call(context.Background(), m.runtime(t, false), "yunzhijia_group_history",
-		map[string]any{"limit": 5})
+		map[string]any{"type": "newest"})
 	if err == nil {
 		t.Fatal("缺必填参数应该失败")
 	}
