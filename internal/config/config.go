@@ -176,13 +176,6 @@ func firstEnvOr(def string, keys ...string) string {
 	return def
 }
 
-func envInt(key string, def int) int {
-	if v, err := strconv.Atoi(strings.TrimSpace(os.Getenv(key))); err == nil && v > 0 {
-		return v
-	}
-	return def
-}
-
 // envIntAny 按顺序取第一个被设置且有效的候选环境变量。
 func envIntAny(keys []string, def int) int {
 	for _, k := range keys {
@@ -202,16 +195,6 @@ func envBoolAny(keys []string, def bool) bool {
 		case "0", "false", "no", "off":
 			return false
 		}
-	}
-	return def
-}
-
-func envBool(key string, def bool) bool {
-	switch strings.ToLower(strings.TrimSpace(os.Getenv(key))) {
-	case "1", "true", "yes", "on":
-		return true
-	case "0", "false", "no", "off":
-		return false
 	}
 	return def
 }

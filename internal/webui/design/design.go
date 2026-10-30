@@ -83,6 +83,13 @@ func writeVars(b *strings.Builder, m map[string]string) {
 func (t Tokens) IconSprite() string {
 	keys := make([]string, 0, len(t.Icons))
 	for k := range t.Icons {
+		// Figma 的提取会带出无名条目（稿子里的开关控件图形就是这样进来的），
+		// 那会生成一个 id="i-" 的 symbol：页面永远引用不到它，但它会跟着每个
+		// 页面发出去。tokens.json 保持是 Figma 的忠实快照（重新取就能覆盖），
+		// 所以在这里过滤，而不是手改那个文件。
+		if strings.TrimSpace(k) == "" {
+			continue
+		}
 		keys = append(keys, k)
 	}
 	sort.Strings(keys)

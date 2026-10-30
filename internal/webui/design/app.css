@@ -261,10 +261,27 @@ button:disabled{color:var(--text-disabled);cursor:not-allowed;background:var(--s
 .modal .foot .st{margin-left:auto;font-size:11px}
 .st.ok{color:var(--status-success-foreground)}
 .st.bad{color:var(--status-danger-foreground)}
-.adv-t{font-size:11px;color:var(--brand-foreground);cursor:pointer;margin:0 0 16px}
+/* 名字必须和页面里的 class 一致 —— 重写时这里曾写成 .adv-t，而页面用的是
+   .adv-toggle，于是「高级设置」「扫不了码？手动填…」两行完全没有样式：
+   看不出可点，也不是品牌色。CSS 对不上名字不会报任何错。 */
+.adv-toggle{font-size:11px;color:var(--brand-foreground);cursor:pointer;margin:0 0 16px}
 .adv{display:none}.adv.show{display:block}
 .risk{border:1px solid var(--text-tertiary);border-radius:8px;padding:12px;margin-bottom:16px;font-size:11px;color:var(--text-secondary)}
 .risk b{display:block;font-size:11px;color:var(--text-primary);margin-bottom:5px}
+/* 以下五条在按稿重写时整段丢了（旧样式写在页面的内联 <style> 里，没搬过来），
+   于是扫码授权那块——云之家、GitHub 的正路——界面是完全裸的：没有边框、
+   user code 和普通文字一样大。类名对不上不会报错，所以这是静默的。
+   旧版的 .oauth-head 在重写时改叫了 .risk-head，这里跟着改名。 */
+.oauth-box{border:1px solid var(--border-default);border-radius:8px;padding:12px;margin-bottom:16px}
+/* lead：这个渠道的正路就是点按钮授权，所以它要比表单显眼。不这样排的话，
+   用户先看到的是两个输入框，会以为需要手动填。 */
+.oauth-box.lead{border-color:var(--brand-action);border-width:1.5px;padding:16px}
+.oauth-box.lead button{font-size:13px;padding:8px 16px;margin-top:8px}
+.risk-head{font-weight:600;font-size:12px;color:var(--text-primary);margin-bottom:5px}
+.oauth-code{margin-top:8px}
+.code-row{display:flex;align-items:center;gap:8px;margin-top:5px}
+.code-row code{font-size:17px;letter-spacing:2px;font-weight:700;padding:5px 12px;
+  border:1px dashed var(--border-default);border-radius:6px;color:var(--text-primary)}
 .secret-tag{font-size:10px;font-weight:400;padding:2px 6px;border-radius:6px;background:var(--surface-subtle);color:var(--text-tertiary);margin-left:5px}
 
 /* ── 浮层提示 ───────────────────────────────────────────────
