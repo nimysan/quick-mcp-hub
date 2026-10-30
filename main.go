@@ -83,8 +83,10 @@ func main() {
 	// 日志同时写文件。Windows 上的 exe 用 -H windowsgui 编译，没有控制台，
 	// stderr 没有地方可去——没有这一步，程序出错就是彻底静默，用户看到的
 	// 是双击之后什么都没发生。
-	logWriter, logPath, logErr := applog.Open(config.Namespace)
-	log.SetOutput(logWriter) // 显式声明：绝不能是 os.Stdout
+	logFile, logErr := applog.Open(config.Namespace)
+	defer logFile.Close()
+	logPath := logFile.Path
+	log.SetOutput(logFile.Writer) // 显式声明：绝不能是 os.Stdout
 	if logErr != nil {
 		log.Printf("日志文件打不开，只写 stderr: %v", logErr)
 	}
