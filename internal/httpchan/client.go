@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/http/cookiejar"
 	"net/url"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -414,6 +415,9 @@ func (c *Client) buildRequest(ctx context.Context, rt Runtime, t Tool, args map[
 				return nil, "", fmt.Errorf("参数 %s 必填", p.Name)
 			}
 			continue
+		}
+		if err := checkEnum(p, raw); err != nil {
+			return nil, "", err
 		}
 		switch p.In {
 		case InPath:
@@ -880,6 +884,25 @@ func asString(p Param, v any) (string, error) {
 	default:
 		return "", fmt.Errorf("参数 %s 的值类型不支持（%T）", p.Name, v)
 	}
+}
+
+// checkEnum 在发请求前挡住取值表外的值。声明里的 enum 原来只写进工具的
+// JSON Schema，到不到服务端全看客户端肯不肯照着办 —— 而这类值猜错往往
+// 不报错：云之家审批的 status 传 "RUNNING,FINISH" 这种多值写法，接口会
+// 当成没传、照样回全量，模型于是把「全部单据」当成筛选结果念出来。
+// 与其让它静默错，不如在这里拒掉并把可选值列出来。
+func checkEnum(p Param, v any) error {
+	if len(p.Enum) == 0 {
+		return nil
+	}
+	s, ok := v.(string)
+	if !ok {
+		return nil // 非字符串的取值表交给 asTyped/asString 去报类型错
+	}
+	if slices.Contains(p.Enum, s) {
+		return nil
+	}
+	return fmt.Errorf("参数 %s 只能取 %s，收到 %q", p.Name, strings.Join(p.Enum, " / "), s)
 }
 
 func asTyped(p Param, v any) (any, error) {
