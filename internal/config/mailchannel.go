@@ -13,8 +13,10 @@ type MailChannelInput struct {
 	SMTPPort     int
 	AllowSend    bool
 	ProviderName string
-	MaxBodyBytes int           // 0 取默认
-	Timeout      time.Duration // 0 取默认
+	// LegacyRSAKeyExchange 见 Config 上的同名字段。
+	LegacyRSAKeyExchange bool
+	MaxBodyBytes         int           // 0 取默认
+	Timeout              time.Duration // 0 取默认
 }
 
 // Secret 是凭据的惰性句柄接口，由 credstore 实现。
@@ -29,16 +31,17 @@ type Secret interface {
 // 不读取凭据 —— 和 Load 一样保持惰性。
 func FromMailChannel(in MailChannelInput) Config {
 	c := Config{
-		Provider:     in.ProviderName,
-		User:         in.User,
-		secret:       in.Secret,
-		IMAPHost:     in.IMAPHost,
-		IMAPPort:     in.IMAPPort,
-		SMTPHost:     in.SMTPHost,
-		SMTPPort:     in.SMTPPort,
-		AllowSend:    in.AllowSend,
-		MaxBodyBytes: in.MaxBodyBytes,
-		Timeout:      in.Timeout,
+		Provider:             in.ProviderName,
+		User:                 in.User,
+		secret:               in.Secret,
+		IMAPHost:             in.IMAPHost,
+		IMAPPort:             in.IMAPPort,
+		SMTPHost:             in.SMTPHost,
+		SMTPPort:             in.SMTPPort,
+		AllowSend:            in.AllowSend,
+		LegacyRSAKeyExchange: in.LegacyRSAKeyExchange,
+		MaxBodyBytes:         in.MaxBodyBytes,
+		Timeout:              in.Timeout,
 	}
 	if c.IMAPPort == 0 {
 		c.IMAPPort = 993

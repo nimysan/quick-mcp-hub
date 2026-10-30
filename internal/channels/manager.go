@@ -10,6 +10,7 @@ import (
 	"github.com/nimysan/mcp-hub/internal/credstore"
 	"github.com/nimysan/mcp-hub/internal/httpchan"
 	"github.com/nimysan/mcp-hub/internal/mailbox"
+	"github.com/nimysan/mcp-hub/internal/mailprovider"
 	"github.com/nimysan/mcp-hub/internal/wasmplug"
 )
 
@@ -310,14 +311,22 @@ func (m *Manager) mailConfig(d Descriptor, account string, values map[string]str
 		secret = m.creds.Secret(ref)
 	}
 
+	// 这家服务商是否需要放宽 TLS，由服务商表决定，不是用户的开关 ——
+	// 它是那台服务器的客观属性（见 mailprovider.Provider.LegacyRSAKeyExchange）。
+	legacyRSA := false
+	if p, ok := mailprovider.ByType(d.Type); ok {
+		legacyRSA = p.LegacyRSAKeyExchange
+	}
+
 	return config.FromMailChannel(config.MailChannelInput{
-		User:         account,
-		Secret:       secret,
-		IMAPHost:     in.Setting(d, "imapHost"),
-		IMAPPort:     in.SettingInt(d, "imapPort", 993),
-		SMTPHost:     in.Setting(d, "smtpHost"),
-		SMTPPort:     in.SettingInt(d, "smtpPort", 465),
-		AllowSend:    in.SettingBool(d, "allowSend"),
-		ProviderName: d.Name,
+		User:                 account,
+		Secret:               secret,
+		IMAPHost:             in.Setting(d, "imapHost"),
+		IMAPPort:             in.SettingInt(d, "imapPort", 993),
+		SMTPHost:             in.Setting(d, "smtpHost"),
+		SMTPPort:             in.SettingInt(d, "smtpPort", 465),
+		AllowSend:            in.SettingBool(d, "allowSend"),
+		ProviderName:         d.Name,
+		LegacyRSAKeyExchange: legacyRSA,
 	}), nil
 }

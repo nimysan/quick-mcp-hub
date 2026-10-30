@@ -69,6 +69,11 @@ type Config struct {
 	// 需显式设置 MCPHUB_MAIL_ALLOW_SEND=true 才注册该 tool。
 	AllowSend bool
 
+	// LegacyRSAKeyExchange 为真时，额外允许静态 RSA 密钥交换的 TLS 套件。
+	// 只给那些**只提供**静态 RSA 的老服务器用（见 internal/mailbox/tlsconfig.go），
+	// 代价是那条连接没有前向保密。按渠道生效，不是全局。
+	LegacyRSAKeyExchange bool
+
 	// MaxBodyBytes 限制 read_mail 返回的正文字节数，防止一封大信撑爆上下文。
 	MaxBodyBytes int
 

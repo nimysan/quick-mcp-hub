@@ -3,7 +3,6 @@ package mailbox
 
 import (
 	"bytes"
-	"crypto/tls"
 	"fmt"
 	"io"
 	"mime"
@@ -68,7 +67,7 @@ func connect(cfg config.Config) (*session, error) {
 	}
 
 	opts := &imapclient.Options{
-		TLSConfig:   &tls.Config{ServerName: cfg.IMAPHost, MinVersion: tls.VersionTLS12},
+		TLSConfig:   imapTLS(cfg),
 		Dialer:      &net.Dialer{Timeout: cfg.Timeout},
 		WordDecoder: &mime.WordDecoder{CharsetReader: charset.Reader},
 	}
