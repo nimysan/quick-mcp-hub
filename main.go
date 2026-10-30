@@ -36,6 +36,7 @@ import (
 	"github.com/nimysan/mcp-hub/internal/assets"
 	"github.com/nimysan/mcp-hub/internal/catalog"
 	"github.com/nimysan/mcp-hub/internal/channels"
+	"github.com/nimysan/mcp-hub/internal/clientstat"
 	"github.com/nimysan/mcp-hub/internal/config"
 	"github.com/nimysan/mcp-hub/internal/credstore"
 	"github.com/nimysan/mcp-hub/internal/httpchan"
@@ -183,13 +184,36 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
+	registered := 0
+
+	// 记下「真的有客户端连上来了」。
+	//
+	// 时机刻意选在 InitializedHandler 而不是进程启动：被 spawn 起来只说明
+	// 客户端想连，握手还可能失败。这个回调触发时协议已经通了。
+	//
+	// 配置页面读这条记录来决定接入说明要不要默认展开 —— 用户照着说明在 Quick
+	// 里加完连接器之后，否则完全没有反馈。
+	//
+	// 写失败只记日志：它是个展示信号，不是功能，绝不能影响服务。
+	opts := &mcp.ServerOptions{
+		InitializedHandler: func(_ context.Context, req *mcp.InitializedRequest) {
+			rec := clientstat.Record{At: time.Now(), Tools: registered}
+			if p := req.Session.InitializeParams(); p != nil && p.ClientInfo != nil {
+				rec.Client, rec.Version = p.ClientInfo.Name, p.ClientInfo.Version
+			}
+			if err := clientstat.Write(config.Namespace, rec); err != nil {
+				log.Printf("记录客户端连接失败（不影响服务）: %v", err)
+				return
+			}
+			log.Printf("客户端已连接：%s %s，本次注册 %d 个工具", rec.Client, rec.Version, rec.Tools)
+		},
+	}
+
 	server := mcp.NewServer(&mcp.Implementation{
 		Name:    "mcp-hub",
 		Title:   "MCP Hub",
 		Version: version,
-	}, nil)
-
-	registered := 0
+	}, opts)
 
 	// 邮件渠道：以页面里保存的配置为准，环境变量只作兜底 —— 老的 Quick
 	// connector 配置是靠 MCPHUB_MAIL_* 跑的，不能因为改成读配置文件就把

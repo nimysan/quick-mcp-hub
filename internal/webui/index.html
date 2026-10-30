@@ -30,7 +30,21 @@
   header .tag{font-size:11px;padding:2px 7px;border-radius:5px;
     background:color-mix(in srgb,var(--accent) 15%,transparent);color:var(--accent)}
   header .right{margin-left:auto;font-size:12px;color:var(--muted)}
-  main{max-width:900px;margin:0 auto;padding:20px}
+  main{max-width:1180px;margin:0 auto;padding:20px}
+  /* 两栏：左边是每天看的「我的连接」，右边是偶尔用一次的「添加连接」。
+     原来三段上下堆叠，面积分配和重要性正好相反 —— 渠道市场七张大卡占了
+     一半以上高度，而它是一次性操作。窗口窄到放不下两栏时自动退回堆叠。 */
+  .cols{display:grid;grid-template-columns:minmax(0,1fr) 340px;gap:22px;align-items:start}
+  @media (max-width:980px){ .cols{grid-template-columns:1fr} }
+  /* 状态条：一行回答「Quick 那边通了吗」。 */
+  .sb{display:flex;align-items:center;gap:10px;flex-wrap:wrap;
+      background:var(--card);border:1px solid var(--border);border-radius:10px;
+      padding:10px 14px;margin-bottom:18px;font-size:13px}
+  .sb.warn{border-color:var(--warn);background:var(--warn-bg)}
+  .sb .dot{font-size:14px}
+  .sb .sep{color:var(--muted)}
+  .sb .grow{margin-left:auto}
+  .sb button{padding:3px 10px;font-size:12px}
   .sec{margin-bottom:28px}
   .sec.market{padding-top:20px;border-top:1px solid var(--border)}
   .hint-inline{margin-left:auto;font-size:12px;color:var(--muted)}
@@ -80,7 +94,12 @@
   .code-row{display:flex;align-items:center;gap:10px;margin-top:4px}
   .code-row code{font-size:20px;letter-spacing:2px;font-weight:700;
     padding:6px 12px;border:1px dashed var(--border);border-radius:8px}
-  .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(270px,1fr));gap:10px}
+  /* 右栏宽 340px，装不下两列，所以市场改单列紧凑卡片。窗口窄到两栏退回
+     堆叠时，市场也跟着恢复成多列，不会变成一条长长的单列。 */
+  .grid{display:grid;grid-template-columns:1fr;gap:10px}
+  @media (max-width:980px){
+    .grid{grid-template-columns:repeat(auto-fill,minmax(270px,1fr))}
+  }
   .mk{background:var(--card);border:1px solid var(--border);border-radius:10px;
       padding:12px 14px;display:flex;flex-direction:column;gap:6px}
   .mk.has{border-color:color-mix(in srgb,var(--ok) 45%,var(--border))}
@@ -90,9 +109,8 @@
      压断在词中间（出现过「GitHub（wasm 插」/「件)」这种断行）。 */
   .mk .nm{font-weight:600;flex:1;min-width:0}
   .mk .top code{flex:none}
-  /* 风险徽标单独一行：和名字挤在一行时它自己也会断成两行（「第三方扩」/
-     「展」），而且把标题挤成三行高。 */
-  .mk .tags{display:flex;flex-wrap:wrap;align-items:center;gap:6px}
+  /* 风险徽标和 id 角标单独一行：和名字挤在一行时徽标自己会断成两行
+     （「第三方扩」/「展」），而且把标题挤成三行高。 */
   .mk .sm{font-size:12px;color:var(--muted);flex:1}
   /* tl 是给「工具名清单」那种一行等宽文本用的，截断是刻意的。整句提示
      要用 note：正常字体、正常换行 —— 把一句话截掉会正好吃掉重点那半句
@@ -100,8 +118,12 @@
   .mk .tl{font-size:11px;color:var(--muted);font-family:ui-monospace,monospace;
           overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   .mk .note{font-size:11px;line-height:1.5}
-  .mk .act{display:flex;align-items:center;gap:8px;margin-top:2px}
-  .mk .act .mine{font-size:11px;color:var(--ok);margin-right:auto}
+  /* 按钮和「已连接几个」收进标题行：右栏只有 340px，再留一整行放按钮
+     就把卡片撑高了，而市场是一次性操作，不该占这么多纵向空间。 */
+  .mk .top button{margin-left:auto;flex:none}
+  .mk .top .mine{font-size:11px;color:var(--ok);flex:none;margin-left:auto}
+  .mk .top .mine + button{margin-left:8px}
+  .mk .tags{display:flex;flex-wrap:wrap;align-items:center;gap:6px}
   .mk button{padding:4px 10px;font-size:12px}
   .ptype{border:1px solid var(--border);border-radius:9px;padding:10px;cursor:pointer}
   .ptype.sel{border:2px solid var(--accent);background:color-mix(in srgb,var(--accent) 10%,transparent)}
@@ -157,33 +179,36 @@
   <a class="loglink" id="loglink" href="/api/log" target="_blank" rel="noreferrer" hidden>查看日志</a>
 </header>
 <main>
-  <!-- 这一节放在最上面，不是放最下面：它是整个流程的终点，而且是固定大小
-       的块。放在渠道列表后面的话，渠道一多就沉到看不见的地方 —— 而这个
-       产品存在的理由就是把 Amazon Quick 接起来。 -->
-  <section class="sec">
-    <div class="row">
-      <h2>🚀 快速接入 Amazon Quick</h2>
-      <div class="hint-inline">配好渠道后，把这段粘进 Quick 就能用</div>
-    </div>
+  <!-- 状态条：一行回答「Quick 那边通了吗」。没有它，用户照着说明在 Quick 里
+       加完连接器之后完全没有反馈。 -->
+  <div class="sb" id="statusbar"></div>
+
+  <!-- 接入说明。位置固定在顶部、通栏宽度（那段 JSON 的 command 行有六十多个
+       字符，塞进右栏只能横向滚动，而复制时最容易出错的恰恰是这一行）。
+       还没有客户端连接过时默认展开 —— 那时它是页面上唯一重要的东西；
+       连上之后收起，点状态条上的按钮原地展开同一个面板。 -->
+  <section class="sec" id="onboardsec">
     <div id="onboard"></div>
   </section>
 
-  <section class="sec">
-    <div class="row">
-      <h2>🔌 已集成渠道 <span class="count" id="count"></span></h2>
-      <div class="hint-inline" id="toolsum"></div>
-    </div>
-    <div id="list"></div>
-  </section>
+  <div class="cols">
+    <section class="sec">
+      <div class="row">
+        <h2>🔌 我的连接 <span class="count" id="count"></span></h2>
+        <div class="hint-inline" id="toolsum"></div>
+      </div>
+      <div id="list"></div>
+    </section>
 
-  <section class="sec market">
-    <div class="row">
-      <h2>🏪 渠道市场</h2>
-      <div class="hint-inline" id="srcinfo"></div>
-    </div>
-    <div class="tagbar" id="tagbar"></div>
-    <div class="grid" id="grid"></div>
-  </section>
+    <section class="sec market">
+      <div class="row">
+        <h2>🏪 添加连接</h2>
+        <div class="hint-inline" id="srcinfo"></div>
+      </div>
+      <div class="tagbar" id="tagbar"></div>
+      <div class="grid" id="grid"></div>
+    </section>
+  </div>
 </main>
 
 <div class="mask" id="mask">
@@ -202,7 +227,9 @@ async function boot(){
   $("#cfgpath").textContent = "配置：" + d.configPath;
   if(d.logPath){ const l=$("#loglink"); l.hidden=false; l.title="日志文件："+d.logPath; }
   EXEPATH = d.exePath || "";
+  LASTCLIENT = d.lastClient || null;
   renderOnboard();
+  renderStatus();
   $("#srcinfo").textContent = `${DESCRIPTORS.filter(x=>x.available).length} 个可用 · 内置目录`;
   await refresh();
 }
@@ -285,6 +312,59 @@ function renderMine(){
 
 // ---------- 渠道市场 ----------
 let EXEPATH = "";
+let LASTCLIENT = null;
+
+// 状态条：一行回答「Quick 那边通了吗」。
+//
+// 这个信号来自 MCP 服务那侧 —— 客户端握手成功时写一条记录（见
+// internal/clientstat）。记录的是**握手成功**，不是「进程被启动过」：被 spawn
+// 起来只说明客户端想连，握手还可能失败。
+//
+// 客户端名字是对方自报的，只作展示。
+function renderStatus(){
+  const tools = CHANNELS.reduce((n,v)=>n+activeTools(v).length, 0);
+  const el = $("#statusbar");
+  if(!LASTCLIENT){
+    el.className = "sb warn";
+    el.innerHTML = `<span class="dot">⚠</span>
+      <b>还没有任何 AI 客户端连接过</b>
+      <span class="sep">·</span> 已配好 ${CHANNELS.length} 个账号、${tools} 个工具
+      <span class="sep">·</span> 照下面的说明在 Quick 里加一次`;
+    openOnboard(true);
+    return;
+  }
+  const who = LASTCLIENT.client ? esc(LASTCLIENT.client) : "某个客户端";
+  const ver = LASTCLIENT.version ? " " + esc(LASTCLIENT.version) : "";
+  el.className = "sb";
+  el.innerHTML = `<span class="dot">✅</span>
+    <b>${who}${ver}</b> 已连接
+    <span class="sep">·</span> 最近一次 ${ago(LASTCLIENT.at)}
+    <span class="sep">·</span> 那次注册了 ${LASTCLIENT.tools||0} 个工具
+    <span class="sep">·</span> 现在 ${CHANNELS.length} 个账号、${tools} 个工具
+    <span class="grow"></span>
+    <button id="obtoggle">接入说明</button>`;
+  openOnboard(false);
+  const t = $("#obtoggle");
+  if(t) t.onclick = () => openOnboard($("#onboardsec").hidden);
+}
+
+function openOnboard(open){
+  const sec = $("#onboardsec");
+  if(sec) sec.hidden = !open;
+}
+
+// ago 把时间戳说成人话。精确到秒没有意义 —— 这一行要回答的是
+// 「刚刚连过」还是「很久没连了」。
+function ago(iso){
+  const t = Date.parse(iso);
+  if(isNaN(t)) return "未知";
+  const s = Math.max(0, (Date.now()-t)/1000);
+  if(s < 90) return "刚刚";
+  if(s < 3600) return Math.round(s/60) + " 分钟前";
+  if(s < 86400) return Math.round(s/3600) + " 小时前";
+  return Math.round(s/86400) + " 天前";
+}
+
 
 // 快速接入 Amazon Quick：把配置连同**运行时探测到的**本程序路径一起给出来。
 //
@@ -302,6 +382,8 @@ function renderOnboard(){
   const cfg = JSON.stringify(
     {mcpServers:{"mcp-hub":{command:EXEPATH,args:["-serve"]}}}, null, 2);
   $("#onboard").innerHTML = `
+    <div class="row"><h2>🚀 快速接入 Amazon Quick</h2>
+      <div class="hint-inline">把下面这段粘进 Quick 就能用</div></div>
     <div class="ob-steps">
       Quick 里：Customize → Connectors → <b>Add Local Connector</b> → 选 Local →
       把下面这段粘进去 → <b>Test Connection</b> 通了再点 <b>Add</b>。添加完点一次 <b>Sync</b>。
@@ -367,23 +449,19 @@ function renderMarket(){
       <div class="top">
         <span>${d.icon||"🔌"}</span>
         <span class="nm">${esc(d.name)}</span>
-        <code>${esc(d.type)}</code>
+        ${n?`<span class="mine" title="已连接 ${n} 个账号">✓ ${n}</span>`:''}
+        ${d.available
+          ? `<button data-add="${idx}" class="${n?'':'primary'}">${n?'再加一个':'添加'}</button>`
+          : '<button disabled>暂未支持</button>'}
       </div>
       ${(d.version||d.thirdPartyCode||d.localProgram)?`<div class="tags">
         ${d.version?`<span class="ver">v${d.version}</span>`:''}
-        ${d.thirdPartyCode?'<span class="tp" title="这个渠道的代码不是本程序写的，它跑在隔离环境里，不能读你的文件和密码">🧩 第三方扩展</span>':''}
-        ${d.localProgram?'<span class="tp" title="这个渠道连的是你自己机器上另一个程序，要先装好它">💻 需本机程序</span>':''}
-      </div>`:''}
+        <code>${esc(d.type)}</code>
+        ${d.thirdPartyCode?`<span class="tp" title="这个渠道的代码不是本程序写的，它跑在隔离环境里，不能读你的文件和密码。沙箱只允许它访问：${esc((d.allowedHosts||[]).join(" "))}">🧩 第三方扩展</span>`:''}
+        ${d.localProgram?'<span class="tp" title="这个渠道连的是你自己机器上另一个程序，要先装好并保持它运行——填完表单不会自己装">💻 需本机程序</span>':''}
+      </div>`:`<div class="tags"><code>${esc(d.type)}</code></div>`}
       <div class="sm">${esc(d.summary)}</div>
-      ${d.thirdPartyCode?`<div class="note" style="color:var(--warn)">它只能访问：${esc((d.allowedHosts||[]).join(" "))}</div>`:''}
-      ${d.localProgram?`<div class="note" style="color:var(--warn)">要先在这台机器上装好并运行那个程序，填完表单不会自己装</div>`:''}
-      ${wn?`<div class="note" style="color:var(--warn)">默认只读。发送、修改类操作要你在表单里另外打开</div>`:''}
-      <div class="act">
-        ${n?`<span class="mine">✓ 已连接 ${n} 个账号</span>`:'<span class="mine"></span>'}
-        ${d.available
-          ? `<button class="${n?'':'primary'}" data-add="${idx}">${n?'再加一个账号':'添加'}</button>`
-          : '<button disabled>暂未支持</button>'}
-      </div>
+      ${wn?`<div class="note" style="color:var(--warn)">默认只读 · 写操作要在表单里另外打开</div>`:''}
     </div>`;
   }).join("");
 

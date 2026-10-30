@@ -24,6 +24,8 @@ import (
 	"github.com/nimysan/mcp-hub/internal/applog"
 	"github.com/nimysan/mcp-hub/internal/assets"
 	"github.com/nimysan/mcp-hub/internal/channels"
+	"github.com/nimysan/mcp-hub/internal/clientstat"
+	"github.com/nimysan/mcp-hub/internal/config"
 )
 
 //go:embed index.html
@@ -249,10 +251,13 @@ func exePath() string {
 
 func (s *Server) handleDescriptors(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{
-		"version":     s.version,
-		"configPath":  s.mgr.Store().Path(),
-		"logPath":     s.LogPath,
-		"exePath":     exePath(),
+		"version":    s.version,
+		"configPath": s.mgr.Store().Path(),
+		"logPath":    s.LogPath,
+		"exePath":    exePath(),
+		// 最近一次成功握手的客户端。页面据此决定接入说明默认展开还是收起 ——
+		// 用户照着说明在 Quick 里加完连接器之后，否则完全没有反馈。
+		"lastClient":  lastClient(),
 		"descriptors": channels.All(),
 	})
 }
@@ -393,4 +398,21 @@ func writeJSON(w http.ResponseWriter, code int, v any) {
 
 func writeErr(w http.ResponseWriter, code int, err error) {
 	writeJSON(w, code, map[string]any{"error": err.Error()})
+}
+
+// lastClient 读「最近一次有客户端真的连上来」的记录。
+//
+// 没有记录时回 nil，页面据此把接入说明默认展开 —— 那时它是页面上唯一重要的
+// 东西。记录里的客户端名字是对方自报的，只作展示，不作任何授权判断。
+func lastClient() any {
+	r, ok := clientstat.Read(config.Namespace)
+	if !ok {
+		return nil
+	}
+	return map[string]any{
+		"at":      r.At.Format(time.RFC3339),
+		"client":  r.Client,
+		"version": r.Version,
+		"tools":   r.Tools,
+	}
 }
