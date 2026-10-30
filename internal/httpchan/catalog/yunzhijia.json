@@ -183,7 +183,8 @@
       "params": [
         { "name": "pageNumber", "in": "body", "type": "number", "default": "1", "description": "第几页，从 1 开始。data.total 比已拿到的条数多就继续翻下一页" },
         { "name": "pageSize", "in": "body", "type": "number", "default": "20", "description": "每页多少条，不传按服务端默认的 10" },
-        { "name": "keyword", "in": "body", "description": "按关键词过滤单据" }
+        { "name": "keyword", "in": "body", "description": "按关键词过滤单据（匹配标题、单号、正文）" },
+        { "name": "serialNo", "in": "body", "description": "按单号找单据，模糊匹配 —— 记得一截就行" }
       ],
       "result": {
         "path": "data.list",
@@ -214,7 +215,8 @@
       "params": [
         { "name": "pageNumber", "in": "body", "type": "number", "default": "1", "description": "第几页，从 1 开始。data.total 比已拿到的条数多就继续翻下一页" },
         { "name": "pageSize", "in": "body", "type": "number", "default": "20", "description": "每页多少条，不传按服务端默认的 10" },
-        { "name": "keyword", "in": "body", "description": "按关键词过滤单据" }
+        { "name": "keyword", "in": "body", "description": "按关键词过滤单据（匹配标题、单号、正文）" },
+        { "name": "serialNo", "in": "body", "description": "按单号找单据，模糊匹配 —— 记得一截就行（实测 QKSQD-2026 命中 7 条，完整单号命中 1 条）" }
       ],
       "result": {
         "path": "data.list",
@@ -240,9 +242,47 @@
       }
     },
     {
+      "name": "yunzhijia_approval_done",
+      "title": "我审批过的单据",
+      "description": "列出当前登录用户的审批已办 —— 我处理过的单子，用于回答「那张单子我批没批」「我上周批了什么」。和待办、我发起一样是个人视角。单据现在走到哪一步看 currentActivityName 和 currentApprovers，status 是整张单子的状态（RUNNING 还在流程里、FINISH 已结束）。注意不加过滤时 data.total 实测回 10000 这个整数，是个封顶值而不是精确条数，所以只拿它判断「还有更多」，不要当成「我一共批过多少单」报给用户。找具体某一张用 serialNo 或 keyword，不要翻页硬找。",
+      "readOnly": true,
+      "method": "POST",
+      "path": "/gateway/workflow/flow/donePageList",
+      "params": [
+        { "name": "pageNumber", "in": "body", "type": "number", "default": "1", "description": "第几页，从 1 开始" },
+        { "name": "pageSize", "in": "body", "type": "number", "default": "20", "description": "每页多少条，不传按服务端默认的 10" },
+        { "name": "keyword", "in": "body", "description": "按关键词过滤单据（匹配标题、单号、正文）" },
+        { "name": "serialNo", "in": "body", "description": "按单号找单据，模糊匹配 —— 记得一截就行" }
+      ],
+      "result": {
+        "path": "data.list",
+        "limit": 100,
+        "fields": [
+          "id",
+          "title",
+          "serialNo",
+          "status",
+          "currentActivityName",
+          "currentApprovers",
+          "creatorName",
+          "creatorDeptName",
+          "createTime",
+          "urgencyDegree",
+          "appId",
+          "formDefId",
+          "formInstId",
+          "formCodeId",
+          "flowInstId",
+          "source",
+          "webUrl"
+        ],
+        "meta": ["data.total"]
+      }
+    },
+    {
       "name": "yunzhijia_approval_detail",
       "title": "看审批单据详情",
-      "description": "读一张审批单据的内容：流程状态、各控件填了什么、以及打开它的链接。要同意一张单子之前**必须先用它把单据内容读出来给用户看**——待办列表只有标题，看不到金额和明细，而同意是不可逆的。formDefId 和 formInstId 从 yunzhijia_approval_todo 或 yunzhijia_approval_myflow 的列表项取。单据填写的内容在 formVo.widgetMap 里。只能看当前登录用户有权限访问的单据。",
+      "description": "读一张审批单据的内容：流程状态、各控件填了什么、以及打开它的链接。要同意一张单子之前**必须先用它把单据内容读出来给用户看**——待办列表只有标题，看不到金额和明细，而同意是不可逆的。formDefId 和 formInstId 从 yunzhijia_approval_todo、yunzhijia_approval_myflow 或 yunzhijia_approval_done 的列表项取。单据填写的内容在 formVo.widgetMap 里。只能看当前登录用户有权限访问的单据。",
       "readOnly": true,
       "method": "POST",
       "path": "/gateway/workflow/flow/viewFormInst",
