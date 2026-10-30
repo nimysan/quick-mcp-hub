@@ -1,0 +1,39 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "PutStaticEmbedPages",
+      "Effect": "Allow",
+      "Action": [
+        "s3:PutObject"
+      ],
+      "Resource": [
+        "arn:aws:s3:::karo-media-contents/static/feedback/*",
+        "arn:aws:s3:::karo-media-contents/static/invite/*",
+        "arn:aws:s3:::karo-media-contents/static/mcms-mobile/*",
+        "arn:aws:s3:::karo-media-contents/static/mcp-hub/*"
+      ]
+    },
+    {
+      "Sid": "InvalidateStaticEmbedCdn",
+      "Effect": "Allow",
+      "Action": [
+        "cloudfront:CreateInvalidation"
+      ],
+      "Resource": [
+        "arn:aws:cloudfront::675046263436:distribution/E237HFPOXHII3X",
+        "arn:aws:cloudfront::675046263436:distribution/E1S139XADZ4HWZ"
+      ]
+    },
+    {
+      "Sid": "McmsMobileCfInvalidation",
+      "Effect": "Allow",
+      "Action": [
+        "cloudfront:CreateInvalidation",
+        "cloudfront:GetInvalidation",
+        "cloudfront:ListInvalidations"
+      ],
+      "Resource": "arn:aws:cloudfront::675046263436:distribution/E1S139XADZ4HWZ"
+    }
+  ]
+}
