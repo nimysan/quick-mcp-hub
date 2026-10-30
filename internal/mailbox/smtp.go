@@ -2,7 +2,6 @@ package mailbox
 
 import (
 	"context"
-	"crypto/tls"
 	"fmt"
 	"log"
 	"strings"
@@ -43,7 +42,7 @@ func smtpOptions(cfg config.Config) ([]gomail.Option, error) {
 		gomail.WithPassword(password),
 		gomail.WithSMTPAuth(gomail.SMTPAuthLogin),
 		gomail.WithTimeout(cfg.Timeout),
-		gomail.WithTLSConfig(&tls.Config{ServerName: cfg.SMTPHost, MinVersion: tls.VersionTLS12}),
+		gomail.WithTLSConfig(smtpTLS(cfg)),
 	}
 	// 465 是 implicit TLS（连上就是 TLS）；其他端口走 STARTTLS 且强制要求加密。
 	if cfg.SMTPPort == 465 {
@@ -93,7 +92,7 @@ func Send(ctx context.Context, cfg config.Config, req SendRequest) error {
 		return fmt.Errorf("构建 SMTP 客户端失败: %w", err)
 	}
 	if err := client.DialAndSendWithContext(ctx, msg); err != nil {
-		return fmt.Errorf("发信失败（%s:%d，QQ/163 需使用 16 位授权码）: %w", cfg.SMTPHost, cfg.SMTPPort, err)
+		return loginError("SMTP", cfg, err)
 	}
 	return nil
 }

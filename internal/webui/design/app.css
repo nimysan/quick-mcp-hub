@@ -1,0 +1,376 @@
+/* 这个文件由 internal/webui/design 注入设计 token 之后使用。
+   所有颜色只用 var(--...)，值来自 Figma（两套），绝不写死 hex。
+
+   稿子的规格是绝对定位的（281 处 shrink-0、零处 grow），照搬会得到一个窗口
+   一变就坏的页面。所以这里按稿子的**视觉结果**用 flex / grid 实现，尺寸和
+   间距取稿子的实测值：
+     顶栏 64 高 · 侧栏 184 宽 · 主体 1192 宽（左 832 / 右 336，间距 24）
+     圆角 12 / 8 / 6 · 字号 17 / 13 / 12 / 11 / 10 · 间距 24 / 16 / 12 / 8 / 7 */
+
+*{box-sizing:border-box;margin:0;padding:0}
+
+html{color-scheme:light dark}
+html[data-theme=light]{color-scheme:light}
+html[data-theme=dark]{color-scheme:dark}
+
+body{
+  /* 稿子指定 Inter / Noto Sans SC / JetBrains Mono。内嵌 CJK 字体会让二进制
+     涨好几 MB，外链又违反「不连外部资源」，所以声明字族、回退系统字体：
+     Windows 落微软雅黑、mac 落苹方。版式和字号完全照稿。 */
+  font-family:Inter,"Noto Sans SC","PingFang SC","Microsoft YaHei",system-ui,sans-serif;
+  font-size:12px;line-height:1.5;
+  background:var(--background-canvas);color:var(--text-primary);
+  -webkit-font-smoothing:antialiased;
+}
+code,kbd,pre,.mono{font-family:"JetBrains Mono",ui-monospace,SFMono-Regular,Menlo,monospace}
+a{color:var(--brand-foreground);text-decoration:none}
+a:hover{text-decoration:underline}
+svg.ic{width:14px;height:14px;flex:none;stroke:currentColor;fill:none}
+svg.ic-16{width:16px;height:16px}
+svg.ic-18{width:18px;height:18px}
+
+/* ── 顶栏 ───────────────────────────────────────────────── */
+.topbar{
+  height:64px;display:flex;align-items:center;gap:12px;
+  padding:0 24px;background:var(--surface-card);
+  border-bottom:1px solid var(--border-default);
+}
+.brand{display:flex;align-items:center;gap:10px}
+.brand-mark{
+  width:29px;height:29px;border-radius:8px;display:grid;place-items:center;
+  background:var(--brand-action);color:var(--text-on-brand);
+}
+.brand-mark svg{width:19px;height:19px}
+.brand-name{font-size:17px;font-weight:700;letter-spacing:-.2px}
+.tag{
+  font-size:10px;padding:3px 8px;border-radius:100px;
+  background:var(--surface-subtle);color:var(--text-secondary);
+}
+.topbar-right{margin-left:auto;display:flex;align-items:center;gap:12px;font-size:11px;color:var(--text-secondary)}
+.topbar-right .vsep{width:1px;height:20px;background:var(--border-default)}
+
+/* ── 侧栏 ───────────────────────────────────────────────── */
+.shell{display:flex;align-items:stretch;min-height:calc(100vh - 64px)}
+.side{
+  width:184px;flex:none;padding:28px 16px;
+  border-right:1px solid var(--border-default);
+  display:flex;flex-direction:column;gap:24px;
+}
+.side-label{font-size:10px;letter-spacing:.08em;color:var(--text-tertiary);padding:0 8px;margin-bottom:5px}
+.side-pick{
+  display:flex;align-items:center;gap:7px;padding:3px 8px;border-radius:6px;
+  font-size:11px;color:var(--text-secondary);cursor:default;
+}
+.nav{display:flex;flex-direction:column;gap:3px}
+.nav a{
+  display:flex;align-items:center;gap:8px;padding:7px 8px;border-radius:8px;
+  font-size:12px;color:var(--text-secondary);
+}
+.nav a:hover{background:var(--surface-subtle);text-decoration:none}
+.nav a.on{background:var(--surface-subtle);color:var(--brand-foreground);font-weight:600}
+/* 「凭据仅保存在本机」常驻在侧栏底部——这是稿子的决定，把最该让业务人员
+   放心的那句话放在视线里，而不是埋在表单的帮助文字里。 */
+.side-note{
+  margin-top:auto;padding:12px;border-radius:12px;
+  background:var(--surface-subtle);font-size:10px;color:var(--text-secondary);
+}
+.side-note b{display:flex;align-items:center;gap:7px;font-size:11px;color:var(--text-primary);margin-bottom:5px}
+
+/* ── 主体 ───────────────────────────────────────────────── */
+.main{flex:1;min-width:0;padding:32px;display:flex;flex-direction:column;gap:24px}
+.wrap{width:100%;max-width:1192px;display:flex;flex-direction:column;gap:24px}
+/* hidden 属性必须压过上面那个 display:flex。
+   浏览器自带的 [hidden]{display:none} 是 UA 样式，优先级比类选择器低 ——
+   所以 .wrap[hidden] 不加这一条就**根本不会隐藏**，两个视图会同时显示，
+   点返回像是没反应（列表其实在详情页下面）。这是真出过的故障。 */
+[hidden]{display:none !important}
+h1{font-size:26px;font-weight:700;letter-spacing:-.4px}
+.sub{font-size:12px;color:var(--text-secondary);margin-top:7px}
+
+/* 三步流程：告诉用户整件事分几步、现在在哪一步。 */
+.steps{display:flex;align-items:center;gap:8px;font-size:11px;color:var(--text-tertiary)}
+.steps .st{display:flex;align-items:center;gap:7px;padding:3px 8px;border-radius:100px}
+.steps .st.on{background:var(--surface-subtle);color:var(--text-primary)}
+.steps .n{
+  width:18px;height:18px;border-radius:100px;display:grid;place-items:center;
+  font-size:10px;font-weight:700;background:var(--surface-subtle);color:var(--text-tertiary);
+}
+.steps .st.on .n{background:var(--brand-action);color:var(--text-on-brand)}
+.steps .done .n{background:var(--status-success-background);color:var(--status-success-foreground)}
+
+.card{
+  background:var(--surface-card);border:1px solid var(--border-default);
+  border-radius:12px;padding:20px;
+}
+.card.pad24{padding:24px}
+.hsep{height:1px;background:var(--border-default);margin:16px 0}
+
+/* 两栏：左 832 / 右 336（稿子实测），间距 24。窄窗口退回堆叠。 */
+.cols{display:grid;grid-template-columns:minmax(0,832fr) 336fr;gap:24px;align-items:start}
+@media (max-width:1100px){.cols{grid-template-columns:1fr}}
+
+.sec-head{display:flex;align-items:baseline;gap:12px;margin-bottom:12px}
+.sec-head h2{font-size:13px;font-weight:700}
+.sec-head .meta{font-size:11px;color:var(--text-secondary);margin-right:auto}
+
+/* ── 按钮 ───────────────────────────────────────────────── */
+button,.btn{
+  font:inherit;font-size:11px;cursor:pointer;
+  display:inline-flex;align-items:center;gap:7px;
+  padding:7px 12px;border-radius:8px;
+  border:1px solid var(--border-default);
+  background:var(--surface-card);color:var(--text-primary);
+}
+button:hover,.btn:hover{background:var(--surface-subtle);text-decoration:none}
+button.primary,.btn.primary{
+  background:var(--brand-action);color:var(--text-on-brand);border-color:transparent;font-weight:600;
+}
+button.primary:hover{filter:brightness(1.08)}
+button.block{width:100%;justify-content:center;padding:10px 12px;font-size:12px}
+button.ghost{border-color:transparent;background:transparent;color:var(--text-secondary);padding:3px 7px}
+button.ghost:hover{background:var(--surface-subtle)}
+button.danger{color:var(--status-danger-foreground);border-color:var(--status-danger-foreground)}
+button:disabled{color:var(--text-disabled);cursor:not-allowed;background:var(--surface-subtle)}
+.linkbtn{font-size:11px;color:var(--brand-foreground);cursor:pointer;background:none;border:none;padding:0}
+
+/* 主题切换：稿子上那两个胶囊（Quick 浅色 / Quick 深色）。 */
+.theme{display:flex;align-items:center;gap:7px;font-size:11px;color:var(--text-secondary)}
+.theme .opts{display:flex;gap:4px;background:var(--surface-subtle);padding:2px;border-radius:8px}
+.theme .opts button{
+  border:none;background:transparent;padding:3px 8px;font-size:11px;border-radius:6px;
+  color:var(--text-secondary);
+}
+.theme .opts button.on{background:var(--surface-card);color:var(--text-primary);font-weight:600}
+
+/* ── 状态徽标 ───────────────────────────────────────────── */
+.pill{
+  display:inline-flex;align-items:center;gap:5px;
+  font-size:10px;padding:3px 8px;border-radius:100px;
+  background:var(--surface-subtle);color:var(--text-secondary);
+}
+.pill.ok{background:var(--status-success-background);color:var(--status-success-foreground)}
+.pill.ok::before{content:"";width:5px;height:5px;border-radius:100px;background:currentColor}
+.pill.warn{background:var(--surface-subtle);color:var(--text-tertiary)}
+
+/* ── 客户端状态卡 ───────────────────────────────────────── */
+.cl-head{display:flex;align-items:center;gap:8px}
+.cl-head .name{font-size:13px;font-weight:700}
+.cl-head .right{margin-left:auto;display:flex;align-items:center;gap:12px;font-size:11px;color:var(--text-secondary)}
+.cl-stats{display:flex;align-items:flex-start;gap:57px}
+.cl-stat .k{font-size:10px;color:var(--text-tertiary);margin-bottom:5px}
+.cl-stat .v{font-size:19px;font-weight:700;display:flex;align-items:baseline;gap:5px}
+.cl-stat .v small{font-size:11px;font-weight:400;color:var(--text-secondary)}
+/* 稿子里这句话很要紧：历史注册不代表当前可用。我们记的是最近一次握手，
+   那是历史——不说清的话用户会以为「27 个工具」是当前状态。 */
+.cl-hint{
+  margin-left:auto;max-width:569px;display:flex;gap:8px;align-items:flex-start;
+  background:var(--surface-subtle);border-radius:8px;padding:10px 12px;
+  font-size:11px;color:var(--text-secondary);
+}
+
+/* ── 连接表 ─────────────────────────────────────────────── */
+.tbl{width:100%;border-collapse:collapse;font-size:12px}
+.tbl th{
+  text-align:left;font-size:10px;font-weight:400;color:var(--text-tertiary);
+  padding:8px 12px;background:var(--surface-subtle);
+}
+.tbl th:first-child{border-radius:8px 0 0 8px}
+.tbl th:last-child{border-radius:0 8px 8px 0;text-align:right}
+.tbl td{padding:12px;border-bottom:1px solid var(--border-default);vertical-align:middle}
+.tbl tr:last-child td{border-bottom:none}
+.tbl td:last-child{text-align:right;white-space:nowrap}
+.ch{display:flex;align-items:center;gap:12px}
+.ch .ico{
+  width:32px;height:32px;border-radius:8px;flex:none;display:grid;place-items:center;
+  background:var(--surface-subtle);color:var(--text-secondary);
+}
+.ch .nm{font-size:12px;font-weight:600}
+.ch .ac{font-size:10px;color:var(--text-tertiary);margin-top:2px}
+.foot-note{
+  display:flex;gap:7px;align-items:flex-start;
+  background:var(--surface-subtle);border-radius:8px;padding:10px 12px;
+  font-size:10px;color:var(--text-secondary);margin-top:12px;
+}
+
+/* ── 渠道市场 ───────────────────────────────────────────── */
+.tags{display:flex;gap:7px;flex-wrap:wrap;margin-bottom:12px}
+.tg{
+  font-size:10px;padding:3px 8px;border-radius:100px;cursor:pointer;
+  background:var(--surface-subtle);color:var(--text-secondary);user-select:none;
+}
+.tg.on{background:var(--brand-action);color:var(--text-on-brand);font-weight:600}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:16px}
+.mk{border:1px solid var(--border-default);border-radius:12px;padding:16px;background:var(--surface-card)}
+.mk.has{border-color:color-mix(in srgb,var(--status-success-foreground) 35%,var(--border-default))}
+.mk-top{display:flex;align-items:flex-start;gap:12px;margin-bottom:12px}
+.mk-top .ico{
+  width:28px;height:28px;border-radius:8px;flex:none;display:grid;place-items:center;
+  background:var(--surface-subtle);color:var(--text-secondary);
+}
+.mk-top .nm{font-size:12px;font-weight:700}
+.mk-top .id{font-size:10px;color:var(--text-tertiary);margin-top:2px}
+.mk-top button{margin-left:auto;flex:none}
+.mk .desc{font-size:11px;color:var(--text-secondary)}
+.mk .note{font-size:10px;color:var(--text-tertiary);margin-top:7px}
+.mk .mine{font-size:10px;color:var(--status-success-foreground);float:right}
+
+/* ── 右栏：接入 Quick ───────────────────────────────────── */
+.kv{display:flex;justify-content:space-between;align-items:baseline;font-size:11px;padding:7px 0}
+.kv .k{color:var(--text-secondary)}
+.kv .v{font-weight:600}
+.pre{
+  background:var(--surface-subtle);border-radius:8px;padding:12px;
+  font-size:10px;line-height:1.6;white-space:pre;overflow-x:auto;
+  color:var(--text-secondary);
+}
+.ol{counter-reset:s;display:flex;flex-direction:column;gap:8px;font-size:11px;color:var(--text-secondary)}
+.ol li{counter-increment:s;display:flex;gap:8px;align-items:flex-start;list-style:none}
+.ol li::before{
+  content:counter(s);flex:none;
+  width:18px;height:18px;border-radius:100px;display:grid;place-items:center;
+  font-size:10px;background:var(--surface-subtle);color:var(--text-tertiary);
+}
+.tiny{font-size:10px;color:var(--text-tertiary)}
+.path{font-size:10px;color:var(--text-secondary);word-break:break-all}
+
+/* ── 弹窗 ───────────────────────────────────────────────── */
+.mask{
+  position:fixed;inset:0;background:rgba(20,16,30,.45);
+  display:none;align-items:flex-start;justify-content:center;
+  padding:48px 16px;overflow:auto;z-index:50;
+}
+.mask.show{display:flex}
+.modal{
+  width:100%;max-width:640px;background:var(--surface-card);
+  border:1px solid var(--border-default);border-radius:12px;padding:24px;
+}
+.modal h3{font-size:17px;font-weight:700;margin-bottom:7px}
+.field{margin-bottom:16px}
+.field label{display:block;font-size:11px;font-weight:600;margin-bottom:5px}
+.field input,.field select{
+  width:100%;font:inherit;font-size:12px;padding:8px 12px;
+  border:1px solid var(--border-default);border-radius:8px;
+  background:var(--surface-input);color:var(--text-primary);
+}
+.field input:focus,.field select:focus{outline:2px solid var(--brand-action);outline-offset:-1px}
+.field .help{font-size:10px;color:var(--text-tertiary);margin-top:5px}
+.field.check{display:flex;align-items:flex-start;gap:8px}
+.field.check input{width:auto;flex:none;margin-top:2px}
+.field.check label{margin:0}
+.modal .foot{display:flex;align-items:center;gap:8px;margin-top:24px;padding-top:16px;border-top:1px solid var(--border-default)}
+.modal .foot .st{margin-left:auto;font-size:11px}
+.st.ok{color:var(--status-success-foreground)}
+.st.bad{color:var(--status-danger-foreground)}
+.adv-t{font-size:11px;color:var(--brand-foreground);cursor:pointer;margin:0 0 16px}
+.adv{display:none}.adv.show{display:block}
+.risk{border:1px solid var(--text-tertiary);border-radius:8px;padding:12px;margin-bottom:16px;font-size:11px;color:var(--text-secondary)}
+.risk b{display:block;font-size:11px;color:var(--text-primary);margin-bottom:5px}
+.secret-tag{font-size:10px;font-weight:400;padding:2px 6px;border-radius:6px;background:var(--surface-subtle);color:var(--text-tertiary);margin-left:5px}
+
+/* ── 浮层提示 ───────────────────────────────────────────────
+   替掉原生 alert()：那个是系统对话框，和这套视觉完全不搭，而且**阻塞** ——
+   要点一下「确定」才能继续。测试结果只是一条反馈，不该拦住人。 */
+.toast{
+  position:fixed;right:24px;bottom:24px;z-index:60;
+  display:none;align-items:flex-start;gap:10px;
+  max-width:420px;padding:12px 14px;border-radius:12px;
+  background:var(--surface-card);border:1px solid var(--border-default);
+  box-shadow:0 8px 28px rgba(20,16,30,.18);
+  font-size:12px;
+}
+.toast.show{display:flex}
+.toast.ok{border-color:color-mix(in srgb,var(--status-success-foreground) 45%,var(--border-default))}
+.toast.ok .ic{color:var(--status-success-foreground)}
+.toast.bad{border-color:color-mix(in srgb,var(--status-danger-foreground) 45%,var(--border-default))}
+.toast.bad .ic{color:var(--status-danger-foreground)}
+.toast .t{font-weight:600}
+/* 失败原因常常是对方服务器原样抛回来的一长句，所以允许换行、不截断 */
+.toast .d{margin-top:5px;color:var(--text-secondary);font-size:11px;line-height:1.55;
+  white-space:pre-wrap;word-break:break-word;max-height:180px;overflow:auto}
+.toast .x{
+  margin-left:auto;flex:none;border:none;background:transparent;
+  color:var(--text-tertiary);font-size:15px;line-height:1;padding:0 2px;cursor:pointer;
+}
+.toast .x:hover{color:var(--text-primary);background:transparent}
+
+/* ── 详情页 ─────────────────────────────────────────────────
+   稿子把它画成独立页面：面包屑 + 标题 + 三标签，左 832 / 右 336。 */
+.bc{display:flex;align-items:center;gap:7px;font-size:11px;color:var(--text-tertiary)}
+.bc a{display:flex;align-items:center;gap:5px;color:var(--text-secondary)}
+.dt-head{display:flex;align-items:center;gap:16px;margin:16px 0 0}
+.dt-ico{
+  width:48px;height:48px;border-radius:12px;flex:none;display:grid;place-items:center;
+  background:var(--surface-subtle);color:var(--text-secondary);
+}
+.dt-title{font-size:26px;font-weight:700;letter-spacing:-.4px;display:flex;align-items:center;gap:8px}
+.dt-sub{font-size:12px;color:var(--text-secondary);margin-top:5px}
+.dt-head button{margin-left:auto;flex:none}
+/* 三个标签。下划线而不是胶囊 —— 稿子如此，而且它表示「同一个东西的不同面」，
+   胶囊更像是在筛选不同的东西。 */
+.dtabs{display:flex;gap:24px;margin-top:24px;border-bottom:1px solid var(--border-default)}
+.dtabs a{
+  padding:0 0 10px;font-size:12px;color:var(--text-secondary);
+  border-bottom:2px solid transparent;margin-bottom:-1px;
+}
+.dtabs a:hover{text-decoration:none;color:var(--text-primary)}
+.dtabs a.on{color:var(--brand-foreground);font-weight:600;border-bottom-color:var(--brand-action)}
+
+.dgrid{display:grid;grid-template-columns:1fr 100px 130px;gap:12px;align-items:start}
+@media (max-width:760px){.dgrid{grid-template-columns:1fr}}
+.dsave{
+  display:flex;align-items:center;gap:8px;
+  background:var(--surface-card);border:1px solid var(--border-default);
+  border-radius:12px;padding:12px 16px;
+}
+.dsave .tiny{margin-right:auto;display:flex;align-items:center;gap:7px}
+.dsave .st{margin-left:8px}
+
+/* 权限行 */
+.prow{display:flex;align-items:flex-start;gap:12px;padding:12px 0;border-top:1px solid var(--border-default)}
+.prow:first-of-type{border-top:none}
+.pico{width:28px;height:28px;border-radius:8px;flex:none;display:grid;place-items:center;
+  background:var(--surface-subtle);color:var(--text-secondary)}
+.prow .pt{font-size:12px;font-weight:600}
+.prow .pd{font-size:11px;color:var(--text-secondary);margin-top:3px}
+.prow .pill,.prow .sw{margin-left:auto;flex:none}
+.sw{display:flex;align-items:center;gap:7px;font-size:11px;color:var(--text-secondary);cursor:pointer}
+
+/* 工具清单。逐条列出来，并对关掉的说明原因 —— 光一个「未注册」没用。 */
+.tools{display:flex;flex-direction:column}
+.trow{display:flex;align-items:center;gap:12px;padding:10px 0;border-top:1px solid var(--border-default)}
+.trow:first-child{border-top:none}
+.tmark{width:20px;height:20px;border-radius:100px;flex:none;display:grid;place-items:center;
+  background:var(--surface-subtle);color:var(--text-disabled)}
+.tmark.on{background:var(--status-success-background);color:var(--status-success-foreground)}
+.tmain{flex:none;width:150px}
+.trow .tt{font-size:12px;font-weight:600}
+.trow .tn{font-size:10px;color:var(--text-tertiary);margin-top:2px}
+.trow .td{flex:1;min-width:0;font-size:11px;color:var(--text-secondary)}
+.trow .pill{flex:none}
+
+/* 连接检查三条 */
+.checks{display:flex;flex-direction:column;margin-top:12px}
+.crow{display:flex;align-items:flex-start;gap:10px;padding:8px 0;border-top:1px solid var(--border-default);font-size:11px}
+.crow:first-child{border-top:none}
+.cmark{width:18px;height:18px;border-radius:100px;flex:none;display:grid;place-items:center;
+  background:var(--surface-subtle);color:var(--text-disabled)}
+.cmark.ok{background:var(--status-success-background);color:var(--status-success-foreground)}
+.cmark.fail{color:var(--status-danger-foreground);
+  background:color-mix(in srgb,var(--status-danger-foreground) 14%,transparent)}
+.cmain{flex:1;min-width:0}
+/* 失败原因常常是对方服务器原样抛回来的，允许换行不截断 */
+.cerr{color:var(--status-danger-foreground);margin-top:3px;font-size:10px;line-height:1.5;word-break:break-word}
+.crow .tiny{flex:none}
+
+.note-box{display:flex;gap:8px;align-items:flex-start;background:var(--surface-subtle);
+  border-radius:8px;padding:10px 12px;font-size:11px;color:var(--text-secondary)}
+.note-box b{display:block;color:var(--text-primary);margin-bottom:3px}
+.note-box a{display:inline-block;margin-top:5px}
+.chips{display:flex;flex-wrap:wrap;gap:5px}
+.chip{font-size:10px;padding:3px 7px;border-radius:6px;background:var(--surface-subtle);color:var(--text-secondary)}
+/* 连接检查里的「通了，但有话要说」—— 目前只有一种：连接被降级到老式加密
+   套件。用警示色而不是失败色：连接确实是通的，但这件事不该悄悄发生。 */
+.cnote{
+  color:var(--status-warning-foreground,var(--text-secondary));
+  margin-top:3px;font-size:10px;line-height:1.5;word-break:break-word;
+}

@@ -3,12 +3,14 @@ package webui
 import (
 	"context"
 	"encoding/json"
+	"github.com/nimysan/mcp-hub/internal/webui/design"
 	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"testing"
@@ -192,5 +194,85 @@ func TestDescriptorsCarryExePath(t *testing.T) {
 		if !strings.Contains(string(html), needle) {
 			t.Errorf("页面里缺 %q —— 接入说明那一节不完整", needle)
 		}
+	}
+}
+
+// TestNoShadowedBrowserGlobals 防一类查不出来的坑。
+//
+// 真实故障：页面里有个 close() 函数，重写时漏搬了，于是 onclick = close 静默
+// 落到 window.close —— 浏览器对非脚本打开的页面直接忽略它。按钮毫无反应，
+// 而 node --check 只验语法，这种错它一声不响。
+//
+// 所以这里不验「close 有没有定义」，而是禁止**用浏览器全局名当函数名**：
+// 那样一旦定义丢了，错误会是「未定义」而不是静默调用另一个东西。
+func TestNoShadowedBrowserGlobals(t *testing.T) {
+	page := readIndex(t)
+	// window 上这些名字存在且可调用/可读，被遮蔽时失败是静默的。
+	dangerous := []string{
+		"close", "open", "print", "stop", "focus", "blur", "alert", "confirm",
+		"prompt", "name", "status", "length", "origin", "history", "location",
+	}
+	for _, n := range dangerous {
+		for _, form := range []string{
+			"function " + n + "(",
+			"const " + n + " =",
+			"let " + n + " =",
+			"var " + n + " =",
+		} {
+			if strings.Contains(page, form) {
+				t.Errorf("不要用浏览器全局名 %q 作为函数/变量名（出现 %q）："+
+					"定义一旦丢失会静默落到 window.%s，语法检查查不出来", n, form, n)
+			}
+		}
+	}
+}
+
+// TestHandlersAreDefined 检查页面里挂上去的处理函数都真有定义。
+//
+// 同一个故障的另一半：onclick = someFn 里的 someFn 要是没定义，浏览器里是
+// 运行时报错（或者更糟，撞上同名全局），静态检查看不到。
+func TestHandlersAreDefined(t *testing.T) {
+	page := readIndex(t)
+	// 只看 `.onclick = 标识符;` 这种直接赋值（箭头函数不用查，它就在眼前）。
+	re := regexp.MustCompile(`\.onclick\s*=\s*([A-Za-z_$][\w$]*)\s*;`)
+	for _, m := range re.FindAllStringSubmatch(page, -1) {
+		fn := m[1]
+		defined := strings.Contains(page, "function "+fn+"(") ||
+			strings.Contains(page, "async function "+fn+"(") ||
+			strings.Contains(page, "const "+fn+" =") ||
+			strings.Contains(page, "let "+fn+" =")
+		if !defined {
+			t.Errorf("onclick 指向 %q，但页面里找不到它的定义 —— "+
+				"浏览器里这会是运行时报错，或者更糟：撞上一个同名的 window 全局", fn)
+		}
+	}
+}
+
+func readIndex(t *testing.T) string {
+	t.Helper()
+	b, err := assetsFS.ReadFile("index.html")
+	if err != nil {
+		t.Fatalf("读 index.html: %v", err)
+	}
+	return string(b)
+}
+
+// TestHiddenAttributeWins 守住一条必须存在的 CSS。
+//
+// 真实故障：页面用 [hidden] 在列表页和详情页之间切换，而 .wrap 设了
+// display:flex。浏览器自带的 [hidden]{display:none} 是 UA 样式，优先级比类
+// 选择器低 —— 于是 hidden 根本没生效，两个视图同时显示，点「返回」像是没
+// 反应（列表其实渲染在详情页下面）。
+//
+// 这条规则一旦被删，故障会再次是静默的：没有报错，只是切不动。
+func TestHiddenAttributeWins(t *testing.T) {
+	sheet := design.Load().Stylesheet()
+	// 找规则本身，不是上面注释里提到的那几个字。必须带 !important，
+	// 否则同样压不过 .wrap 的 display。
+	const rule = "[hidden]{display:none !important}"
+	if !strings.Contains(sheet, rule) {
+		t.Fatal("app.css 里缺少 " + rule + "：页面用 hidden 切换列表页与详情页，" +
+			"而 .wrap 设了 display:flex。UA 自带的 [hidden]{display:none} 优先级更低会被压掉，" +
+			"结果两个视图同时显示、点返回像是没反应")
 	}
 }
