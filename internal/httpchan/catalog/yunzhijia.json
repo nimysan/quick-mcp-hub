@@ -54,17 +54,17 @@
     {
       "name": "yunzhijia_list_recent_groups",
       "title": "最近会话",
-      "description": "列出最近的群聊和私聊会话，每条带最后一条消息和未读数。这是拿 groupId 的正路 —— 其它工具要的 groupId 一律从这里取，不要自己拼、也不要拿群名当 groupId。groupType 1 是私聊、2 是群聊、3 是公众号/官方会话。",
+      "description": "列出最近的群聊和私聊会话，每条带最后一条消息和未读数。这是拿 groupId 的正路 —— 其它工具要的 groupId 一律从这里取，不要自己拼、也不要拿群名当 groupId。groupType 1 是私聊、2 是群聊、3 是公众号/官方会话。一页固定 10 条（接口不接受自定义每页条数）：data.more 为 true 说明还有，把 pageIndex 加一继续翻；找某个群优先用 yunzhijia_search_group，翻页只在搜不到时用。",
       "readOnly": true,
       "method": "POST",
       "path": "/gateway/xtinterface/group/recentGroups",
       "params": [
         {
-          "name": "limit",
+          "name": "pageIndex",
           "in": "body",
           "type": "number",
-          "default": "20",
-          "description": "返回多少条，1-20，不传按 10"
+          "default": "1",
+          "description": "第几页，从 1 开始，每页固定 10 条。data.more 为 true 就加一继续翻"
         }
       ],
       "result": {
@@ -85,7 +85,7 @@
     {
       "name": "yunzhijia_group_history",
       "title": "读会话历史消息",
-      "description": "读某个会话里的历史消息，默认从最新往前。groupId 必须来自 yunzhijia_list_recent_groups 或 yunzhijia_search_group 的返回。图文卡片这类富消息的 content 只是标题，正文结构不在结果里 —— 回答时不要把标题当成全文。",
+      "description": "读某个会话里的历史消息。groupId 必须来自 yunzhijia_list_recent_groups 或 yunzhijia_search_group 的返回。一次固定 10 条（接口不接受自定义条数），结果按时间从旧到新排，所以第一条是本页最旧的。要读更早的记录必须靠锚点翻页：把本页**第一条**的 msgId 当 msgId、type 传 old，再调一次；data.more 为 true 说明还能继续往回翻。type 不传等于 new（往更新的方向），拿它去找更早的记录会原地打转。图文卡片这类富消息的 content 只是标题，正文结构不在结果里 —— 回答时不要把标题当成全文。",
       "readOnly": true,
       "method": "POST",
       "path": "/gateway/xtinterface/message/msgList",
@@ -97,16 +97,16 @@
           "description": "会话 ID，从 yunzhijia_list_recent_groups 取"
         },
         {
-          "name": "limit",
+          "name": "type",
           "in": "body",
-          "type": "number",
-          "default": "20",
-          "description": "返回多少条，1-20，不传按 10"
+          "default": "newest",
+          "enum": ["newest", "old", "new"],
+          "description": "newest 取最新的一页（不用 msgId）；old 以 msgId 为锚点往更早翻，这是读历史的方向；new 往更新翻。不传按 newest"
         },
         {
           "name": "msgId",
           "in": "body",
-          "description": "从这条消息开始往前翻（翻页用，值取上一页最后一条的 msgId）"
+          "description": "翻页锚点，type=old/new 时必填：往回翻取本页第一条（最旧那条）的 msgId"
         }
       ],
       "result": {
@@ -176,30 +176,68 @@
     {
       "name": "yunzhijia_approval_todo",
       "title": "待我审批的单据",
-      "description": "列出当前登录用户的审批待办。这是个人视角 —— 只能看自己的待办，查不到别人的。单据详情要另外取，本工具只给列表。",
+      "description": "列出当前登录用户的审批待办。这是个人视角 —— 只能看自己的待办，查不到别人的。单据详情要另外取，本工具只给列表。一页只有一部分：拿 data.total 和已取到的条数比，少了就把 pageNumber 加一继续翻。列表项里 formDefId / formInstId 为空的单据是外部系统（如金蝶云星空）接进云之家的，yunzhijia_approval_detail 和 yunzhijia_approval_agree 对它们用不了 —— 这类只能把 webUrl 以链接形式给用户，让他自己打开处理，不要拿空 ID 去调或者自己拼一个。",
       "readOnly": true,
       "method": "POST",
       "path": "/gateway/workflow/flow/todoPageList",
       "params": [
         { "name": "pageNumber", "in": "body", "type": "number", "default": "1", "description": "第几页，从 1 开始。data.total 比已拿到的条数多就继续翻下一页" },
-        { "name": "limit", "in": "body", "type": "number", "default": "20", "description": "每页多少条，1-100，不传按 20" },
+        { "name": "pageSize", "in": "body", "type": "number", "default": "20", "description": "每页多少条，不传按服务端默认的 10" },
         { "name": "keyword", "in": "body", "description": "按关键词过滤单据" }
       ],
-      "result": { "path": "data.list", "limit": 100, "meta": ["data.total"] }
+      "result": {
+        "path": "data.list",
+        "limit": 100,
+        "fields": [
+          "id",
+          "title",
+          "currentApprovers",
+          "createTime",
+          "urgencyDegree",
+          "appId",
+          "formDefId",
+          "formInstId",
+          "flowInstId",
+          "source",
+          "webUrl"
+        ],
+        "meta": ["data.total"]
+      }
     },
     {
       "name": "yunzhijia_approval_myflow",
       "title": "我发起的审批",
-      "description": "列出当前登录用户自己提交的审批单据，用于回答「我那张请款单到哪一步了」。同样是个人视角，查不到别人发起的。",
+      "description": "列出当前登录用户自己提交的审批单据，用于回答「我那张请款单到哪一步了」。同样是个人视角，查不到别人发起的。一页只有一部分：拿 data.total 和已取到的条数比，少了就把 pageNumber 加一继续翻 —— 这个列表通常很长（几百条），回答「最近那张单子」只看第一页就够，不要为了找一张单子把几百条全拉下来。",
       "readOnly": true,
       "method": "POST",
       "path": "/gateway/workflow/flow/myFlowPageList",
       "params": [
         { "name": "pageNumber", "in": "body", "type": "number", "default": "1", "description": "第几页，从 1 开始。data.total 比已拿到的条数多就继续翻下一页" },
-        { "name": "limit", "in": "body", "type": "number", "default": "20", "description": "每页多少条，1-100，不传按 20" },
+        { "name": "pageSize", "in": "body", "type": "number", "default": "20", "description": "每页多少条，不传按服务端默认的 10" },
         { "name": "keyword", "in": "body", "description": "按关键词过滤单据" }
       ],
-      "result": { "path": "data.list", "limit": 100, "meta": ["data.total"] }
+      "result": {
+        "path": "data.list",
+        "limit": 100,
+        "fields": [
+          "id",
+          "title",
+          "serialNo",
+          "status",
+          "creatorName",
+          "creatorDeptName",
+          "createTime",
+          "urgencyDegree",
+          "appId",
+          "formDefId",
+          "formInstId",
+          "formCodeId",
+          "flowInstId",
+          "source",
+          "webUrl"
+        ],
+        "meta": ["data.total"]
+      }
     },
     {
       "name": "yunzhijia_approval_detail",
