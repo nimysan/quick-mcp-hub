@@ -157,3 +157,40 @@ func freePort(t *testing.T) int {
 	ln.Close()
 	return port
 }
+
+// 接入说明里的路径必须是**运行时探测**的真实路径，不能是写死的安装目录。
+//
+// 这条用例的由来：客户装的是解压出来的绿色版（在下载目录里），而给他的是
+// 安装版的路径，于是客户端报 `not found on PATH`，他完全看不出哪里错了。
+func TestExePathIsResolvedAtRuntime(t *testing.T) {
+	got := exePath()
+	if got == "" {
+		t.Fatal("探测不到自己的路径")
+	}
+	if !filepath.IsAbs(got) {
+		t.Errorf("不是绝对路径: %s", got)
+	}
+	// 必须真的存在 —— 给一个不存在的路径等于给错。
+	if _, err := os.Stat(got); err != nil {
+		t.Errorf("路径不存在: %v", err)
+	}
+	// 不能是写死的安装目录
+	for _, hard := range []string{`\Programs\mcp-hub\`, "/Applications/"} {
+		if strings.Contains(got, hard) && !strings.Contains(os.Args[0], hard) {
+			t.Errorf("看起来是写死的安装路径: %s", got)
+		}
+	}
+}
+
+// 页面要拿得到这个路径，否则那一节只能显示一段没有 command 的 JSON。
+func TestDescriptorsCarryExePath(t *testing.T) {
+	html, err := assetsFS.ReadFile("index.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, needle := range []string{"renderOnboard", "d.exePath", "Add Local Connector", `id="obcopy"`} {
+		if !strings.Contains(string(html), needle) {
+			t.Errorf("页面里缺 %q —— 接入说明那一节不完整", needle)
+		}
+	}
+}

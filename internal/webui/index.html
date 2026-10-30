@@ -136,6 +136,11 @@
      的说明文字是裸的默认样式。提成全局，值和原来一致。 */
   .help{font-size:11px;color:var(--muted);margin-top:4px}
   .ncl{font-size:12px;margin-top:5px;line-height:1.5}
+  .ob-steps{font-size:13px;line-height:1.7}
+  .ob-json{background:var(--bg);border:1px solid var(--border);border-radius:8px;
+    padding:10px 12px;font-size:12px;font-family:ui-monospace,monospace;
+    white-space:pre;overflow-x:auto;margin:8px 0}
+  .ob-act{display:flex;align-items:center;gap:8px}
   .loglink{font-size:11px;color:var(--muted);margin-left:10px;text-decoration:none;
     border:1px solid var(--border);border-radius:5px;padding:2px 7px}
   .loglink:hover{color:var(--text)}
@@ -168,6 +173,14 @@
     <div class="tagbar" id="tagbar"></div>
     <div class="grid" id="grid"></div>
   </section>
+
+  <section class="sec">
+    <div class="row">
+      <h2>🔗 接入 AI 客户端</h2>
+      <div class="hint-inline">配好渠道之后，还要让客户端认识这个程序</div>
+    </div>
+    <div id="onboard"></div>
+  </section>
 </main>
 
 <div class="mask" id="mask">
@@ -185,6 +198,8 @@ async function boot(){
   $("#ver").textContent = d.version;
   $("#cfgpath").textContent = "配置：" + d.configPath;
   if(d.logPath){ const l=$("#loglink"); l.hidden=false; l.title="日志文件："+d.logPath; }
+  EXEPATH = d.exePath || "";
+  renderOnboard();
   $("#srcinfo").textContent = `${DESCRIPTORS.filter(x=>x.available).length} 个可用 · 内置目录`;
   await refresh();
 }
@@ -266,6 +281,52 @@ function renderMine(){
 }
 
 // ---------- 渠道市场 ----------
+let EXEPATH = "";
+
+// 接入 AI 客户端：把配置连同**运行时探测到的**本程序路径一起给出来。
+//
+// 为什么不是一个按钮：Amazon Quick 的本地连接器配置存在它自己的应用里
+// （Electron 的浏览器存储），磁盘上没有 MCP 配置文件，所以没有东西可写。
+// Claude Desktop / Cursor 这类读 JSON 文件的客户端理论上可以代写，但那是
+// 另一件事，不在这里混着做。
+//
+// 路径必须运行时探测，不能写死安装目录：用户可能跑的是解压出来的绿色版。
+// 给错路径的后果是客户端报 not found on PATH，而他完全看不出哪里错了。
+function renderOnboard(){
+  const cfg = JSON.stringify(
+    {mcpServers:{"mcp-hub":{command:EXEPATH,args:["-serve"]}}}, null, 2);
+  $("#onboard").innerHTML = `
+    <div class="ob-steps">
+      <b>Amazon Quick</b>：Customize → Connectors → <b>Add Local Connector</b> → 选 Local →
+      把下面这段粘进去 → <b>Test Connection</b> 通了再点 <b>Add</b>。添加完点一次 <b>Sync</b>。
+    </div>
+    <div class="help">这一步没法自动完成：Quick 把连接器配置存在它自己的应用里，不是磁盘上的文件。</div>
+    <pre class="ob-json">${esc(cfg)}</pre>
+    <div class="ob-act">
+      <button class="primary" id="obcopy">复制这段 JSON</button>
+      <button id="obcopypath">只复制路径</button>
+      <span class="status" id="obst"></span>
+    </div>
+    <div class="help">如果 Quick 给的是 Command / Arguments 两个输入框，就用「只复制路径」填 Command，
+      Arguments 填 <code>-serve</code>。JSON 里反斜杠是两道、表单里是一道，两个按钮已经各自处理好。</div>
+    <div class="help">本程序在：<code>${esc(EXEPATH||"（探测不到）")}</code>
+      · 换了位置就回这里重新复制一次</div>`;
+  $("#obcopy").onclick = () => copyText(cfg, "JSON 已复制");
+  $("#obcopypath").onclick = () => copyText(EXEPATH, "路径已复制");
+}
+
+async function copyText(text, okMsg){
+  const st = $("#obst");
+  try{
+    await navigator.clipboard.writeText(text);
+    st.className = "status ok"; st.textContent = okMsg;
+  }catch(e){
+    // 复制失败时别只说失败 —— 告诉他还能怎么办。
+    st.className = "status bad"; st.textContent = "复制不了，请手工选中上面那段";
+  }
+  setTimeout(()=>{ st.textContent = ""; }, 3000);
+}
+
 function renderMarket(){
   const allTags = [...new Set(DESCRIPTORS.flatMap(d=>d.tags||[]))].sort();
   $("#tagbar").innerHTML =
