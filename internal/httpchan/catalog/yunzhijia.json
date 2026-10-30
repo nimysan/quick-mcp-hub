@@ -62,7 +62,9 @@
         {
           "name": "limit",
           "in": "body",
-          "description": "返回多少条，默认由服务端定（约 20）"
+          "type": "number",
+          "default": "20",
+          "description": "返回多少条，1-20，不传按 10"
         }
       ],
       "result": {
@@ -97,7 +99,9 @@
         {
           "name": "limit",
           "in": "body",
-          "description": "返回多少条"
+          "type": "number",
+          "default": "20",
+          "description": "返回多少条，1-20，不传按 10"
         },
         {
           "name": "msgId",
@@ -177,11 +181,11 @@
       "method": "POST",
       "path": "/gateway/workflow/flow/todoPageList",
       "params": [
-        { "name": "pageNo", "in": "body", "description": "第几页，从 1 开始" },
-        { "name": "pageSize", "in": "body", "description": "每页多少条" },
+        { "name": "pageNumber", "in": "body", "type": "number", "default": "1", "description": "第几页，从 1 开始。data.total 比已拿到的条数多就继续翻下一页" },
+        { "name": "limit", "in": "body", "type": "number", "default": "20", "description": "每页多少条，1-100，不传按 20" },
         { "name": "keyword", "in": "body", "description": "按关键词过滤单据" }
       ],
-      "result": { "path": "data.list", "limit": 50, "meta": ["data.total"] }
+      "result": { "path": "data.list", "limit": 100, "meta": ["data.total"] }
     },
     {
       "name": "yunzhijia_approval_myflow",
@@ -191,11 +195,11 @@
       "method": "POST",
       "path": "/gateway/workflow/flow/myFlowPageList",
       "params": [
-        { "name": "pageNo", "in": "body", "description": "第几页，从 1 开始" },
-        { "name": "pageSize", "in": "body", "description": "每页多少条" },
+        { "name": "pageNumber", "in": "body", "type": "number", "default": "1", "description": "第几页，从 1 开始。data.total 比已拿到的条数多就继续翻下一页" },
+        { "name": "limit", "in": "body", "type": "number", "default": "20", "description": "每页多少条，1-100，不传按 20" },
         { "name": "keyword", "in": "body", "description": "按关键词过滤单据" }
       ],
-      "result": { "path": "data.list", "limit": 50, "meta": ["data.total"] }
+      "result": { "path": "data.list", "limit": 100, "meta": ["data.total"] }
     },
     {
       "name": "yunzhijia_approval_detail",

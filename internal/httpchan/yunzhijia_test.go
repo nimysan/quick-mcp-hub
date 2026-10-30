@@ -3,6 +3,7 @@ package httpchan
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -129,6 +130,38 @@ func newYZJMock(t *testing.T) *yzjMock {
 			"success": true, "errorCode": 0, "error": nil,
 		})
 	})
+
+	// 审批列表。这个 handler 刻意按真实接口的行为写：只认 pageNumber /
+	// limit，别的分页键一律当没传、回服务端默认的 10 条 —— 这正是
+	// pageNo / pageSize 那版声明在线上的表现（HTTP 200、success:true、
+	// 永远只有前 10 条，翻页毫无反应），而原来没有这个 handler，
+	// 所以整组用例都没碰过这两个工具。
+	pageList := func(w http.ResponseWriter, r *http.Request) {
+		body := record(r)
+		const totalRows = 23
+		page, limit := 1, 10
+		if n, ok := body["pageNumber"].(float64); ok && n >= 1 {
+			page = int(n)
+		}
+		if n, ok := body["limit"].(float64); ok && n >= 1 && n <= 100 {
+			limit = int(n)
+		}
+		rows := []any{}
+		for i := (page - 1) * limit; i < page*limit && i < totalRows; i++ {
+			rows = append(rows, map[string]any{
+				"formDefId":  "def-1",
+				"formInstId": fmt.Sprintf("inst-%d", i+1),
+				"flowInstId": fmt.Sprintf("flow-%d", i+1),
+				"title":      fmt.Sprintf("请款单 %d", i+1),
+			})
+		}
+		write(w, map[string]any{
+			"data":    map[string]any{"list": rows, "total": totalRows},
+			"success": true, "errorCode": 0, "error": nil,
+		})
+	}
+	mux.HandleFunc("/gateway/workflow/flow/todoPageList", pageList)
+	mux.HandleFunc("/gateway/workflow/flow/myFlowPageList", pageList)
 
 	mux.HandleFunc("/gateway/workflow/flow/viewFormInst", func(w http.ResponseWriter, r *http.Request) {
 		body := record(r)
@@ -320,6 +353,74 @@ func TestYunzhijiaResultPaths(t *testing.T) {
 	}
 	if meta["numFound"] != float64(1) {
 		t.Errorf("meta 应带出 result.numFound，实际 %#v", meta)
+	}
+}
+
+// 审批列表的分页键必须是 pageNumber / limit，而且要以 JSON 数字下发。
+//
+// 这条用例是补上来的：原来 24 组用例里没有一组碰过审批列表，声明里写的
+// pageNo / pageSize 这两个键在云之家那边根本不存在，于是调用照样成功、
+// 照样只回前 10 条，翻页参数像是「失效」—— 真实情况是服务端把它们当成
+// 没传过。能作证的只有「网关收到了什么」，不是「调用没报错」。
+func TestYunzhijiaApprovalPaging(t *testing.T) {
+	m := newYZJMock(t)
+	c := &Client{}
+	rt := m.runtime(t, false)
+
+	for _, tool := range []string{"yunzhijia_approval_todo", "yunzhijia_approval_myflow"} {
+		// 不传任何参数也要带上声明里的默认值，否则服务端给 10 条。
+		got, meta, err := c.Call(context.Background(), rt, tool, nil)
+		if err != nil {
+			t.Fatalf("%s 失败: %v", tool, err)
+		}
+		body := m.body()
+		if body["pageNumber"] != float64(1) {
+			t.Errorf("%s: pageNumber 要以数字 1 下发，实际 body=%#v", tool, body)
+		}
+		if body["limit"] != float64(20) {
+			t.Errorf("%s: limit 要以数字 20 下发，实际 body=%#v", tool, body)
+		}
+		// 旧键留在 body 里会让「到底哪个生效」看不清。
+		for _, dead := range []string{"pageNo", "pageSize"} {
+			if _, ok := body[dead]; ok {
+				t.Errorf("%s: %s 是云之家不认的键，不该下发: %#v", tool, dead, body)
+			}
+		}
+		if n := len(got.([]any)); n != 20 {
+			t.Errorf("%s: 默认该拿到 20 条（服务端默认只给 10），实际 %d", tool, n)
+		}
+		if meta["total"] != float64(23) {
+			t.Errorf("%s: meta 要带出 data.total，模型靠它判断还有没有下一页，实际 %#v", tool, meta)
+		}
+
+		// 第二页：拿到的是另一批，不是同一批。
+		got, _, err = c.Call(context.Background(), rt, tool,
+			map[string]any{"pageNumber": float64(2), "limit": float64(20)})
+		if err != nil {
+			t.Fatalf("%s 第二页失败: %v", tool, err)
+		}
+		rows := got.([]any)
+		if len(rows) != 3 {
+			t.Fatalf("%s: 23 条总量第二页该剩 3 条，实际 %d", tool, len(rows))
+		}
+		if first := rows[0].(map[string]any)["formInstId"]; first != "inst-21" {
+			t.Errorf("%s: 第二页该从第 21 条开始，实际 %v", tool, first)
+		}
+	}
+}
+
+// 结果裁剪的上限不能低于接口允许的每页条数，否则模型要了 100 条、
+// 接口也给了 100 条，却被宿主静默砍掉一半 —— 那是同一个「只能拿到前 N 个」
+// 的坑换了个地方出现。
+func TestYunzhijiaApprovalResultLimitMatchesAPICap(t *testing.T) {
+	spec, _ := ByID("yunzhijia")
+	for _, tl := range spec.Tools {
+		if tl.Name != "yunzhijia_approval_todo" && tl.Name != "yunzhijia_approval_myflow" {
+			continue
+		}
+		if tl.Result.Limit < 100 {
+			t.Errorf("%s 的 result.limit 不能小于接口上限 100，实际 %#v", tl.Name, tl.Result)
+		}
 	}
 }
 
