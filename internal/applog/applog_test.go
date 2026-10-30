@@ -8,6 +8,42 @@ import (
 	"testing"
 )
 
+// 三个平台的分支都在这里验，而不是只验本机那一条。
+//
+// 这条用例的由来：日志轮转那条用例只在 Windows 上红，而原因是测试用 HOME
+// 做隔离，可 Windows 那条分支读的是 %LOCALAPPDATA% —— 于是所有用例写进同一个
+// 真实目录，前一个用例的文件句柄还开着，Windows 下占用中的文件改不了名。
+// 在 macOS 上开发时，走不到的那条分支等于没有被任何东西看着。
+func TestDirForEachPlatform(t *testing.T) {
+	t.Setenv("HOME", "/h")
+	t.Setenv("LOCALAPPDATA", `C:\Users\me\AppData\Local`)
+	t.Setenv("XDG_STATE_HOME", "/h/.local/state")
+
+	cases := []struct{ goos, want string }{
+		// 隔离靠的就是这一条：Windows 不看 HOME。
+		{"windows", filepath.Join(`C:\Users\me\AppData\Local`, "mcp-hub", "logs")},
+		{"darwin", filepath.Join("/h", "Library", "Logs", "mcp-hub")},
+		{"linux", filepath.Join("/h/.local/state", "mcp-hub")},
+	}
+	for _, c := range cases {
+		got, err := dirFor(c.goos, "mcp-hub")
+		if err != nil {
+			t.Errorf("%s: %v", c.goos, err)
+			continue
+		}
+		if got != c.want {
+			t.Errorf("%s: %q，想要 %q", c.goos, got, c.want)
+		}
+	}
+
+	// HOME 变了而 Windows 的结果不该跟着变 —— 把那次红的根因钉死。
+	t.Setenv("HOME", "/another")
+	got, _ := dirFor("windows", "mcp-hub")
+	if !strings.HasPrefix(got, `C:\Users\me\AppData\Local`) {
+		t.Errorf("Windows 分支跟着 HOME 变了：%q", got)
+	}
+}
+
 // 日志目录按各系统的惯例走。只验「路径里带 namespace 且是绝对路径」——
 // 具体位置是平台约定，钉死字面值只会让这个测试在换平台时假失败。
 func TestDirIsAbsoluteAndNamespaced(t *testing.T) {
@@ -23,10 +59,42 @@ func TestDirIsAbsoluteAndNamespaced(t *testing.T) {
 	}
 }
 
+// isolateLogDir 把日志目录指到一个新的临时位置。
+//
+// 三个变量都要设，因为 applog.Dir 按系统走不同分支 —— 而 Windows 那条用
+// os.UserCacheDir()，它读的是 %LocalAppData%，**不是** HOME。只设 HOME 在
+// macOS / Linux 上看着管用，在 Windows 上却让所有用例写进同一个真实目录；
+// 前一个用例还开着文件句柄，而 Windows 下占用中的文件改不了名，于是轮转
+// 那条用例失败。这正是 CI 里 Windows 红、另两个平台绿的原因。
+func isolateLogDir(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	pointLogDirAt(t, dir)
+	// 断言隔离真的生效。不加这一条的话，漏设某个变量只会在**那个平台**上
+	// 以别的症状暴露（Windows 上是一句看不懂的 rename 失败），而其余平台
+	// 照常绿 —— 这次就是这么红的。现在任何平台漏了都会直接报在这里。
+	got, err := Dir("mcp-hub-test")
+	if err != nil {
+		t.Fatalf("Dir: %v", err)
+	}
+	if !strings.HasPrefix(got, dir) {
+		t.Fatalf("日志目录没有被隔离：%s 不在 %s 下。"+
+			"applog.Dir 按系统走不同分支，三个环境变量都要设（见 pointLogDirAt）", got, dir)
+	}
+	return dir
+}
+
+// pointLogDirAt 把日志目录指到一个指定路径（用来构造「建不出目录」的情形）。
+func pointLogDirAt(t *testing.T, base string) {
+	t.Helper()
+	t.Setenv("HOME", base)                                   // macOS: ~/Library/Logs
+	t.Setenv("XDG_STATE_HOME", filepath.Join(base, "state")) // Linux
+	t.Setenv("LOCALAPPDATA", base)                           // Windows: os.UserCacheDir()
+}
+
 // Open 必须真的能写进去，而且同时还能往 stderr 走。
 func TestOpenWritesToFile(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
-	t.Setenv("XDG_STATE_HOME", filepath.Join(t.TempDir(), "state"))
+	isolateLogDir(t)
 	w, path, err := Open("mcp-hub-test")
 	if err != nil {
 		t.Fatalf("Open: %v", err)
@@ -54,7 +122,7 @@ func TestOpenFallsBackToStderr(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Setenv("HOME", bad)
-	t.Setenv("XDG_STATE_HOME", filepath.Join(bad, "state"))
+	pointLogDirAt(t, bad)
 	w, path, err := Open("mcp-hub-test")
 	if err == nil {
 		t.Skip("这个平台下仍然能建目录，跳过")
@@ -69,8 +137,7 @@ func TestOpenFallsBackToStderr(t *testing.T) {
 
 // 超过上限时把旧的挪成 .old，而不是无限增长——用户机器上没人会去清它。
 func TestOpenRotatesOversizeLog(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
-	t.Setenv("XDG_STATE_HOME", filepath.Join(t.TempDir(), "state"))
+	isolateLogDir(t)
 	path, err := Path("mcp-hub-test")
 	if err != nil {
 		t.Fatal(err)

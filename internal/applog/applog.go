@@ -33,10 +33,24 @@ const maxBytes = 2 << 20 // 2 MiB
 //	Windows  %LOCALAPPDATA%\mcp-hub\logs
 //	macOS    ~/Library/Logs/mcp-hub
 //	Linux    $XDG_STATE_HOME/mcp-hub 或 ~/.local/state/mcp-hub
-func Dir(namespace string) (string, error) {
-	switch runtime.GOOS {
+func Dir(namespace string) (string, error) { return dirFor(runtime.GOOS, namespace) }
+
+// dirFor 把系统提成参数，这样三个平台的分支都能在任意一台机器上验。
+//
+// 这不是为了测试好写而拐的弯：这段逻辑上一次出错正是「只有 Windows 红、
+// 另两个平台绿」—— 在 macOS 上开发时，走不到的那条分支等于没有被任何东西
+// 看着。项目里 napcat.StartCommand(goos, …) 和 napcat.DefaultDirs(goos, …)
+// 用的是同一个做法。
+func dirFor(goos, namespace string) (string, error) {
+	switch goos {
 	case "windows":
-		base, err := os.UserCacheDir() // Windows 上就是 %LOCALAPPDATA%
+		// 直接读 %LOCALAPPDATA%，不走 os.UserCacheDir()：后者在非 Windows 上
+		// 读的是别的变量，那样这个分支就只能在 Windows 上测。Windows 上
+		// os.UserCacheDir() 做的本来就是读这个变量。
+		if base := os.Getenv("LOCALAPPDATA"); base != "" {
+			return filepath.Join(base, namespace, "logs"), nil
+		}
+		base, err := os.UserCacheDir()
 		if err != nil {
 			return "", err
 		}
