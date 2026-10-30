@@ -3,6 +3,7 @@ package webui
 import (
 	"context"
 	"encoding/json"
+	"github.com/nimysan/mcp-hub/internal/channels"
 	"github.com/nimysan/mcp-hub/internal/webui/design"
 	"net"
 	"net/http"
@@ -10,6 +11,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"reflect"
 	"regexp"
 	"strconv"
 	"strings"
@@ -275,4 +277,58 @@ func TestHiddenAttributeWins(t *testing.T) {
 			"而 .wrap 设了 display:flex。UA 自带的 [hidden]{display:none} 优先级更低会被压掉，" +
 			"结果两个视图同时显示、点返回像是没反应")
 	}
+}
+
+// TestPageOnlyReadsRealFields 防一类静默且会被复制的错误。
+//
+// 真实故障：页面写 d.writeSwitches（复数），服务端端出的是 writeSwitch（单数）。
+// 读一个不存在的字段在 JS 里不报错，`undefined || []` 正好得到空数组，于是
+// 「当前权限」在所有渠道上永远显示「只读」——哪怕写开关其实是开着的。
+// 同一批还抓到 inst.accountField 和 inst.descriptorAccountField 两处。
+//
+// 这类错误不会抛异常、不会打日志，而且一旦写错就会被复制到每个用它的地方。
+// 所以这里把「页面读了哪些字段」和「Go 结构体真的有哪些」对起来。
+func TestPageOnlyReadsRealFields(t *testing.T) {
+	page := readIndex(t)
+	js := page[strings.Index(page, "<script>"):]
+	// 注释里会提到字段名（比如上面那段说明），不能算进来
+	var code []string
+	for _, line := range strings.Split(js, "\n") {
+		if t := strings.TrimSpace(line); !strings.HasPrefix(t, "//") {
+			code = append(code, line)
+		}
+	}
+	js = strings.Join(code, "\n")
+
+	// descriptor 的 json 字段名，从结构体 tag 里取 —— 手写一份清单会和代码脱节
+	allowed := jsonFieldsOf(channels.Descriptor{})
+	// 这几个是 /api/descriptors 响应体上的，不属于 Descriptor 本身
+	for _, extra := range []string{
+		"descriptors", "exePath", "logPath", "configPath", "lastClient",
+		"secretBackend", "length", // length 是数组的，不是字段
+	} {
+		allowed[extra] = true
+	}
+
+	re := regexp.MustCompile(`\b(?:d|de|descriptor)\.([a-zA-Z]\w*)`)
+	for _, m := range re.FindAllStringSubmatch(js, -1) {
+		if !allowed[m[1]] {
+			t.Errorf("页面读 d.%s，但 channels.Descriptor 没有这个 json 字段 —— "+
+				"JS 读不存在的字段不会报错，会静默得到 undefined", m[1])
+		}
+	}
+}
+
+// jsonFieldsOf 取一个结构体所有 json 标签名。
+func jsonFieldsOf(v any) map[string]bool {
+	out := map[string]bool{}
+	rt := reflect.TypeOf(v)
+	for i := 0; i < rt.NumField(); i++ {
+		tag := rt.Field(i).Tag.Get("json")
+		if tag == "" || tag == "-" {
+			continue
+		}
+		out[strings.Split(tag, ",")[0]] = true
+	}
+	return out
 }

@@ -199,10 +199,22 @@ function renderClient(){
   if(h) h.onclick = e => { e.preventDefault(); $("#onboard").scrollIntoView({behavior:"smooth",block:"center"}); };
 }
 
+// writeOn 判断这个渠道实例的写开关是否打开。
+//
+// 单独抽出来是因为字段名错过一次：这里写的是 d.writeSwitches（复数），而服务端
+// 端出的是 writeSwitch（单数）。读一个不存在的字段不会报错，`undefined || []`
+// 正好得到空数组，于是「当前权限」在所有渠道上永远显示「只读」—— 哪怕写开关
+// 其实是开着的。这种错误静默且会被复制到每个用它的地方，所以字段名只准出现一次。
+function writeOn(d, inst){
+  const sw = d.writeSwitch;
+  if(!sw) return false;             // 这个渠道没有写工具
+  return inst.settings?.[sw] === "true";
+}
+
 function activeTools(v){
   const d=v.descriptor, inst=v.instance;
   const write = new Set(d.writeTools||[]);
-  const on = (d.writeSwitches||[]).every(s=>inst.settings?.[s]==="true");
+  const on = writeOn(d, inst);
   return (d.tools||[]).filter(t=>!write.has(t) || on);
 }
 
@@ -215,7 +227,7 @@ function renderMine(){
   }
   const rows = CHANNELS.map(v=>{
     const d=v.descriptor, i=v.instance;
-    const write = (d.writeSwitches||[]).some(s=>i.settings?.[s]==="true");
+    const write = writeOn(d, i);
     return `<tr>
       <td><div class="ch"><span class="ico">${ic(iconOf(d.type),"ic-16 ic")}</span>
         <div><div class="nm">${esc(d.name)}</div><div class="ac">${esc(i.account)}</div></div></div></td>
@@ -866,7 +878,7 @@ function route(){
 function renderDetail(v){
   const d = v.descriptor, i = v.instance;
   const tab = DETAIL.tab;
-  const writeOn = (d.writeSwitches||[]).some(s=>i.settings?.[s]==="true");
+  const wOn = writeOn(d, i);
   const active = activeTools(v);
 
   const tabs = [["account","账号配置"],["perm","权限与工具"],["mcp","接入信息"]];
@@ -900,8 +912,8 @@ function renderDetail(v){
     a.onclick = e => { e.preventDefault(); go(d.type, i.account, a.dataset.tab); };
   });
 
-  renderDetailMain(v, tab, {writeOn, active});
-  renderDetailSide(v, {writeOn, active});
+  renderDetailMain(v, tab, {writeOn: wOn, active});
+  renderDetailSide(v, {writeOn: wOn, active});
 }
 
 function renderDetailMain(v, tab, st){
@@ -917,13 +929,13 @@ function renderDetailMain(v, tab, st){
       <section class="card pad24">
         <div class="sec-head"><h2>账号配置</h2>
           <span class="meta">${esc(d.summary)}</span></div>
-        <div id="dfields">${basic.map(f=>detailField(f,i)).join("")}</div>
+        <div id="dfields">${basic.map(f=>detailField(f,i,d.accountField)).join("")}</div>
         ${adv.length?`
           <div class="hsep"></div>
           <div class="sec-head" style="margin-bottom:12px">
             <h2>服务器设置</h2>
             <span class="meta">${ic("LockKeyhole")} SSL / TLS 加密</span></div>
-          <div class="dgrid">${adv.map(f=>detailField(f,i)).join("")}</div>`:""}
+          <div class="dgrid">${adv.map(f=>detailField(f,i,d.accountField)).join("")}</div>`:""}
       </section>
       <div class="dsave">
         <span class="tiny">${ic("LockKeyhole")} 凭据保存在本机，界面中保持隐藏</span>
@@ -948,8 +960,8 @@ function renderDetailMain(v, tab, st){
           <span class="meta">遵循最小权限原则，默认仅开放读取能力。</span></div>
         <div class="prow">
           <span class="pico">${ic("ShieldCheck","ic-16 ic")}</span>
-          <div><div class="pt">读取数据</div>
-            <div class="pd">${esc((d.tools||[]).filter(n=>!(d.writeTools||[]).includes(n)).length)} 个只读工具，默认启用</div></div>
+          <div><div class="pt">只读访问</div>
+            <div class="pd">${readTitles(d) || "无只读工具"}</div></div>
           <span class="pill">默认启用</span>
         </div>
         ${sw.map(f=>{
@@ -957,7 +969,8 @@ function renderDetailMain(v, tab, st){
           return `<div class="prow">
             <span class="pico">${ic("Send","ic-16 ic")}</span>
             <div><div class="pt">${esc(f.label)}</div>
-              <div class="pd">${esc(f.help||"")}</div></div>
+              <div class="pd">${esc(f.help||"")}</div>
+              ${writeTitles(d)?`<div class="pd">这些工具受它控制：${writeTitles(d)}</div>`:""}</div>
             <label class="sw"><input type="checkbox" data-sw="${esc(f.name)}" ${on?"checked":""}>
               <span>${on?"已开启":"已关闭"}</span></label>
           </div>`;
@@ -1017,9 +1030,42 @@ function renderDetailMain(v, tab, st){
   };
 }
 
-function detailField(f, inst){
-  const v = f.name===inst.descriptorAccountField ? inst.account : (inst.settings?.[f.name] ?? f.default ?? "");
-  const val = (f.name==="user"||f.name===inst.accountField) ? inst.account : v;
+// detailField 渲染账号配置页的一个字段。
+//
+// accountField 从 descriptor 传进来，而不是去 instance 上找：账号字段的名字是
+// 渠道的属性（邮件渠道叫 user，Jira 叫 email），instance 上压根没有这个字段 ——
+// 读它得到 undefined，于是条件永远不成立，字段值会落到错误的分支。
+// 原来还硬编码了一个 "user" 来兜，那只是让邮件渠道看起来是对的。
+// readTitles 把只读工具的标题列成一句话。
+//
+// 稿子上这里写的是「查看最近邮件、搜索邮件、读取邮件内容」—— 那是邮件渠道的
+// 具体工具名，不是「3 个只读工具」这种数字。数字说不出用户授权了什么，而这一行
+// 的全部用意就是让人看懂「只读」到底包含哪些事。
+//
+// 所以从 toolInfo 生成，对每个渠道都成立：Jira 会列出「当前身份、列出项目、
+// 搜索事项…」。超过四个就截断，否则这一行会把卡片撑开。
+// writeTitles 列出受写开关控制的工具。
+//
+// 一个开关控制哪几个工具，必须在开关旁边说出来 —— 「允许写入操作」这个标签本身
+// 不告诉用户它会放开什么。这是不可逆动作的授权，含糊不得。
+function writeTitles(d){
+  const info = d.toolInfo || [];
+  const titles = info.filter(t => t.write).map(t => t.title);
+  return titles.map(esc).join("、");
+}
+
+function readTitles(d){
+  const info = d.toolInfo || [];
+  const titles = info.filter(t => !t.write).map(t => t.title);
+  if(!titles.length) return "";
+  const shown = titles.slice(0, 4).map(esc).join("、");
+  return titles.length > 4 ? `${shown} 等 ${titles.length} 项` : shown;
+}
+
+function detailField(f, inst, accountField){
+  const val = f.name === accountField
+    ? inst.account                                   // 账号本身存在 instance.account 上
+    : (inst.settings?.[f.name] ?? f.default ?? "");
   if(f.kind==="password"){
     return `<div class="field"><label>${esc(f.label)}
         <span class="secret-tag">${ic("LockKeyhole")}已安全保存</span></label>
