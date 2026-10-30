@@ -179,7 +179,14 @@ func newYZJMock(t *testing.T) *yzjMock {
 	//   limit/size/rows/perPage/pageCount/maxCount -> 一律 10 条
 	pageList := func(w http.ResponseWriter, r *http.Request) {
 		body := record(r)
-		const totalRows = 23
+		totalRows := 23
+		// 单号是模糊匹配，而且只有 serialNo 这个键认（serial_no /
+		// serialNumber 实测被当成没传，照样回全量 —— 一个认不出的过滤键
+		// 比报错更坏：模型会把「全部 323 条的第一页」当成命中结果）。
+		serial, filtered := body["serialNo"].(string)
+		if filtered && serial != "" {
+			totalRows = 1
+		}
 		page, limit := 1, 10
 		if n, ok := body["pageNumber"].(float64); ok && n >= 1 {
 			page = int(n)
@@ -189,12 +196,17 @@ func newYZJMock(t *testing.T) *yzjMock {
 		}
 		rows := []any{}
 		for i := (page - 1) * limit; i < page*limit && i < totalRows; i++ {
-			rows = append(rows, map[string]any{
+			row := map[string]any{
 				"formDefId":  "def-1",
 				"formInstId": fmt.Sprintf("inst-%d", i+1),
 				"flowInstId": fmt.Sprintf("flow-%d", i+1),
 				"title":      fmt.Sprintf("请款单 %d", i+1),
-			})
+				"serialNo":   fmt.Sprintf("QKSQD-20261022-%03d", i+1),
+			}
+			if filtered && serial != "" {
+				row["serialNo"] = serial
+			}
+			rows = append(rows, row)
 		}
 		write(w, map[string]any{
 			"data":    map[string]any{"list": rows, "total": totalRows},
@@ -203,6 +215,7 @@ func newYZJMock(t *testing.T) *yzjMock {
 	}
 	mux.HandleFunc("/gateway/workflow/flow/todoPageList", pageList)
 	mux.HandleFunc("/gateway/workflow/flow/myFlowPageList", pageList)
+	mux.HandleFunc("/gateway/workflow/flow/donePageList", pageList)
 
 	mux.HandleFunc("/gateway/workflow/flow/viewFormInst", func(w http.ResponseWriter, r *http.Request) {
 		body := record(r)
@@ -408,7 +421,7 @@ func TestYunzhijiaApprovalPaging(t *testing.T) {
 	c := &Client{}
 	rt := m.runtime(t, false)
 
-	for _, tool := range []string{"yunzhijia_approval_todo", "yunzhijia_approval_myflow"} {
+	for _, tool := range []string{"yunzhijia_approval_todo", "yunzhijia_approval_myflow", "yunzhijia_approval_done"} {
 		// 不传任何参数也要带上声明里的默认值，否则服务端给 10 条。
 		got, meta, err := c.Call(context.Background(), rt, tool, nil)
 		if err != nil {
@@ -557,6 +570,85 @@ func TestYunzhijiaRecentGroupsPagesByPageIndex(t *testing.T) {
 	}
 }
 
+// 按单号找单据：键名只有 serialNo 认，而且三个列表都要有。
+//
+// 实测（张明星账号，我发起的 323 条）：
+//
+//	serialNo=QKSQD-20261022-005  -> total 1    完整单号
+//	serialNo=QKSQD-2026          -> total 7    模糊匹配，记一截就行
+//	serial_no / serialNumber     -> total 323  被当成没传
+//	keyword=签卡 / title=签卡      -> total 63
+//	status=FINISH                -> total 321
+//
+// 拼错的过滤键比报错更坏：接口照样回全量第一页，模型会把它当成命中结果
+// 报给用户。
+func TestYunzhijiaApprovalFindBySerialNo(t *testing.T) {
+	spec, _ := ByID("yunzhijia")
+	lists := []string{"yunzhijia_approval_todo", "yunzhijia_approval_myflow", "yunzhijia_approval_done"}
+	for _, want := range lists {
+		var names []string
+		for _, tl := range spec.Tools {
+			if tl.Name != want {
+				continue
+			}
+			for _, p := range tl.Params {
+				names = append(names, p.Name)
+			}
+		}
+		if names == nil {
+			t.Fatalf("少了工具 %s", want)
+		}
+		for _, must := range []string{"serialNo", "keyword"} {
+			if !slices.Contains(names, must) {
+				t.Errorf("%s 要能按 %s 找单据，实际参数 %v", want, must, names)
+			}
+		}
+	}
+
+	m := newYZJMock(t)
+	c := &Client{}
+	rt := m.runtime(t, false)
+	for _, tool := range lists {
+		got, meta, err := c.Call(context.Background(), rt, tool,
+			map[string]any{"serialNo": "QKSQD-20261022-005"})
+		if err != nil {
+			t.Fatalf("%s 按单号查失败: %v", tool, err)
+		}
+		if body := m.body(); body["serialNo"] != "QKSQD-20261022-005" {
+			t.Errorf("%s: serialNo 要原样下发，实际 body=%#v", tool, body)
+		}
+		if n := len(got.([]any)); n != 1 {
+			t.Errorf("%s: 按完整单号该只命中 1 条，实际 %d", tool, n)
+		}
+		if meta["total"] != float64(1) {
+			t.Errorf("%s: 命中后 total 该是 1（不是全量），实际 %#v", tool, meta)
+		}
+	}
+}
+
+// 已办的 total 不加过滤时实测回 10000 这个整数 —— 是封顶值不是精确条数
+// （第 900 页仍有数据，说明真实条数远不止一页，但也不是正好一万）。
+// 说明里必须讲明，否则模型会告诉用户「你一共批了 10000 单」。
+func TestYunzhijiaApprovalDoneTotalIsACap(t *testing.T) {
+	spec, _ := ByID("yunzhijia")
+	for _, tl := range spec.Tools {
+		if tl.Name != "yunzhijia_approval_done" {
+			continue
+		}
+		for _, want := range []string{"10000", "封顶"} {
+			if !strings.Contains(tl.Description, want) {
+				t.Errorf("已办的说明要讲明 total 是封顶值，缺 %q：%s", want, tl.Description)
+			}
+		}
+		// 单子走到哪一步、在谁手上，是「我批没批」之外最常被追问的两件事。
+		for _, f := range []string{"currentActivityName", "currentApprovers"} {
+			if !slices.Contains(tl.Result.Fields, f) {
+				t.Errorf("已办的结果要保留 %s：%v", f, tl.Result.Fields)
+			}
+		}
+	}
+}
+
 // 待办列表里混着外部系统接进来的单据，它们的 formDefId / formInstId 是
 // 空串 —— 实测张明星账号 22 条待办里有 20 条是金蝶云星空的（webUrl 指向
 // mkk3cloud.gotechcn.cn），四个 ID 全为空。detail / agree 对它们用不了，
@@ -595,7 +687,7 @@ func TestYunzhijiaApprovalTodoWarnsAboutExternalForms(t *testing.T) {
 func TestYunzhijiaApprovalResultLimitMatchesAPICap(t *testing.T) {
 	spec, _ := ByID("yunzhijia")
 	for _, tl := range spec.Tools {
-		if tl.Name != "yunzhijia_approval_todo" && tl.Name != "yunzhijia_approval_myflow" {
+		if !strings.HasPrefix(tl.Name, "yunzhijia_approval_") || tl.Name == "yunzhijia_approval_detail" || tl.Name == "yunzhijia_approval_agree" {
 			continue
 		}
 		if tl.Result.Limit < 100 {
