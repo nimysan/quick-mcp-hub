@@ -2,6 +2,9 @@ package mailbox
 
 import (
 	"crypto/tls"
+	"errors"
+	"fmt"
+	"io"
 	"testing"
 
 	"github.com/nimysan/mcp-hub/internal/config"
@@ -104,4 +107,51 @@ func isStaticRSA(id uint16) bool {
 		return true
 	}
 	return false
+}
+
+// 裸 EOF 也必须算握手失败，否则 SMTP 永远触发不了自动降级。
+//
+// 真实故障：mail.gotechcn.cn 上 IMAP 能自动降级、SMTP 不能。同一台机器，
+// 两个守护进程脾气不同 —— Dovecot(993) 谈不拢时回 alert 40「handshake
+// failure」，Postfix(465) 直接关掉连接，Go 只剩一个裸 EOF。于是用户看到
+// 「SMTP 认证失败: EOF」，而它连 TLS 都没建起来，和认证毫无关系。
+//
+// 在拨号阶段判 EOF 是安全的：那一刻还没读过任何应用数据，EOF 只可能是
+// 对方在握手中途关了连接。
+func TestHandshakeFailedRecognisesBareEOF(t *testing.T) {
+	t.Run("该认的", func(t *testing.T) {
+		for _, err := range []error{
+			io.EOF,
+			io.ErrUnexpectedEOF,
+			fmt.Errorf("dial tcp 1.2.3.4:465: %w", io.EOF), // 被包过一层
+			errors.New("EOF"), // 重新造的，errors.Is 认不出
+			errors.New("smtp: connect error: EOF"),
+			errors.New("remote error: tls: handshake failure"),
+			errors.New("tls: no cipher suite supported by both client and server"),
+		} {
+			if !handshakeFailed(err) {
+				t.Errorf("要当成握手失败：%v", err)
+			}
+		}
+	})
+
+	// 边界：别的失败重试一次毫无意义，只会把一次等待变成两次。
+	// 尤其 EOF 的判断不能宽到把超时、证书错、密码错也卷进来。
+	t.Run("不该认的", func(t *testing.T) {
+		for _, err := range []error{
+			nil,
+			errors.New("dial tcp 1.2.3.4:465: i/o timeout"),
+			errors.New("x509: certificate has expired or is not yet valid"),
+			errors.New("x509: cannot validate certificate for 221.4.223.109 because it doesn't contain any IP SANs"),
+			errors.New("imap: NO [AUTHENTICATIONFAILED] Authentication failed."),
+			errors.New("535 5.7.8 Error: authentication failed"),
+			errors.New("connection refused"),
+			// 「EOF」出现在中间而不是结尾：不是拨号阶段那种对方直接断开。
+			errors.New("EOF reached while reading message body"),
+		} {
+			if handshakeFailed(err) {
+				t.Errorf("不该当成握手失败：%v", err)
+			}
+		}
+	})
 }

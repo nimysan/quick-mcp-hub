@@ -28,6 +28,15 @@ func authFailed(err error) bool {
 		strings.Contains(s, "535 ")
 }
 
+// loginHost 是这一侧实际连的主机。两侧主机可以不同（imap.x / smtp.x），
+// 日志里不写清是哪一台，就分不出「收信那台拒了」还是「发信那台拒了」。
+func loginHost(proto string, cfg config.Config) string {
+	if proto == "IMAP" {
+		return fmt.Sprintf("%s:%d", cfg.IMAPHost, cfg.IMAPPort)
+	}
+	return fmt.Sprintf("%s:%d", cfg.SMTPHost, cfg.SMTPPort)
+}
+
 // secretName 是这个渠道对凭据的叫法，用于说人话的错误提示。
 func secretName(cfg config.Config) string {
 	if s := strings.TrimSpace(cfg.SecretLabel); s != "" {
@@ -45,6 +54,20 @@ func secretName(cfg config.Config) string {
 // proto 是 "IMAP" 或 "SMTP"，用于说清是哪一侧失败：两侧用的是同一套凭据，
 // 但一侧通一侧不通是真实存在的（有的服务器单独关掉发信）。
 func loginError(proto string, cfg config.Config, err error) error {
+	// 先把服务器的原话记进日志，再翻译。
+	//
+	// 不记的话这类失败在日志里**查不到任何证据**：下面的凭据分支会重建一个
+	// 新错误（不包原错），于是服务器到底回了什么，界面上没有、日志里也没有。
+	// 而 AUTHENTICATIONFAILED 是个笼统的码（RFC 5530）——用户名错、密码错、
+	// 「这里要用专用密码」都走它，服务器刻意不说是哪一种。所以下面那句人话
+	// 是**我们的推断**，排查时需要的是服务器自己说了什么。
+	//
+	// 登录名一起记：它不是秘密，而它恰好是最常出错的那个事实（有的 Dovecot
+	// 只认裸用户名，带 @域名 就被拒）。密码任何形式都不进日志。
+	// 措辞刻意中立（「失败」而不是「被拒」）：这里也会收到 TLS 握手失败，
+	// 那种情况连认证都没开始，断言「被拒」就是在替服务器下结论。
+	logf("%s %s 失败：登录名 %q，原始错误：%v", proto, loginHost(proto, cfg), cfg.User, err)
+
 	name := secretName(cfg)
 	if !authFailed(err) {
 		// 不是凭据问题：原样把服务器的回答带上。这类失败（账号停用、

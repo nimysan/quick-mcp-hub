@@ -32,6 +32,12 @@ type SendRequest struct {
 
 // smtpOptions 组装 SMTP 客户端选项。授权码在这里第一次被取出（惰性）。
 func smtpOptions(cfg config.Config) ([]gomail.Option, error) {
+	return smtpOptionsWith(cfg, cfg.LegacyRSAKeyExchange)
+}
+
+// smtpOptionsWith 和 smtpOptions 一样，但由调用方决定 TLS 要不要放宽。
+// 自动降级重试需要这个口子：第二次尝试用的是放宽后的套件集合。
+func smtpOptionsWith(cfg config.Config, legacy bool) ([]gomail.Option, error) {
 	password, err := cfg.Password()
 	if err != nil {
 		return nil, err
@@ -42,7 +48,7 @@ func smtpOptions(cfg config.Config) ([]gomail.Option, error) {
 		gomail.WithPassword(password),
 		gomail.WithSMTPAuth(gomail.SMTPAuthLogin),
 		gomail.WithTimeout(cfg.Timeout),
-		gomail.WithTLSConfig(smtpTLS(cfg)),
+		gomail.WithTLSConfig(tlsConfigFor(cfg.SMTPHost, legacy)),
 	}
 	// 465 是 implicit TLS（连上就是 TLS）；其他端口走 STARTTLS 且强制要求加密。
 	if cfg.SMTPPort == 465 {
@@ -51,6 +57,32 @@ func smtpOptions(cfg config.Config) ([]gomail.Option, error) {
 		opts = append(opts, gomail.WithTLSPolicy(gomail.TLSMandatory))
 	}
 	return opts, nil
+}
+
+// withSMTPFallback 跑一次 SMTP 操作，握手谈不拢时用放宽的套件重试一次。
+//
+// IMAP 那侧早就有这个（见 imap.go），SMTP 侧没有 —— 于是同一台只给静态 RSA
+// 的服务器，收信能自动降级连上，发信却直接失败。两边必须对齐。
+//
+// 为什么把整个操作包起来重试，而不是只重拨一次连接：gomail 自己管拨号，
+// 连接拿不出来单独复用。好在 handshakeFailed 只认握手阶段的失败 —— 那一刻
+// 还没有发出任何邮件，所以重试一次不会把信发两遍。
+func withSMTPFallback(cfg config.Config, run func(opts []gomail.Option) error) error {
+	opts, err := smtpOptionsWith(cfg, cfg.LegacyRSAKeyExchange)
+	if err != nil {
+		return err
+	}
+	err = run(opts)
+	if err == nil || cfg.LegacyRSAKeyExchange || !handshakeFailed(err) {
+		return err
+	}
+	// 降级这件事绝不能悄悄发生：这条连接没有前向保密。
+	logf("SMTP %s 不接受默认加密套件，降级重试（这条连接无前向保密）", cfg.SMTPHost)
+	relaxed, err := smtpOptionsWith(cfg, true)
+	if err != nil {
+		return err
+	}
+	return run(relaxed)
 }
 
 // Send 发送一封邮件。
@@ -83,15 +115,14 @@ func Send(ctx context.Context, cfg config.Config, req SendRequest) error {
 	}
 	msg.SetBodyString(ct, req.Body)
 
-	opts, err := smtpOptions(cfg)
+	err := withSMTPFallback(cfg, func(opts []gomail.Option) error {
+		client, err := gomail.NewClient(cfg.SMTPHost, opts...)
+		if err != nil {
+			return fmt.Errorf("构建 SMTP 客户端失败: %w", err)
+		}
+		return client.DialAndSendWithContext(ctx, msg)
+	})
 	if err != nil {
-		return err
-	}
-	client, err := gomail.NewClient(cfg.SMTPHost, opts...)
-	if err != nil {
-		return fmt.Errorf("构建 SMTP 客户端失败: %w", err)
-	}
-	if err := client.DialAndSendWithContext(ctx, msg); err != nil {
 		return loginError("SMTP", cfg, err)
 	}
 	return nil
@@ -109,19 +140,25 @@ func SelfTest(ctx context.Context, cfg config.Config) (imapErr, smtpErr error) {
 		s.close()
 	}
 
-	opts, err := smtpOptions(cfg)
+	err := withSMTPFallback(cfg, func(opts []gomail.Option) error {
+		client, err := gomail.NewClient(cfg.SMTPHost, opts...)
+		if err != nil {
+			return fmt.Errorf("构建 SMTP 客户端失败: %w", err)
+		}
+		if err := client.DialWithContext(ctx); err != nil {
+			return err
+		}
+		if err := client.Close(); err != nil {
+			logf("关闭 SMTP 连接: %v", err)
+		}
+		return nil
+	})
 	if err != nil {
-		return imapErr, err
-	}
-	client, err := gomail.NewClient(cfg.SMTPHost, opts...)
-	if err != nil {
-		return imapErr, fmt.Errorf("构建 SMTP 客户端失败: %w", err)
-	}
-	if err := client.DialWithContext(ctx); err != nil {
-		return imapErr, fmt.Errorf("SMTP 认证失败: %w", err)
-	}
-	if err := client.Close(); err != nil {
-		logf("关闭 SMTP 连接: %v", err)
+		// 刻意不再写死「SMTP 认证失败」。实测这里拿到的常常根本不是认证错误：
+		// 静态 RSA 的 Postfix 在默认套件握不上手时直接关连接，Go 报裸 EOF ——
+		// 连 TLS 都没建起来，和认证毫无关系，而原来那句标签把用户引向密码。
+		// loginError 会分清这两种，并把服务器的原话记进日志。
+		return imapErr, loginError("SMTP", cfg, err)
 	}
 	return imapErr, nil
 }
