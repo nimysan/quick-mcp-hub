@@ -1,7 +1,9 @@
 package mailbox
 
 import (
+	"bytes"
 	"errors"
+	"log"
 	"strings"
 	"testing"
 
@@ -102,3 +104,69 @@ func TestAuthFailedRecognisesRealResponses(t *testing.T) {
 		}
 	}
 }
+
+// 登录失败必须在日志里留下服务器的原话。
+//
+// 真实故障：企业邮箱渠道报「邮箱密码不正确」，而日志里关于这次失败
+// **一个字都没有** —— 只有一行 TLS 降级记录。原因是下面这个分支会重建一个
+// 新错误（不包原错），于是服务器自己说了什么，界面上没有、日志里也没有，
+// 这条「密码不正确」成了无法核实的断言。
+//
+// 而 AUTHENTICATIONFAILED 是 RFC 5530 的笼统码：用户名错、密码错、
+// 「这里要用专用密码」都走它，服务器刻意不说是哪一种。所以人话提示是推断，
+// 排查要的是原话。
+func TestLoginErrorLogsServerReply(t *testing.T) {
+	var buf bytes.Buffer
+	old := log.Writer()
+	log.SetOutput(&buf)
+	defer log.SetOutput(old)
+
+	cfg := config.FromMailChannel(config.MailChannelInput{
+		User:        "star.zhang@example.com",
+		IMAPHost:    "mail.example.com",
+		SecretLabel: "邮箱密码",
+	})
+	_ = loginError("IMAP", cfg, errors.New("imap: NO [AUTHENTICATIONFAILED] Authentication failed."))
+
+	got := buf.String()
+	// 原话、登录名、主机：三样都要在。登录名不是秘密，而它恰好是最常出错的
+	// 那个事实（有的 Dovecot 只认裸用户名，带 @域名 就被拒）。
+	for _, want := range []string{
+		"AUTHENTICATIONFAILED",   // 服务器原话
+		"star.zhang@example.com", // 实际送出的登录名
+		"mail.example.com",       // 哪一台服务器
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("日志里要有 %q，得到 %q", want, got)
+		}
+	}
+}
+
+// 日志里绝不能出现密码。
+//
+// 上面那条要求「记下原话和登录名」，这条是它的边界：诊断信息再有用，
+// 凭据也不能落到文件里 —— 日志会被用户直接发给维护者。
+func TestLoginErrorNeverLogsPassword(t *testing.T) {
+	var buf bytes.Buffer
+	old := log.Writer()
+	log.SetOutput(&buf)
+	defer log.SetOutput(old)
+
+	const secret = "hunter2-不该出现"
+	cfg := config.FromMailChannel(config.MailChannelInput{
+		User:     "a@example.com",
+		IMAPHost: "mail.example.com",
+		Secret:   fixedSecret(secret),
+	})
+	_ = loginError("IMAP", cfg, errors.New("imap: NO [AUTHENTICATIONFAILED] Authentication failed."))
+
+	if strings.Contains(buf.String(), secret) {
+		t.Errorf("日志里出现了密码：%q", buf.String())
+	}
+}
+
+// fixedSecret 是个写死值的凭据，只用于上面那条「日志里不能有密码」的用例。
+type fixedSecret string
+
+func (s fixedSecret) Value() (string, error) { return string(s), nil }
+func (s fixedSecret) Source() string         { return "测试" }

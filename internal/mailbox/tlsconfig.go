@@ -2,6 +2,8 @@ package mailbox
 
 import (
 	"crypto/tls"
+	"errors"
+	"io"
 	"net"
 	"strings"
 
@@ -86,7 +88,23 @@ func handshakeFailed(err error) bool {
 			return true
 		}
 	}
-	return false
+
+	// 裸 EOF：服务器**不回 alert，直接关掉连接**。
+	//
+	// 不是假设，是实测：mail.gotechcn.cn 的 Dovecot(993) 谈不拢时规规矩矩回
+	// alert 40（所以 IMAP 一直能自动降级），而同一台机器的 Postfix(465) 直接
+	// 断开，Go 只能报一个裸 EOF。于是 SMTP 永远触发不了降级，用户看到的是
+	// 「SMTP 认证失败: EOF」—— 它连 TLS 都没建起来，和认证毫无关系。
+	//
+	// 为什么在这里判 EOF 是安全的：这个函数只有两个调用点，都在**拨号阶段**
+	// （dialWithFallback 和 imap.go 的 DialTLS 之后），那一刻还没有读过任何
+	// 应用数据，所以 EOF 只可能是「对方在握手中途把连接关了」。换到读写阶段
+	// 判 EOF 就不成立了 —— 那里 EOF 是正常的流结束。
+	if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
+		return true
+	}
+	// 有的库会把 EOF 重新包成不可 errors.Is 的错误，只剩文本。
+	return s == "EOF" || strings.HasSuffix(s, ": EOF")
 }
 
 // dialWithFallback 先按安全的默认套件连，握手谈不拢时降级重试一次。
