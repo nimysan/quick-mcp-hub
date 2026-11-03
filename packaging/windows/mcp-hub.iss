@@ -33,7 +33,23 @@ AppName=MCP Hub
 AppVersion={#AppVersion}
 VersionInfoVersion={#VersionInfo}
 AppPublisher=MCP Hub
+; 注意：程序里**没有**创建这个互斥量，所以这一行目前不起作用。别把它当成
+; 「安装时会检测程序在跑」—— 真升级时撞上的是文件锁（见下面 InfoBeforeFile）。
+; 要让它生效，得在 main.go 的 GUI 分支里建这个名字的 mutex，而且 stdio
+; 子进程绝不能建：否则 Quick 跑着时 AppMutex 会直接拦住整个安装。
 AppMutex=MCPHubSetupMutex
+
+; 升级前必须先退出 Amazon Quick。
+;
+; Quick 以 stdio 方式 spawn 的那个 mcp-hub.exe 一直活着，Windows 锁住正在
+; 运行的 exe 映像，所以 Inno 删不掉旧文件（DeleteFile failed; code 5），
+; 对话框只给「重试 / 跳过 / 取消」。而默认开着的 CloseApplications 走
+; Restart Manager，它要靠窗口消息优雅关闭进程 —— 那个子进程没有窗口，
+; 所以必然关不掉；就算关掉了，Quick 还握着管道会立刻再 spawn 一个。
+;
+; 这里刻意只给一页说明，不做自动处理（改名避让、taskkill 都试过方案，
+; 见 git 历史里的讨论）：一句话能说清的事不值得引入那套复杂度。
+InfoBeforeFile=安装前须知.txt
 
 ; 装到用户目录：不需要管理员权限。
 PrivilegesRequired=lowest
