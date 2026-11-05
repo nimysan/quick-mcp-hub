@@ -404,3 +404,41 @@ func TestSpriteHasNoAnonymousSymbol(t *testing.T) {
 			"IconSprite 必须跳过 tokens.json 里键名为空的条目")
 	}
 }
+
+// TestOAuthChannelCanBeReauthorized 守住「已保存的 OAuth 连接能重新授权」。
+//
+// 真实故障：授权块的渲染条件写的是 `d.oauth && !account`，也就是只在**新建**
+// 时出现。于是一条已保存的连接授权失效之后（到期、被吊销、对方系统里解除了
+// 授权），页面上没有任何地方能重新授权 —— 留在编辑表单里的只有一个令牌
+// 输入框，而设备流的令牌是一整段 JSON，用户填不出来。唯一的出路是删掉重建，
+// 那会连带删掉系统密码管理器里的凭据，并把写开关这些设置一起丢掉。
+//
+// 这类故障是静默的：页面不报错，只是少了一个按钮。
+func TestOAuthChannelCanBeReauthorized(t *testing.T) {
+	page := readIndex(t)
+
+	// 渲染条件不能再把已保存的实例排除掉。
+	if strings.Contains(page, "(d.oauth && !account)") {
+		t.Error("授权块又变成只在新建时渲染了：已保存的连接将无法重新授权，" +
+			"而编辑表单里那个令牌字段是设备流令牌，用户填不出来")
+	}
+	// 详情页要有入口 —— 连接坏掉时用户看的是那一页（测试连接在那里）。
+	if !strings.Contains(page, `id="dreauth"`) {
+		t.Error("详情页缺少「重新授权」按钮：那是连接失效时用户会去的页面")
+	}
+	if !strings.Contains(page, "function reauth(") {
+		t.Error("缺少 reauth()：详情页的重新授权按钮会点了没反应")
+	}
+
+	// 重新授权必须带上已保存的设置。授权成功后走的是常规保存路径，不带
+	// 就等于把写开关重置成默认值 —— 用户会发现发消息的工具悄悄不见了。
+	if !strings.Contains(page, "reauth(d.type, i.account, i.settings)") {
+		t.Error("重新授权没有带上 i.settings：写开关等设置会被重置成默认值")
+	}
+	// 授权回来的若是另一个账号，那是新建而不是修复，必须当场说清楚：
+	// 凭据按账号名定位，旧那条会原封不动留着，而它仍然是坏的。
+	if !strings.Contains(page, "st.account !== expectAccount") {
+		t.Error("没有比对授权回来的账号：换账号授权会新建一条连接，" +
+			"而用户以为修好了，实际在用的还是坏的那条")
+	}
+}

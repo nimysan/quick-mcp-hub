@@ -442,14 +442,21 @@ async function openForm(type, account){
   const credNames = [d.accountField, d.secretField].filter(Boolean);
   const credFields = oauthFirst ? basic.filter(f=>credNames.includes(f.name)) : [];
   const formFields = oauthFirst ? basic.filter(f=>!credNames.includes(f.name)) : basic;
-  const oauthHTML = (d.oauth && !account) ? `
+  // 编辑已保存的渠道时这一块原来是不渲染的（条件写的是 !account），于是
+  // 一条 OAuth 连接的授权失效之后，页面上没有任何地方能重新授权 —— 留在
+  // 那里的只有一个令牌输入框，而设备流的令牌是一整段 JSON，用户填不出来。
+  // 唯一的出路是删掉重建，那会连带删掉密码管理器里的凭据和写开关设置。
+  const oauthHTML = d.oauth ? `
     <div class="oauth-box${oauthFirst?" lead":""}">
-      <div class="risk-head">🔗 ${oauthFirst?`扫码连接，不用手工生成令牌`:`用 OAuth 连接（不用手工生成令牌）`}</div>
+      <div class="risk-head">🔗 ${account?`授权失效了？重新确认一次`
+        :(oauthFirst?`扫码连接，不用手工生成令牌`:`用 OAuth 连接（不用手工生成令牌）`)}</div>
       <div class="help">点下面的按钮，会把你送到 <b>${esc(d.oauth.authHost)}</b> 授权${
         d.oauth.scopes?.length?`，申请的权限：<code>${esc(d.oauth.scopes.join(" "))}</code>`:""}</div>
+      ${account?`<div class="help">完成后替换本机保存的令牌，账号和这里的其他设置不变。</div>`:""}
       ${d.oauth.help?`<div class="help">${esc(d.oauth.help)}${
         d.oauth.setupUrl?` · <a href="${esc(d.oauth.setupUrl)}" target="_blank" rel="noreferrer">去注册</a>`:""}</div>`:""}
-      <button class="${oauthFirst?"primary":""}" id="oauthbtn" style="margin-top:8px">连接${esc(d.name)}</button>
+      <button class="${oauthFirst?"primary":""}" id="oauthbtn" style="margin-top:8px">${
+        account?`重新授权`:`连接${esc(d.name)}`}</button>
       <div id="oauthpanel"></div>
     </div>` : "";
   // 手动填的后路：默认收起。里面放的是凭据字段，所以「只存进密码管理器」
@@ -531,7 +538,9 @@ async function openForm(type, account){
   };
   $("#cancelbtn").onclick = closeModal;
   const ob = $("#oauthbtn");
-  if(ob) ob.onclick = () => startOAuth(type);
+  // account 非空＝在重新授权一条已存在的连接，把它传下去：授权回来的若是
+  // 另一个账号，那是新建而不是修复，必须当场说清楚。
+  if(ob) ob.onclick = () => startOAuth(type, null, account || "");
   const ncb = $("#ncbtn");
   if(ncb) ncb.onclick = () => ncDetect();
   const manualToggle = $("#manualtoggle");
@@ -688,8 +697,11 @@ function ncFill(qq, token, endpoint){
 // 这里只是每 2 秒问一次状态。
 let OAUTH_SESSION = null;
 
-async function startOAuth(type){
-  const {values} = collect(type);
+// valuesOverride 非空时用它代替读表单：重新授权是从详情页发起的，那里没有
+// 表单，而已保存的设置（尤其写开关）必须原样带上 —— 授权成功后走的是常规
+// 保存路径，不带就等于把它们重置成默认值。
+async function startOAuth(type, valuesOverride, expectAccount){
+  const values = valuesOverride || collect(type).values;
   const panel = $("#oauthpanel");
   panel.innerHTML = `<div class="help">正在向授权服务要验证码…</div>`;
   const r = await api("/api/oauth/start",{method:"POST",
@@ -712,10 +724,10 @@ async function startOAuth(type){
     try{ await navigator.clipboard.writeText(s.userCode); $("#copycode").textContent="已复制"; }
     catch(e){ $("#copycode").textContent="请手动复制"; }
   };
-  pollOAuth(type, s.id);
+  pollOAuth(type, s.id, expectAccount);
 }
 
-async function pollOAuth(type, id){
+async function pollOAuth(type, id, expectAccount){
   const ost = () => $("#ost");
   while(OAUTH_SESSION === id){
     await new Promise(r=>setTimeout(r,2000));
@@ -725,9 +737,19 @@ async function pollOAuth(type, id){
     if(!el) return;                              // DOM 没了，停
     if(st.state === "pending"){ el.className="st"; el.textContent="③ 等待授权…"; continue; }
     if(st.state === "ok"){
+      OAUTH_SESSION = null;
+      // 重新授权时授权的可能是另一个账号。凭据按账号名定位，所以那会
+      // 新建一条连接、旧的那条原封不动留着（仍然是坏的）—— 必须说出来，
+      // 否则用户以为修好了，而实际在用的还是过期那条。
+      if(expectAccount && st.account && st.account !== expectAccount){
+        el.className="st bad";
+        el.innerHTML = `授权的是另一个账号「${esc(st.account)}」，已新建为一条连接。`
+          + `<br>原来的「${esc(expectAccount)}」没有变化，仍然需要重新授权或删除。`;
+        setTimeout(()=>{closeModal();refresh();},4000);
+        return;
+      }
       el.className="st ok";
       el.textContent = "✅ 已连接为 " + st.account + "，渠道已保存";
-      OAUTH_SESSION = null;
       setTimeout(()=>{closeModal();refresh();},1200);
       return;
     }
@@ -772,6 +794,35 @@ async function testSaved(type,account){
     // 失败原因可能很长（对方服务器原样抛回来的），所以浮层允许换行且停留更久。
     toast("bad", `${esc(account)} 连不上`, r.error);
   }
+}
+
+// 重新授权一条已保存的 OAuth 连接。
+//
+// 为什么必须有这个入口：授权会失效，而失效的原因不止「到期」—— 刷新令牌
+// 被吊销、用户在对方系统里解除了授权、换了密码，都会让一条已保存的连接
+// 从此不可用，而且没有任何办法从本机把它救回来。没有这个按钮的话，唯一
+// 的出路是删掉连接再重新加一遍，那同时会删掉系统密码管理器里的凭据，并且
+// 把写开关这些设置一起丢掉。
+//
+// settings 要原样带上：授权成功后走的是常规保存路径，不带就等于把写开关
+// 重置成默认值 —— 用户会发现发消息的工具悄悄不见了。
+function reauth(type, account, settings){
+  const d = DESCRIPTORS.find(x=>x.type===type);
+  const values = Object.assign({}, settings||{});
+  values[d.accountField] = account;
+  delete values[d.secretField];
+  $("#modal").innerHTML = `
+    <h3>${ic("Plug","ic-18 ic")} 重新授权</h3>
+    <div class="sub">${esc(d?d.name:type)} · ${esc(account)}</div>
+    <div class="tiny" style="margin-top:12px">
+      会把你送到 ${esc(d&&d.oauth?d.oauth.authHost:"授权服务")} 再确认一次。
+      完成后替换本机保存的令牌，其余设置和权限不变。
+    </div>
+    <div id="oauthpanel" style="margin-top:14px"></div>
+    <div class="foot"><button id="rano">取消</button></div>`;
+  $("#mask").classList.add("show");
+  $("#rano").onclick = closeModal;
+  startOAuth(type, values, account);
 }
 
 // 删除渠道。
@@ -1127,6 +1178,14 @@ function renderDetailSide(v, st){
       </div>
     </section>
 
+    ${d.oauth?`
+    <section class="card">
+      <div class="sec-head"><h2>重新授权</h2></div>
+      <div class="tiny">授权会失效 —— 到期、被吊销、在${esc(d.oauth.authHost)}那边解除了授权，都会让这条连接不可用。
+        重新确认一次即可，不用删掉重建，权限和设置都不变。</div>
+      <button class="block" id="dreauth" style="margin-top:12px">${ic("Plug")}重新授权</button>
+    </section>`:""}
+
     <section class="card">
       <div class="sec-head"><h2>移除连接</h2></div>
       <div class="tiny">仅删除本机连接与凭据，不会删除对方系统里的任何数据。</div>
@@ -1134,6 +1193,7 @@ function renderDetailSide(v, st){
     </section>`;
   $("#dcheck").onclick = () => runCheck(d.type, i.account);
   $("#ddel").onclick = () => del(d.type, i.account);
+  if($("#dreauth")) $("#dreauth").onclick = () => reauth(d.type, i.account, i.settings);
 }
 
 // 没测过时也要把三条列出来，让用户知道会检查什么 —— 稿子上就是「待检查」。

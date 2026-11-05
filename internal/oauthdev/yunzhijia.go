@@ -48,18 +48,53 @@ type yzjDeviceCode struct {
 	Interval   int    `json:"interval"`
 }
 
-// yzjToken 是轮询和刷新响应的 data。失败时 success 为 false，
-// 原因在 errorCode（RFC 8628 的标准串）。
+// yzjToken 是轮询和刷新响应的 data。
+//
+// 两个端点的 data 形状不一样，这件事是实测出来的，而两处差异各自都足以
+// 让刷新彻底失效：
+//
+//	轮询 /cli/pollTokenByDeviceCode
+//	  {success, errorCode, errorDescription, accessToken, refreshToken,
+//	   expiresIn, scope, suggestedInterval}
+//	刷新 /oauth2/token/refreshToken
+//	  {accessToken, refreshToken, expireIn}
 type yzjToken struct {
-	Success          bool   `json:"success"`
+	// Success 只有轮询响应才有 —— 它必须表达「用户还没授权」这种
+	// 「调用成功但授权没完成」的状态。刷新没有这个中间态，所以刷新
+	// 响应里没有这个字段，外层信封的 success 就是全部结论。
+	//
+	// 所以它必须是指针：用 bool 的话「字段不存在」会被读成 false，
+	// 于是每一次刷新都被判成失败，渠道在令牌过期后直接不可用。
+	Success          *bool  `json:"success"`
 	ErrorCode        string `json:"errorCode"`
 	ErrorDescription string `json:"errorDescription"`
 	AccessToken      string `json:"accessToken"`
 	RefreshToken     string `json:"refreshToken"`
 	Scope            string `json:"scope"`
 	ExpiresIn        int    `json:"expiresIn"`
-	// RefreshExpiresIn 实测没见到，留着是因为令牌响应里出现它是常见的。
+	// ExpireIn 是刷新响应里的拼法 —— 没有那个 s。只认 expiresIn 的
+	// 后果不是报错而是静默：刷新到的令牌没有到期时间，Stale 永远为
+	// false，于是它再也不会被刷新，两小时后每次调用都失败。
+	ExpireIn int `json:"expireIn"`
+	// RefreshExpiresIn 两个端点都没返回过，留着是因为令牌响应里出现
+	// 它是常见的。为空意味着刷新令牌不记到期时间，CanRefresh 永远为真。
 	RefreshExpiresIn int `json:"refreshExpiresIn"`
+}
+
+// expiry 返回访问令牌的有效秒数，兼容两个端点的两种拼法。
+func (t yzjToken) expiry() int {
+	if t.ExpiresIn > 0 {
+		return t.ExpiresIn
+	}
+	return t.ExpireIn
+}
+
+// failed 报告这份 data 本身是否表示失败。
+//
+// 只有 success 字段真的存在、而且为 false 才算失败。字段不存在时不作
+// 判断 —— 那是刷新响应的正常形状，这时结论已经由外层信封给过了。
+func (t yzjToken) failed() bool {
+	return t.Success != nil && !*t.Success
 }
 
 func (c Config) startYunzhijia(ctx context.Context, hc *http.Client) (Pending, error) {
@@ -128,7 +163,7 @@ func (c Config) tokenYunzhijia(ctx context.Context, hc *http.Client, endpoint st
 	if err := c.postYunzhijia(ctx, hc, endpoint, body, &got); err != nil {
 		return TokenSet{}, err
 	}
-	if !got.Success {
+	if got.failed() {
 		if got.ErrorCode != "" {
 			return TokenSet{}, describe(got.ErrorCode, got.ErrorDescription)
 		}
@@ -148,8 +183,12 @@ func (c Config) tokenYunzhijia(ctx context.Context, hc *http.Client, endpoint st
 		Scope:        got.Scope,
 		ObtainedAt:   now,
 	}
-	if got.ExpiresIn > 0 {
-		t.ExpiresAt = now.Add(time.Duration(got.ExpiresIn) * time.Second)
+	if secs := got.expiry(); secs > 0 {
+		t.ExpiresAt = now.Add(time.Duration(secs) * time.Second)
+	} else {
+		// 没有到期时间的令牌永远不会被判为该刷新了，所以它一过期渠道就
+		// 死在原地。宁可报错也不要存一份注定会这样坏掉的凭据。
+		return TokenSet{}, fmt.Errorf("授权服务没有返回访问令牌的有效期")
 	}
 	if got.RefreshExpiresIn > 0 {
 		t.RefreshExpiresAt = now.Add(time.Duration(got.RefreshExpiresIn) * time.Second)
