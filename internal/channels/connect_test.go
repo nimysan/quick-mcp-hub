@@ -430,3 +430,97 @@ func TestCancelStopsPolling(t *testing.T) {
 		t.Fatal("取消后会话还查得到")
 	}
 }
+
+// TestAuthInfoFromStoredSecret 守住端给页面的令牌元数据：要够判断状态，
+// 又不能带出任何一个字节的令牌。
+//
+// 「够判断状态」是有具体含义的：访问令牌只有两小时，所以单看 ExpiresAt
+// 会把每一条正常连接都显示成快过期了。真正决定「要不要人来处理」的是
+// CanRefresh —— 有刷新令牌就是程序自己能续，没有才要用户重新授权。
+func TestAuthInfoFromStoredSecret(t *testing.T) {
+	now := time.Date(2026, 11, 5, 10, 0, 0, 0, time.UTC)
+
+	t.Run("手工填的长期令牌没有元数据", func(t *testing.T) {
+		if got := authInfo("ghp_abcdef123456", now); got != nil {
+			t.Errorf("手填令牌不该有到期信息，实际 %+v", got)
+		}
+	})
+
+	t.Run("可自动续期的令牌", func(t *testing.T) {
+		stored := mustMarshalToken(t, oauthdev.TokenSet{
+			Marker:       oauthdev.TokenMarker,
+			AccessToken:  "at",
+			RefreshToken: "rt",
+			ObtainedAt:   now.Add(-30 * time.Minute),
+			ExpiresAt:    now.Add(90 * time.Minute),
+		})
+		a := authInfo(stored, now)
+		if a == nil {
+			t.Fatal("令牌组应该端出元数据")
+		}
+		if !a.CanRefresh || a.Stale {
+			t.Errorf("该是「有效且能自动续期」，实际 %+v", a)
+		}
+		if !a.ExpiresAt.Equal(now.Add(90 * time.Minute)) {
+			t.Errorf("到期时间不对: %v", a.ExpiresAt)
+		}
+	})
+
+	t.Run("过期但有刷新令牌不算故障", func(t *testing.T) {
+		stored := mustMarshalToken(t, oauthdev.TokenSet{
+			Marker:       oauthdev.TokenMarker,
+			AccessToken:  "at",
+			RefreshToken: "rt",
+			ObtainedAt:   now.Add(-3 * time.Hour),
+			ExpiresAt:    now.Add(-time.Hour),
+		})
+		a := authInfo(stored, now)
+		if !a.Stale {
+			t.Error("已过期却没标 Stale")
+		}
+		if !a.CanRefresh {
+			t.Error("有刷新令牌却报告不能续期：页面会说这条连接要重新授权，而它其实会自己好")
+		}
+	})
+
+	t.Run("过期且无刷新令牌才要人处理", func(t *testing.T) {
+		stored := mustMarshalToken(t, oauthdev.TokenSet{
+			Marker:      oauthdev.TokenMarker,
+			AccessToken: "at",
+			ObtainedAt:  now.Add(-3 * time.Hour),
+			ExpiresAt:   now.Add(-time.Hour),
+		})
+		a := authInfo(stored, now)
+		if !a.Stale || a.CanRefresh {
+			t.Errorf("该是「已失效且无法自动续期」，实际 %+v", a)
+		}
+	})
+
+	t.Run("元数据里不含任何令牌", func(t *testing.T) {
+		stored := mustMarshalToken(t, oauthdev.TokenSet{
+			Marker:       oauthdev.TokenMarker,
+			AccessToken:  "secret-access-token",
+			RefreshToken: "secret-refresh-token",
+			ObtainedAt:   now,
+			ExpiresAt:    now.Add(time.Hour),
+		})
+		b, err := json.Marshal(authInfo(stored, now))
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, leak := range []string{"secret-access-token", "secret-refresh-token"} {
+			if strings.Contains(string(b), leak) {
+				t.Fatalf("令牌泄漏到了页面数据里: %s", b)
+			}
+		}
+	})
+}
+
+func mustMarshalToken(t *testing.T, tok oauthdev.TokenSet) string {
+	t.Helper()
+	s, err := tok.Marshal()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return s
+}

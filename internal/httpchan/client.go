@@ -58,7 +58,7 @@ func (r Runtime) bearer(ctx context.Context, hc *http.Client, secret string) (st
 		return tok.AccessToken, nil
 	}
 	if !tok.CanRefresh(time.Now()) {
-		return "", fmt.Errorf("%s 的授权已过期且没有可用的刷新令牌，请到页面上重新点「连接」", r.Spec.Name)
+		return "", fmt.Errorf("%s 的授权已过期且没有可用的刷新令牌，请到页面上点这条连接的「重新授权」", r.Spec.Name)
 	}
 	cfg, err := r.Spec.OAuthConfig(r.Settings)
 	if err != nil {
@@ -66,7 +66,7 @@ func (r Runtime) bearer(ctx context.Context, hc *http.Client, secret string) (st
 	}
 	fresh, err := cfg.Refresh(ctx, hc, tok.RefreshToken)
 	if err != nil {
-		return "", fmt.Errorf("刷新 %s 的授权失败（请重新点「连接」）: %w", r.Spec.Name, err)
+		return "", fmt.Errorf("刷新 %s 的授权失败（请到页面上点这条连接的「重新授权」）: %w", r.Spec.Name, err)
 	}
 	if r.SaveSecret != nil {
 		stored, err := fresh.Marshal()
@@ -77,7 +77,7 @@ func (r Runtime) bearer(ctx context.Context, hc *http.Client, secret string) (st
 			// 这个必须是致命的，不能只记一笔然后继续：很多提供方刷新时会
 			// 轮换 refresh_token，存不下来就意味着库里那个已经作废了 ——
 			// 继续跑下去会变成「这次好了，之后全坏」，而且查不出原因。
-			return "", fmt.Errorf("刷新到了新令牌但写回密码管理器失败（旧的刷新令牌可能已作废，请重新点「连接」）: %w", err)
+			return "", fmt.Errorf("刷新到了新令牌但写回密码管理器失败（旧的刷新令牌可能已作废，请到页面上点这条连接的「重新授权」）: %w", err)
 		}
 	}
 	return fresh.AccessToken, nil

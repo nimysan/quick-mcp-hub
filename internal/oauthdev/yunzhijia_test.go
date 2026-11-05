@@ -99,8 +99,14 @@ func newYZJAuthMock(t *testing.T) *yzjAuthMock {
 			fail(w, "timestamp不能为空")
 			return
 		}
+		// 这就是 www.yunzhijia.com 实测回的形状，逐字对齐，而且它和轮询
+		// 的 data 不一样：没有嵌套的 success，到期字段叫 expireIn（没有 s）。
+		//
+		// 这个 handler 原来是按轮询的形状写的（带 success、写 expiresIn），
+		// 于是它和当时那份错的代码互相印证，测试全绿而线上每次刷新都失败。
+		// 仿真网关照着真实响应写，是这类 bug 唯一能被测出来的前提。
 		envelope(w, map[string]any{
-			"success": true, "accessToken": "at-2", "refreshToken": "rt-2", "expiresIn": 5983,
+			"accessToken": "at-2", "refreshToken": "rt-2", "expireIn": 7200,
 		})
 	})
 
@@ -231,6 +237,65 @@ func TestYunzhijiaRefreshUsesOwnEndpoint(t *testing.T) {
 	}
 	if _, ok := m.lastBody()["timestamp"]; !ok {
 		t.Errorf("刷新没带 timestamp（云之家会拒）: %v", m.lastBody())
+	}
+}
+
+// 刷新响应的 data 和轮询的不一样，而两处差异各自都会让「令牌过期后渠道
+// 直接不可用」—— 这个用例守的就是这两处。
+//
+//   - data 里没有 success：曾经被当成「失败且没说原因」，于是每一次刷新
+//     都失败。外层信封的 success 已经是结论了，这里不该再要一个。
+//   - 到期字段叫 expireIn（没有 s）：读不到就等于存了一份永不过期的令牌，
+//     Stale 永远为 false，它再也不会被刷新，两小时后每次调用都失败 ——
+//     而且这条没有任何报错，是静默坏掉。
+func TestYunzhijiaRefreshResponseShape(t *testing.T) {
+	m := newYZJAuthMock(t)
+	tok, err := m.config().Refresh(context.Background(), m.srv.Client(), "rt-1")
+	if err != nil {
+		t.Fatalf("刷新响应的 data 没有 success 字段，这是真实形状，不该判成失败: %v", err)
+	}
+	if tok.RefreshToken != "rt-2" {
+		t.Errorf("没存下轮换后的刷新令牌: %+v", tok)
+	}
+	if tok.ExpiresAt.IsZero() {
+		t.Fatal("expireIn 没有换成 ExpiresAt：令牌会被当成永不过期，从此不再刷新")
+	}
+	if got := time.Until(tok.ExpiresAt).Round(time.Minute); got != 120*time.Minute {
+		t.Errorf("有效期算错了，期望 120 分钟，实际 %v", got)
+	}
+	if tok.Stale(time.Now()) {
+		t.Error("刚刷新到的令牌不该立刻又被判为该刷新")
+	}
+}
+
+// 不带有效期的令牌要当场报错，不能存下来。
+//
+// 存下来的后果是它一过期渠道就死在原地：Stale 永远为 false，所以不会触发
+// 刷新，用户看到的是业务接口的原始报错，和「授权过期」对不上。
+func TestYunzhijiaTokenWithoutExpiryRefused(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/oauth2/token/refreshToken", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"success":   true,
+			"errorCode": 0,
+			"data":      map[string]any{"accessToken": "at-x", "refreshToken": "rt-x"},
+		})
+	})
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+
+	c := Config{
+		ClientID:   "cli_test",
+		Dialect:    DialectYunzhijia,
+		RefreshURL: srv.URL + "/oauth2/token/refreshToken",
+	}
+	_, err := c.Refresh(context.Background(), srv.Client(), "rt-1")
+	if err == nil {
+		t.Fatal("没有有效期的令牌应该被拒绝，否则它会在过期后静默坏掉")
+	}
+	if !strings.Contains(err.Error(), "有效期") {
+		t.Errorf("报错要说清缺的是有效期，实际 %v", err)
 	}
 }
 

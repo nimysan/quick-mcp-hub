@@ -404,3 +404,141 @@ func TestSpriteHasNoAnonymousSymbol(t *testing.T) {
 			"IconSprite 必须跳过 tokens.json 里键名为空的条目")
 	}
 }
+
+// TestOAuthChannelCanBeReauthorized 守住「已保存的 OAuth 连接能重新授权」。
+//
+// 真实故障：授权块的渲染条件写的是 `d.oauth && !account`，也就是只在**新建**
+// 时出现。于是一条已保存的连接授权失效之后（到期、被吊销、对方系统里解除了
+// 授权），页面上没有任何地方能重新授权 —— 留在编辑表单里的只有一个令牌
+// 输入框，而设备流的令牌是一整段 JSON，用户填不出来。唯一的出路是删掉重建，
+// 那会连带删掉系统密码管理器里的凭据，并把写开关这些设置一起丢掉。
+//
+// 这类故障是静默的：页面不报错，只是少了一个按钮。
+func TestOAuthChannelCanBeReauthorized(t *testing.T) {
+	page := readIndex(t)
+
+	// 渲染条件不能再把已保存的实例排除掉。
+	if strings.Contains(page, "(d.oauth && !account)") {
+		t.Error("授权块又变成只在新建时渲染了：已保存的连接将无法重新授权，" +
+			"而编辑表单里那个令牌字段是设备流令牌，用户填不出来")
+	}
+	// 详情页要有入口 —— 连接坏掉时用户看的是那一页（测试连接在那里）。
+	if !strings.Contains(page, `id="dreauth"`) {
+		t.Error("详情页缺少「重新授权」按钮：那是连接失效时用户会去的页面")
+	}
+	if !strings.Contains(page, "function reauth(") {
+		t.Error("缺少 reauth()：详情页的重新授权按钮会点了没反应")
+	}
+
+	// 重新授权必须带上已保存的设置。授权成功后走的是常规保存路径，不带
+	// 就等于把写开关重置成默认值 —— 用户会发现发消息的工具悄悄不见了。
+	if !strings.Contains(page, "reauth(d.type, i.account, i.settings)") {
+		t.Error("重新授权没有带上 i.settings：写开关等设置会被重置成默认值")
+	}
+	// 授权回来的若是另一个账号，那是新建而不是修复，必须当场说清楚：
+	// 凭据按账号名定位，旧那条会原封不动留着，而它仍然是坏的。
+	if !strings.Contains(page, "st.account !== expectAccount") {
+		t.Error("没有比对授权回来的账号：换账号授权会新建一条连接，" +
+			"而用户以为修好了，实际在用的还是坏的那条")
+	}
+}
+
+// TestPageReadsRealViewFields 把页面读的 v.* 和 channels.View 真有的字段对起来。
+//
+// 和 TestPageOnlyReadsRealFields 同一类防护，只是那条守 d.*（Descriptor）。
+// 授权状态是从 v.auth 读的，而它整条链上的字段名（expiresAt、canRefresh、
+// stale）写错任何一个都不会报错：JS 读不存在的字段得到 undefined，于是
+// 「授权已失效」这个判断永远为假 —— 页面一直显示「有效」，而连接早就坏了。
+func TestPageReadsRealViewFields(t *testing.T) {
+	page := readIndex(t)
+	js := codeOnly(page)
+
+	allowed := jsonFieldsOf(channels.View{})
+	re := regexp.MustCompile(`\bv\.([a-zA-Z]\w*)`)
+	for _, m := range re.FindAllStringSubmatch(js, -1) {
+		if !allowed[m[1]] {
+			t.Errorf("页面读 v.%s，但 channels.View 没有这个 json 字段", m[1])
+		}
+	}
+
+	// 令牌元数据的字段名单独核一遍：它们只在这两个函数里用，而 a 这个变量名
+	// 在页面别处指别的东西（DOM 节点、napcat 探测结果），不能一刀切地扫。
+	authFields := jsonFieldsOf(channels.AuthInfo{})
+	for _, fn := range []string{"function authPill(", "function authDetail("} {
+		i := strings.Index(js, fn)
+		if i < 0 {
+			t.Fatalf("页面里没有 %s —— 授权状态不会显示", fn)
+		}
+		body := js[i:]
+		if j := strings.Index(body[1:], "\nfunction "); j > 0 {
+			body = body[:j]
+		}
+		for _, m := range regexp.MustCompile(`\ba\.([a-zA-Z]\w*)`).FindAllStringSubmatch(body, -1) {
+			if !authFields[m[1]] {
+				t.Errorf("%s 里读 a.%s，但 channels.AuthInfo 没有这个 json 字段 —— "+
+					"读错字段得到 undefined，授权状态会一直显示成有效", fn, m[1])
+			}
+		}
+	}
+}
+
+// TestAuthExpiryIsNeverShownBare 守住一条表述要求，不是一条机制。
+//
+// 访问令牌本来就只有两小时，而它到期时程序自己会换一张。所以「剩余 1 小时
+// 52 分钟」这个数字单独摆出来会让用户得出错误结论 —— 以为每两小时要重新
+// 授权一次。凡是显示这个数字的分支，都必须同时说清会不会自动续期。
+func TestAuthExpiryIsNeverShownBare(t *testing.T) {
+	js := codeOnly(readIndex(t))
+	i := strings.Index(js, "function authDetail(")
+	if i < 0 {
+		t.Fatal("页面里没有 authDetail()")
+	}
+	body := js[i:]
+	if j := strings.Index(body[1:], "\nfunction "); j > 0 {
+		body = body[:j]
+	}
+	if !strings.Contains(body, "canRefresh") {
+		t.Error("authDetail 没有按 canRefresh 分支：剩余时间会被当成「还要多久重新授权」")
+	}
+	// 这条断言要盯住「显示剩余时间的那一支」，不是整个函数里随便哪处提到了
+	// 续期 —— 过期那一支本来也会提，拿它顶替会让这条检查形同虚设。
+	// 这是一条文案要求，所以直接钉住三种状态各自必须出现的那句话。
+	//
+	// 试过按行、按 return 语句、按出现位置开窗口三种更「聪明」的写法，三种
+	// 都能被骗过去：这段文案一处在 return 的模板字符串里、一处在 const 的
+	// 三元表达式里，而三元的两个分支彼此相邻，窗口会把隔壁那支的说明算成
+	// 自己的。改写文案时这条会红，那时请连着上面这段说明一起读。
+	for _, want := range []string{
+		"到期前程序会自动续期",         // 能自动续期、还没过期：剩余时间必须配上这句
+		"下次调用时程序会自动续期",       // 能自动续期、已经过期：这不是故障
+		"没有刷新令牌，所以到期后不会自动续期", // 到期后真的要人来处理
+		"到期时不会自动续期",          // 旧令牌没记到期时间：同样要人处理
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("authDetail 里缺少「%s」—— 剩余有效期只有连着"+
+				"「到期后会怎样」一起说才有意义，裸着给数字会让用户"+
+				"以为每两小时都要重新授权一次", want)
+		}
+	}
+	if !strings.Contains(body, "访问令牌还有") {
+		t.Error("authDetail 不显示剩余有效期了")
+	}
+
+	// 没有到期时间的旧令牌必须单独说。它不会被判为该刷新，所以一过期就死在
+	// 原地，而页面若按「有效」显示，用户不会知道它随时会坏。
+	if !strings.Contains(body, "没有记到期时间") {
+		t.Error("没有处理「令牌没有到期时间」这种旧数据：页面会显示有效，而它一过期就不可用")
+	}
+}
+
+// codeOnly 去掉注释行 —— 注释里会提到字段名，不该算进字段检查。
+func codeOnly(page string) string {
+	js := page[strings.Index(page, "<script>"):]
+	var code []string
+	for _, line := range strings.Split(js, "\n") {
+		if s := strings.TrimSpace(line); !strings.HasPrefix(s, "//") {
+			code = append(code, line)
+		}
+	}
+	return strings.Join(code, "\n")
+}
