@@ -231,7 +231,14 @@ function renderMine(){
     return `<tr>
       <td><div class="ch"><span class="ico">${ic(iconOf(d.type),"ic-16 ic")}</span>
         <div><div class="nm">${esc(d.name)}</div><div class="ac">${esc(i.account)}</div></div></div></td>
-      <td><span class="pill ok">已配置</span></td>
+      <td>${(()=>{
+        // 授权已经死了就在列表上说出来。不然用户要点进详情页、再点一次
+        // 测试连接才知道，而在那之前它表现为模型那边「工具调用失败」。
+        const a = v.auth;
+        if(a && !a.canRefresh && (a.stale || !a.expiresAt))
+          return `<span class="pill warn" title="访问令牌已过期且无法自动续期">授权已失效</span>`;
+        return `<span class="pill ok">已配置</span>`;
+      })()}</td>
       <td style="color:var(--text-secondary)">${write?"可写":"只读"}</td>
       <td>
         <button class="ghost" data-test="${esc(d.type)}|${esc(i.account)}">测试</button>
@@ -369,6 +376,73 @@ function initTheme(){
     };
   });
   marks();
+}
+
+// left 把一个未来时刻说成「还有多久」。已经过去的返回空串 —— 调用方据此
+// 走「已过期」那一支，而不是显示一个负数。
+function left(iso){
+  const t = Date.parse(iso);
+  if(isNaN(t)) return "";
+  const s = (t - Date.now())/1000;
+  if(s <= 0) return "";
+  if(s < 90) return "不到 2 分钟";
+  if(s < 3600) return Math.round(s/60)+" 分钟";
+  const h = Math.floor(s/3600), m = Math.round((s%3600)/60);
+  if(h < 24) return m ? `${h} 小时 ${m} 分钟` : `${h} 小时`;
+  return Math.round(s/86400)+" 天";
+}
+
+// authPill / authDetail 把令牌状态说成人话。
+//
+// 这里刻意不单独摆「剩余 1 小时 52 分钟」这个数字：访问令牌本来就只有两小时，
+// 而它到期时程序自己会换一张。只给数字的后果是用户以为每两小时要重新授权
+// 一次 —— 一个会让人得出错误结论的真数字，比不显示更糟。所以凡是出现这个
+// 数字的地方，都连着「会不会自动续期」一起说。
+// 这里刻意不说「有效」：本机只知道「有一个刷新令牌」，不知道它还被对方认不认
+// （被吊销、在对方系统里解除授权，本机都看不出来）。说「可自动续期」是我们
+// 真的知道的那件事；要知道现在是否真能用，只有点「测试连接」。
+function authPill(a){
+  if(!a) return `<span class="pill">长期令牌</span>`;
+  if(a.canRefresh) return `<span class="pill ok">可自动续期</span>`;
+  if(a.stale || !a.expiresAt) return `<span class="pill warn">需重新授权</span>`;
+  return `<span class="pill ok">有效</span>`;
+}
+
+function authDetail(a, d){
+  // 没有令牌组＝凭据是手工填进来的长期令牌，它本身不带到期信息。
+  if(!a) return `<div class="tiny">这条连接用的是手工填写的令牌，没有到期信息。
+    它失效时只会表现为调用失败。</div>`;
+
+  // 刷新时 obtainedAt 会重置，所以它既可能是首次授权、也可能是上次续期的
+  // 时刻。写「最后一次续期」对一张从没刷新过的令牌是错的，所以两种都说。
+  const renewed = a.obtainedAt ? `<div class="kv"><span class="k">上次授权或续期</span>
+    <span class="v">${ago(a.obtainedAt)}</span></div>` : "";
+  const host = d && d.oauth ? esc(d.oauth.authHost) : "授权服务";
+
+  // 旧版本存下的令牌可能没有记到期时间。那种令牌不会被判为该刷新，所以它
+  // 一过期就死在原地 —— 这件事必须说出来，否则页面显示「有效」而它随时会坏。
+  if(!a.expiresAt){
+    return `<div class="tiny">这份令牌没有记到期时间（旧版本存下的），
+      所以到期时不会自动续期，而是直接调用失败。建议现在重新授权一次。</div>${renewed}`;
+  }
+
+  const rest = left(a.expiresAt);
+  if(a.canRefresh){
+    const now = rest
+      ? `访问令牌还有 <b>${rest}</b>，到期前程序会自动续期，不用你管。`
+      : `访问令牌已过期，下次调用时程序会自动续期。`;
+    return `<div class="tiny">${now}
+      换不成（刷新令牌被吊销、在${host}那边解除了授权）才需要你重新授权，
+      而这件事本机看不出来 —— 要确认现在真的可用，点上面的「测试连接」。</div>
+      <div class="kv"><span class="k">当前令牌到期</span>
+        <span class="v">${rest?esc(rest)+"后":"已到期"}</span></div>${renewed}`;
+  }
+  if(!rest){
+    return `<div class="tiny">访问令牌已过期，而且没有可用的刷新令牌 ——
+      这条连接现在不可用，必须重新授权。</div>${renewed}`;
+  }
+  return `<div class="tiny">访问令牌还有 <b>${esc(rest)}</b>。
+    这份凭据没有刷新令牌，所以到期后不会自动续期，需要你重新授权一次。</div>${renewed}`;
 }
 
 function ago(iso){
@@ -1180,9 +1254,8 @@ function renderDetailSide(v, st){
 
     ${d.oauth?`
     <section class="card">
-      <div class="sec-head"><h2>重新授权</h2></div>
-      <div class="tiny">授权会失效 —— 到期、被吊销、在${esc(d.oauth.authHost)}那边解除了授权，都会让这条连接不可用。
-        重新确认一次即可，不用删掉重建，权限和设置都不变。</div>
+      <div class="sec-head"><h2>授权状态</h2>${authPill(v.auth)}</div>
+      ${authDetail(v.auth, d)}
       <button class="block" id="dreauth" style="margin-top:12px">${ic("Plug")}重新授权</button>
     </section>`:""}
 

@@ -12,6 +12,7 @@ import (
 	"github.com/nimysan/mcp-hub/internal/httpchan"
 	"github.com/nimysan/mcp-hub/internal/mailbox"
 	"github.com/nimysan/mcp-hub/internal/mailprovider"
+	"github.com/nimysan/mcp-hub/internal/oauthdev"
 	"github.com/nimysan/mcp-hub/internal/wasmplug"
 )
 
@@ -43,6 +44,41 @@ type View struct {
 	Descriptor Descriptor `json:"descriptor"`
 	Instance   Instance   `json:"instance"`
 	HasSecret  bool       `json:"hasSecret"`
+	// Auth 只在凭据是设备流令牌组时出现，手工填的长期令牌没有这些信息。
+	Auth *AuthInfo `json:"auth,omitempty"`
+}
+
+// AuthInfo 是一份 OAuth 令牌组的非凭据元数据。
+//
+// 这里一个字节的令牌都不出现 —— 页面只需要知道「还能用多久」「会不会自己
+// 续期」，而令牌本身到了前端就等于到了任何能读这个页面的东西手上。
+type AuthInfo struct {
+	// ObtainedAt 是最后一次授权或续期的时间。刷新时会重置，所以它回答的
+	// 是「上一次换令牌是什么时候」，不是「什么时候连上的」。
+	ObtainedAt time.Time `json:"obtainedAt,omitempty"`
+	// ExpiresAt 是当前访问令牌的到期时间。它通常只有两小时 —— 这个数字
+	// 单独摆出来会让人以为要隔两小时重新授权一次，所以页面必须连着
+	// CanRefresh 一起说。
+	ExpiresAt time.Time `json:"expiresAt,omitempty"`
+	// CanRefresh 为真表示有可用的刷新令牌，访问令牌到期时程序自己会换一张。
+	CanRefresh bool `json:"canRefresh"`
+	// Stale 为真表示当前访问令牌已经该换了（到期前 60 秒就算）。
+	// CanRefresh 也为真时这不是故障，只是「下次调用时会先续一下」。
+	Stale bool `json:"stale"`
+}
+
+// authInfo 从已存的凭据里取出令牌元数据。不是令牌组就返回 nil。
+func authInfo(secret string, now time.Time) *AuthInfo {
+	tok, ok := oauthdev.Parse(secret)
+	if !ok {
+		return nil
+	}
+	return &AuthInfo{
+		ObtainedAt: tok.ObtainedAt,
+		ExpiresAt:  tok.ExpiresAt,
+		CanRefresh: tok.CanRefresh(now),
+		Stale:      tok.Stale(now),
+	}
 }
 
 // List 把已配置的实例和它们的描述符拼在一起返回。
@@ -58,8 +94,13 @@ func (m *Manager) List() ([]View, error) {
 			continue // 配置里有，但这个版本已不认识的类型，跳过
 		}
 		sec := m.creds.Secret(credstore.Ref{Integration: d.Integration, Account: in.Account})
-		_, secErr := sec.Value()
-		out = append(out, View{Descriptor: d, Instance: in, HasSecret: secErr == nil})
+		raw, secErr := sec.Value()
+		v := View{Descriptor: d, Instance: in, HasSecret: secErr == nil}
+		if secErr == nil {
+			// 凭据本来就要读出来才能算 hasSecret，所以这里不多一次钥匙串访问。
+			v.Auth = authInfo(raw, time.Now())
+		}
+		out = append(out, v)
 	}
 	return out, nil
 }
