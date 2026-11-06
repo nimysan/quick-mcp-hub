@@ -360,13 +360,26 @@ func runUI(mgr *channels.Manager, logPath string, port int, noBrowser bool) int 
 	}()
 
 	openPage := func() { webui.OpenInBrowser(pageURL.Load().(string)) }
+	// 退出要退干净：先关掉配置页面窗口，再停服务。
+	//
+	// 两件事有先后：那个窗口属于浏览器进程，不属于我们，所以必须在服务还活着
+	// 的时候让它正常关掉（WM_CLOSE，等价于用户点 X）。顺序反了就只是把一个
+	// 刷新即报错的死窗口留在屏幕上 —— 用户看到的是「托盘点了退出，配置页面
+	// 还开着，任务栏图标也还在」。
+	//
+	// 关闭窗口（点 X）仍然只是收起页面，程序留在托盘里 —— 这是 Windows 上
+	// 的常规形态，也是托盘图标存在的意义：它就是「程序还在」的那个信号。
+	quit := func() {
+		webui.CloseWindow()
+		stop()
+	}
 	err := tray.Run(tray.Options{
 		Icon:    assets.Icon,
 		Tooltip: "mcp-hub · 渠道配置",
 		OnOpen:  openPage,
 		OnLog:   func() { webui.OpenInBrowser(pageURL.Load().(string) + "/api/log") },
 		ShowLog: logPath != "",
-		OnQuit:  stop,
+		OnQuit:  quit,
 	})
 	if errors.Is(err, tray.ErrUnsupported) {
 		// 没有托盘的平台退回原来的行为：等服务结束或收到退出信号。

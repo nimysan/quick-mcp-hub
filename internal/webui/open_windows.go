@@ -27,11 +27,13 @@ var (
 	procShowWindow          = user32.NewProc("ShowWindow")
 	procSetForegroundWindow = user32.NewProc("SetForegroundWindow")
 	procBringWindowToTop    = user32.NewProc("BringWindowToTop")
+	procPostMessageW        = user32.NewProc("PostMessageW")
 )
 
 const (
 	swShow    = 5
 	swRestore = 9
+	wmClose   = 0x0010
 )
 
 var (
@@ -65,37 +67,84 @@ func onWindow(hwnd uintptr, _ uintptr) uintptr {
 	return 0
 }
 
-func focusConfigWindow(title string) bool {
-	for _, p := range []*windows.LazyProc{
-		procEnumWindows, procGetWindowTextW, procIsWindowVisible,
-		procIsIconic, procShowWindow,
-	} {
+// findWindowLocked 找那个标题的可见窗口，找不到返回 0。调用方必须持有 focusMu。
+func findWindowLocked(title string) uintptr {
+	wantTitle, foundHWND = title, 0
+	enumOnce.Do(func() { enumCB = windows.NewCallback(onWindow) })
+	// EnumWindows 在回调返回 0 时回 FALSE，所以返回值不看，只看 foundHWND。
+	_, _, _ = procEnumWindows.Call(enumCB, 0)
+	return foundHWND
+}
+
+// procsReady 确认用到的 user32 入口都能解析。解析不了就当这台机器没有这个
+// 能力，退回调用方的原路径，而不是让 syscall 去崩。
+func procsReady(procs ...*windows.LazyProc) bool {
+	for _, p := range procs {
 		if p.Find() != nil {
 			return false
 		}
+	}
+	return true
+}
+
+func focusConfigWindow(title string) bool {
+	if !procsReady(procEnumWindows, procGetWindowTextW, procIsWindowVisible,
+		procIsIconic, procShowWindow) {
+		return false
 	}
 
 	focusMu.Lock()
 	defer focusMu.Unlock()
 
-	wantTitle, foundHWND = title, 0
-	enumOnce.Do(func() { enumCB = windows.NewCallback(onWindow) })
-	// EnumWindows 在回调返回 0 时回 FALSE，所以返回值不看，只看 foundHWND。
-	_, _, _ = procEnumWindows.Call(enumCB, 0)
-	if foundHWND == 0 {
+	hwnd := findWindowLocked(title)
+	if hwnd == 0 {
 		return false
 	}
 
-	if iconic, _, _ := procIsIconic.Call(foundHWND); iconic != 0 {
-		_, _, _ = procShowWindow.Call(foundHWND, swRestore)
+	if iconic, _, _ := procIsIconic.Call(hwnd); iconic != 0 {
+		_, _, _ = procShowWindow.Call(hwnd, swRestore)
 	} else {
-		_, _, _ = procShowWindow.Call(foundHWND, swShow)
+		_, _, _ = procShowWindow.Call(hwnd, swShow)
 	}
 	// SetForegroundWindow 对一个不在前台的进程常常被系统拒绝（前台锁），
 	// 所以它失败不算失败：窗口此时已经从最小化还原、重新可见，用户要的那件事
 	// 已经成了。BringWindowToTop 再尽力抬一次，成不成都不改变结论。
-	if ok, _, _ := procSetForegroundWindow.Call(foundHWND); ok == 0 {
-		_, _, _ = procBringWindowToTop.Call(foundHWND)
+	if ok, _, _ := procSetForegroundWindow.Call(hwnd); ok == 0 {
+		_, _, _ = procBringWindowToTop.Call(hwnd)
 	}
 	return true
+}
+
+// closeConfigWindow 关掉那个配置页面窗口，关掉了返回 true。
+//
+// 托盘选「退出 mcp-hub」时用：那个窗口属于**浏览器进程**，不属于我们，
+// 所以我们退出之后它会留在屏幕上 —— 而服务已经停了，它变成一个刷新就报
+// 「无法访问此网站」的死窗口，任务栏上那个图标也还在（应用模式窗口拿页面
+// favicon 当图标，看着就是 mcp-hub 没退）。这是用户反馈「托盘点了退出，
+// 配置页面还开着」的根因。
+//
+// 更难察觉的后果是死窗口的标题和活窗口一模一样：下次启动后托盘点「打开
+// 配置页面」会按标题找到那个死的，于是「打开了但打不开」。
+//
+// 用 PostMessage 而不是 SendMessage：目标是另一个进程，SendMessage 会一直
+// 等它处理完，而这是退出路径，不能卡在别人的消息循环上。WM_CLOSE 等价于
+// 用户自己点 X —— 浏览器正常关掉这一个窗口，不动它别的窗口，也不杀进程。
+//
+// 找不到窗口返回 false，这不是错误：用户可能已经自己关了，或者当时走的是
+// 默认浏览器的普通标签页那条退路（标题带「 - Google Chrome」后缀，全等匹配
+// 不上）—— 后者尤其不能关，那是用户自己的浏览器窗口。
+func closeConfigWindow(title string) bool {
+	if !procsReady(procEnumWindows, procGetWindowTextW, procIsWindowVisible, procPostMessageW) {
+		return false
+	}
+
+	focusMu.Lock()
+	defer focusMu.Unlock()
+
+	hwnd := findWindowLocked(title)
+	if hwnd == 0 {
+		return false
+	}
+	ok, _, _ := procPostMessageW.Call(hwnd, wmClose, 0, 0)
+	return ok != 0
 }
