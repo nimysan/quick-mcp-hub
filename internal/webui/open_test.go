@@ -217,9 +217,38 @@ func TestOpenInBrowserFallsBackWhenNoWindow(t *testing.T) {
 	}
 }
 
+// TestCloseWindowUsesPageTitle 钉住退出路径：必须按 pageTitle 点名窗口。
+//
+// 标题漂了不会报错，只会让「退出」又变成把一个死窗口留在屏幕上 —— 服务停了、
+// 刷新报「无法访问此网站」、任务栏图标还在，正是用户反馈的那个现象。
+func TestCloseWindowUsesPageTitle(t *testing.T) {
+	var closedWith []string
+	orig := closeWindow
+	closeWindow = func(title string) bool { closedWith = append(closedWith, title); return true }
+	t.Cleanup(func() { closeWindow = orig })
+
+	CloseWindow()
+	if len(closedWith) != 1 || closedWith[0] != pageTitle {
+		t.Fatalf("关窗口用的标题不对: %v（期望 %q）", closedWith, pageTitle)
+	}
+}
+
+// TestCloseWindowQuietWhenNoWindow：关不掉不是错误，更不能 panic。
+//
+// 两种常见情形都会走到这里，而且第二种绝不能去关：用户已经自己关了窗口；
+// 当时走的是默认浏览器的普通标签页那条退路 —— 那是用户自己的浏览器窗口。
+// 非 Windows 平台上 closeConfigWindow 永远返回 false，也是这条。
+func TestCloseWindowQuietWhenNoWindow(t *testing.T) {
+	orig := closeWindow
+	closeWindow = func(string) bool { return false }
+	t.Cleanup(func() { closeWindow = orig })
+
+	CloseWindow() // 不 panic 就算过
+}
+
 // TestPageTitleMatchesHTML：应用模式下窗口标题就是 document.title，所以
 // pageTitle 是我们在系统里认出自己那个窗口的唯一依据。两处漂移不会报错，
-// 只会让「再打开」悄悄退化成每次新开一个窗口。
+// 只会让「再打开」悄悄退化成每次新开一个窗口，「退出」也关不掉它。
 func TestPageTitleMatchesHTML(t *testing.T) {
 	b, err := assetsFS.ReadFile("index.html")
 	if err != nil {

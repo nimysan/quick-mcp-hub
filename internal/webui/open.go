@@ -137,6 +137,23 @@ func isPageURL(raw string) bool {
 // 平台实现见 open_windows.go / open_other.go。抽成变量是为了测试能替换。
 var focusWindow = focusConfigWindow
 
+// closeWindow 关掉配置页面窗口。同样抽成变量供测试替换。
+var closeWindow = closeConfigWindow
+
+// CloseWindow 在退出时关掉配置页面窗口。
+//
+// 托盘选「退出 mcp-hub」必须经过这里，否则退的只是我们自己：那个窗口属于
+// 浏览器进程，会留在屏幕上，而服务已经停了 —— 刷新就是「无法访问此网站」，
+// 任务栏图标也还在，看着就是没退干净。
+//
+// 关不掉不是错误（用户可能已经自己关了，或者当时是普通浏览器标签页，那更
+// 不能去关），所以这里不返回失败，只记一行日志说明发生了什么。
+func CloseWindow() {
+	if closeWindow(pageTitle) {
+		log.Printf("已关闭配置页面窗口：%s", pageTitle)
+	}
+}
+
 // openNew 真的起一个浏览器进程。抽成变量是为了测试这里的分流不用去拉起进程。
 var openNew = spawnBrowser
 
