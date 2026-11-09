@@ -74,6 +74,11 @@ for t in "${targets[@]}"; do
   GOOS="$goos" GOARCH="$goarch" go build -trimpath -ldflags="$ldflags" -o "$dir/$exe" .
   cp "packaging/快速开始.md" "$dir/快速开始.md"
 
+  # 许可与归属声明随包分发。LICENSE 是 Apache-2.0 全文；THIRD-PARTY-NOTICES.md
+  # 和 NOTICE 承载 Apache-2.0 第 4(d) 条要求的第三方归属声明（内含的 wazero
+  # 带 NOTICE 文件）。少了它们，分发本身就不合规。
+  cp LICENSE NOTICE THIRD-PARTY-NOTICES.md "$dir/"
+
   for p in $PLUGINS; do
     mkdir -p "$dir/plugins/$p"
     cp "plugins/dist/$p/manifest.json" "plugins/dist/$p/$p.wasm" "$dir/plugins/$p/"

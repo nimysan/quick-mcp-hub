@@ -1,0 +1,15 @@
+mcp-hub
+Copyright 2026 mcp-hub authors
+
+本产品依据 Apache License, Version 2.0 发布（见同目录 LICENSE）。
+This product is licensed under the Apache License, Version 2.0 (see LICENSE).
+
+本产品内含以下第三方开源组件，其版权声明与许可条款见 THIRD-PARTY-NOTICES.md。
+This product bundles third-party open source components; their copyright
+notices and license terms are listed in THIRD-PARTY-NOTICES.md.
+
+其中 Apache-2.0 组件要求随分发附带的声明：
+Attribution notices required by bundled Apache-2.0 components:
+
+    wazero
+    Copyright 2020-2023 wazero authors

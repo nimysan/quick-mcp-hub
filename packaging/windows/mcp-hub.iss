@@ -51,6 +51,16 @@ AppMutex=MCPHubSetupMutex
 ; 见 git 历史里的讨论）：一句话能说清的事不值得引入那套复杂度。
 InfoBeforeFile=安装前须知.txt
 
+; 许可与免责声明：这一页用户必须选「我同意」才能继续，这是免责条款真正
+; 到达使用者的地方 —— 仓库里的 LICENSE 使用者永远不会看到。
+;
+; 内容是中文摘要 + 指向程序目录下的 LICENSE（Apache-2.0 全文是英文，
+; 直接摆给财务和运营看等于没看）。
+;
+; 和 InfoBeforeFile 同理，.txt 必须带 UTF-8 BOM：Inno Setup 6.3 之前没有
+; BOM 的 .txt 按系统 ANSI 代码页解读，中文会变乱码。
+LicenseFile=许可与免责声明.txt
+
 ; 装到用户目录：不需要管理员权限。
 PrivilegesRequired=lowest
 PrivilegesRequiredOverridesAllowed=dialog
@@ -91,6 +101,12 @@ Name: "desktopicon"; Description: "{cm:DesktopIcon}"; GroupDescription: "{cm:Add
 [Files]
 Source: "{#SourceDir}\mcp-hub.exe"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#SourceDir}\快速开始.md"; DestDir: "{app}"; Flags: ignoreversion isreadme
+; 许可与归属声明必须随程序安装：Apache-2.0 第 4(a)(d) 条要求分发时附带许可证
+; 副本和第三方归属声明（内含的 wazero 带 NOTICE）。装到程序目录而不是只放在
+; 仓库里，使用者才真的拿到了它们。
+Source: "{#SourceDir}\LICENSE"; DestDir: "{app}"; Flags: ignoreversion
+Source: "{#SourceDir}\NOTICE"; DestDir: "{app}"; Flags: ignoreversion
+Source: "{#SourceDir}\THIRD-PARTY-NOTICES.md"; DestDir: "{app}"; Flags: ignoreversion
 
 [Icons]
 Name: "{group}\MCP Hub"; Filename: "{app}\mcp-hub.exe"
