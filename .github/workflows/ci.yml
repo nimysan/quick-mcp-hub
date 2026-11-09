@@ -146,6 +146,10 @@ jobs:
           # zip 里是 mcp-hub-<版本>-windows-amd64/ 这一层目录
           cp unpacked/*/mcp-hub.exe stage/
           cp unpacked/*/快速开始.md stage/
+          # 许可与归属声明：从 zip 里取，而不是从 checkout 里取 —— 这样
+          # 安装包装进去的和 zip 里分发的是同一份文件。缺了会让 iscc 失败，
+          # 那正是想要的：分发缺许可证是合规问题，不该静默通过。
+          cp unpacked/*/LICENSE unpacked/*/NOTICE unpacked/*/THIRD-PARTY-NOTICES.md stage/
           ls -l stage
 
       - name: 确定版本号
