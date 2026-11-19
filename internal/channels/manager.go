@@ -120,6 +120,10 @@ func (m *Manager) Save(typ string, values map[string]string) (Instance, error) {
 	if err != nil {
 		return Instance{}, err
 	}
+	m.keepAppID(d, account, settings)
+	if err := m.checkAppID(d, account, secret, settings); err != nil {
+		return Instance{}, err
+	}
 
 	ref := credstore.Ref{Integration: d.Integration, Account: account}
 	// 编辑时密码留空表示「不改」，此时必须钥匙串里本来就有。
@@ -140,6 +144,51 @@ func (m *Manager) Save(typ string, values map[string]string) (Instance, error) {
 		return Instance{}, err
 	}
 	return in, nil
+}
+
+// keepAppID 只对飞书这类「应用密钥跟着令牌存」的渠道生效：一次保存没带上
+// App ID 时（详情页的权限开关只提交开关本身），沿用这条连接原来的 App ID。
+// 丢了它，令牌两小时后续期时就找不到应用，连接直接失效。
+func (m *Manager) keepAppID(d Descriptor, account string, settings map[string]string) {
+	spec, ok := SpecByID(d.Type)
+	if !ok || spec.OAuth == nil || spec.OAuth.ClientSecret == nil || spec.OAuth.ClientIDField == "" {
+		return
+	}
+	field := spec.OAuth.ClientIDField
+	if settings[field] != "" {
+		return
+	}
+	if old, ok, err := m.store.Get(d.Type, account); err == nil && ok && old.Settings[field] != "" {
+		settings[field] = old.Settings[field]
+	}
+}
+
+// checkAppID 让 App ID 始终和这条连接的授权一致。
+//
+// 令牌是哪个应用签发的，续期就只能用那个应用 —— 配置页上填的 App ID 只是
+// 显示和兜底。两个一键建出来的应用 ID 前缀几乎一样，用户填错一个很常见，
+// 所以这里直接改成签发令牌的那个，而不是报错让用户自己去找。
+func (m *Manager) checkAppID(d Descriptor, account, newSecret string, settings map[string]string) error {
+	spec, ok := SpecByID(d.Type)
+	if !ok || spec.OAuth == nil || spec.OAuth.ClientSecret == nil || spec.OAuth.ClientIDField == "" {
+		return nil
+	}
+	stored := newSecret
+	if stored == "" {
+		v, err := m.creds.Secret(credstore.Ref{Integration: d.Integration, Account: account}).Value()
+		if err != nil {
+			return nil
+		}
+		stored = v
+	}
+	tok, ok := oauthdev.Parse(stored)
+	if !ok {
+		return nil
+	}
+	if issuer := tok.IssuerClientID(); issuer != "" {
+		settings[spec.OAuth.ClientIDField] = issuer
+	}
+	return nil
 }
 
 // Delete 删除渠道实例及其凭据。
@@ -323,11 +372,13 @@ func (m *Manager) httpRuntime(d Descriptor, account string, values map[string]st
 	ref := credstore.Ref{Integration: d.Integration, Account: in.Account}
 	secret := m.creds.Secret(ref)
 	saveSecret := m.saveSecretFunc(d, in.Account)
+	reload := secret.Reload
 	// 表单测试时密码可能是刚填、还没入库的，用一个临时 handle 承载它。
 	if v, ok := values[d.SecretField]; ok && v != "" {
 		secret = credstore.Literal(ref, v)
 		// 这条实例可能还没保存过，写回去等于凭空造一条凭据，所以不给写回口。
 		saveSecret = nil
+		reload = nil
 	}
 
 	return httpchan.Runtime{
@@ -336,6 +387,7 @@ func (m *Manager) httpRuntime(d Descriptor, account string, values map[string]st
 		Settings:   in.Settings,
 		Secret:     secret.Value,
 		SaveSecret: saveSecret,
+		Reload:     reload,
 	}, nil
 }
 

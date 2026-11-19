@@ -143,6 +143,11 @@ type OAuthInfo struct {
 	SetupURL      string   `json:"setupUrl,omitempty"`
 	Help          string   `json:"help,omitempty"`
 	AuthHost      string   `json:"authHost"`
+	// ClientSecret 非空时连接区多一个「应用密钥」输入框（飞书）。它不在
+	// Fields 里：值只随连接请求走，最后进密码管理器，不进配置文件。
+	ClientSecret *Field `json:"clientSecret,omitempty"`
+	// Register 为真表示没填 App ID 时点连接会先一键建应用。
+	Register bool `json:"register,omitempty"`
 }
 
 // Field 按名字取字段。
@@ -296,6 +301,13 @@ func httpDescriptor(s httpchan.Spec) Descriptor {
 			SetupURL:      s.OAuth.SetupURL,
 			Help:          s.OAuth.Help,
 			AuthHost:      host,
+			Register:      s.OAuth.RegisterURL != "",
+		}
+		if cs := s.OAuth.ClientSecret; cs != nil {
+			oauthInfo.ClientSecret = &Field{
+				Name: cs.Name, Label: cs.Label, Kind: KindPassword,
+				Placeholder: cs.Placeholder, Help: cs.Help,
+			}
 		}
 	}
 	fields := []Field{
@@ -314,9 +326,13 @@ func httpDescriptor(s httpchan.Spec) Descriptor {
 				names = append(names, t.Name)
 			}
 		}
+		help := "关闭时这些工具不会注册给模型：" + strings.Join(names, "、")
+		if s.WriteHelp != "" {
+			help = s.WriteHelp
+		}
 		fields = append(fields, Field{
 			Name: httpchan.AllowWriteField, Label: "允许写入操作", Kind: KindBool, Default: "false",
-			Help: "关闭时这些工具不会注册给模型：" + strings.Join(names, "、"),
+			Help: help,
 		})
 	}
 	for _, f := range s.Fields {

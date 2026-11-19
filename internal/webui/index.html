@@ -486,8 +486,13 @@ async function openForm(type, account){
     inst = channels.find(v=>v.descriptor.type===type && v.instance.account===account)?.instance;
   }
   const val=(f)=> inst ? (f.name===d.accountField?inst.account:(inst.settings?.[f.name]??f.default)) : f.default;
-  const basic = d.fields.filter(f=>!f.advanced);
-  const adv   = d.fields.filter(f=>f.advanced);
+  // 一键建应用的渠道（飞书）：App ID 不放在高级设置里，而是和 App Secret
+  // 一起收进连接区的「已有应用」折叠 —— 那两项是一条后路，正路是扫码。
+  // 编辑已保存的连接时不收：App ID 要照常出现在高级设置里，否则保存时
+  // 它会从设置里丢掉，之后刷新令牌就找不到应用了。
+  const appField = (d.oauth && d.oauth.register && !account) ? d.oauth.clientIdField : "";
+  const basic = d.fields.filter(f=>!f.advanced && f.name!==appField);
+  const adv   = d.fields.filter(f=>f.advanced && f.name!==appField);
   const fieldHTML=(f)=>{
     const v = val(f)||"";
     if(f.kind==="bool"){
@@ -512,7 +517,10 @@ async function openForm(type, account){
   //
   // GitHub 那种有 clientIdField 的不走这条：它必须先填 Client ID 才能连，
   // 把那个框折起来等于让按钮点了就报错。
-  const oauthFirst = !!(d.oauth && !account && !d.oauth.clientIdField);
+  //
+  // 能一键建应用的渠道（d.oauth.register）同样算：没填 App ID 时点按钮
+  // 会先建应用，所以不需要先填任何东西。
+  const oauthFirst = !!(d.oauth && !account && (!d.oauth.clientIdField || d.oauth.register));
   const credNames = [d.accountField, d.secretField].filter(Boolean);
   const credFields = oauthFirst ? basic.filter(f=>credNames.includes(f.name)) : [];
   const formFields = oauthFirst ? basic.filter(f=>!credNames.includes(f.name)) : basic;
@@ -520,22 +528,41 @@ async function openForm(type, account){
   // 一条 OAuth 连接的授权失效之后，页面上没有任何地方能重新授权 —— 留在
   // 那里的只有一个令牌输入框，而设备流的令牌是一整段 JSON，用户填不出来。
   // 唯一的出路是删掉重建，那会连带删掉密码管理器里的凭据和写开关设置。
+  // 「已有应用」后路：IT 建好了应用、或企业不允许员工自建应用时，填 App ID
+  // 和 App Secret 再点连接。App Secret 不是表单字段 —— 它只随连接请求走，
+  // 最后进密码管理器，不进配置文件。
+  const cs = d.oauth && d.oauth.clientSecret;
+  const appFieldDef = appField ? d.fields.find(f=>f.name===appField) : null;
+  const appHTML = (appFieldDef && cs && !account) ? `
+    <div class="adv-toggle" id="apptoggle">▸ 已经有应用了？填 ${esc(appFieldDef.label)} 和 ${esc(cs.label)}</div>
+    <div class="adv" id="appbox">
+      <div class="tiny">两项都填了，点连接就跳过建应用，直接授权</div>
+      ${fieldHTML(appFieldDef)}
+      <div class="field"><label>${esc(cs.label)} <span class="secret-tag">🔑 密码类</span></label>
+        <input type="password" id="oc_${cs.name}" placeholder="${esc(cs.placeholder||"")}">
+        ${cs.help?`<div class="help">${esc(cs.help)}</div>`:""}</div>
+    </div>` : "";
   const oauthHTML = d.oauth ? `
     <div class="oauth-box${oauthFirst?" lead":""}">
       <div class="risk-head">🔗 ${account?`授权失效了？重新确认一次`
         :(oauthFirst?`扫码连接，不用手工生成令牌`:`用 OAuth 连接（不用手工生成令牌）`)}</div>
-      <div class="help">点下面的按钮，会把你送到 <b>${esc(d.oauth.authHost)}</b> 授权${
-        d.oauth.scopes?.length?`，申请的权限：<code>${esc(d.oauth.scopes.join(" "))}</code>`:""}</div>
+      ${d.oauth.register ? `
+      <div class="help">用飞书扫码确认就行，不用填任何东西。</div>
+      <div class="adv-toggle" id="scopetoggle">▸ 查看申请的权限</div>
+      <div class="adv" id="scopebox"><div class="tiny">授权在 <b>${esc(d.oauth.authHost)}</b> 完成，申请：<code>${esc((d.oauth.scopes||[]).join(" "))}</code></div></div>`
+      : `<div class="help">点下面的按钮，会把你送到 <b>${esc(d.oauth.authHost)}</b> 授权${
+        d.oauth.scopes?.length?`，申请的权限：<code>${esc(d.oauth.scopes.join(" "))}</code>`:""}</div>`}
       ${account?`<div class="help">完成后替换本机保存的令牌，账号和这里的其他设置不变。</div>`:""}
       ${d.oauth.help?`<div class="help">${esc(d.oauth.help)}${
         d.oauth.setupUrl?` · <a href="${esc(d.oauth.setupUrl)}" target="_blank" rel="noreferrer">去注册</a>`:""}</div>`:""}
+      ${appHTML}
       <button class="${oauthFirst?"primary":""}" id="oauthbtn" style="margin-top:8px">${
         account?`重新授权`:`连接${esc(d.name)}`}</button>
       <div id="oauthpanel"></div>
     </div>` : "";
   // 手动填的后路：默认收起。里面放的是凭据字段，所以「只存进密码管理器」
   // 那句提示也跟着挪进来 —— 折起来的时候它在上面只是噪音。
-  const manualHTML = credFields.length ? `
+  const manualHTML = (credFields.length && !(d.oauth && d.oauth.register)) ? `
     <div class="adv-toggle" id="manualtoggle">▸ 扫不了码？手动填${esc(credFields.map(f=>f.label).join("和"))}</div>
     <div class="adv" id="manual">
       <div class="tiny">密码类字段只存进系统密码管理器，不写配置文件、不进日志</div>
@@ -617,6 +644,10 @@ async function openForm(type, account){
   if(ob) ob.onclick = () => startOAuth(type, null, account || "");
   const ncb = $("#ncbtn");
   if(ncb) ncb.onclick = () => ncDetect();
+  const scopeToggle = $("#scopetoggle");
+  if(scopeToggle) scopeToggle.onclick = () => $("#scopebox").classList.toggle("show");
+  const appToggle = $("#apptoggle");
+  if(appToggle) appToggle.onclick = () => $("#appbox").classList.toggle("show");
   const manualToggle = $("#manualtoggle");
   if(manualToggle) manualToggle.onclick = () => $("#manual").classList.toggle("show");
   const advToggle = $("#advtoggle");
@@ -776,6 +807,12 @@ let OAUTH_SESSION = null;
 // 保存路径，不带就等于把它们重置成默认值。
 async function startOAuth(type, valuesOverride, expectAccount){
   const values = valuesOverride || collect(type).values;
+  const dd = DESCRIPTORS.find(x=>x.type===type);
+  const cs = dd && dd.oauth && dd.oauth.clientSecret;
+  if(cs && !valuesOverride){
+    const el = document.getElementById("oc_"+cs.name);
+    if(el && el.value.trim()) values[cs.name] = el.value.trim();
+  }
   const panel = $("#oauthpanel");
   panel.innerHTML = `<div class="help">正在向授权服务要验证码…</div>`;
   const r = await api("/api/oauth/start",{method:"POST",
@@ -785,7 +822,36 @@ async function startOAuth(type, valuesOverride, expectAccount){
 
   const s = r.session;
   OAUTH_SESSION = s.id;
+  const st0 = await api("/api/oauth/status?session="+encodeURIComponent(s.id));
+  renderOAuthStep(type, Object.assign({}, s, st0 && st0.phase ? {phase: st0.phase} : {}));
+  pollOAuth(type, s.id, expectAccount);
+}
+// renderOAuthStep 画出当前这一步要用户做的事。
+//
+// 飞书是两步（先建应用、再授权），每步有自己的链接；它返回的链接已经带着码，
+// 用户打开、在飞书里点确认就行，码只是兜底。别的渠道照旧：复制码 → 去输入。
+let OAUTH_STEP = "";
+function renderOAuthStep(type, s){
+  const panel = $("#oauthpanel");
+  if(!panel) return;
+  OAUTH_STEP = (s.phase||"") + "|" + (s.userCode||"");
   const openURL = s.verificationUriComplete || s.verificationUri;
+  // 只有能一键建应用的渠道（飞书）走两步式的显示；云之家、GitHub 照旧。
+  const dd = DESCRIPTORS.find(x=>x.type===type);
+  if(dd && dd.oauth && dd.oauth.register){
+    const reg = s.phase === "register";
+    panel.innerHTML = `
+      <div class="oauth-code">
+        <div class="help"><b>${reg?"第 1 步，共 2 步：建应用":"第 2 步，共 2 步：确认个人授权"}</b></div>
+        <div class="help" style="margin-top:6px">${reg
+          ?"点下面的按钮，在飞书里确认在你的企业里创建一个专属应用。企业要求管理员审批的话，等审批通过后回来再点一次连接，不会重复建应用。"
+          :"应用已经建好。再点一次下面的按钮，在飞书里确认授权，让它以你本人的身份读写飞书。"}</div>
+        <div style="margin-top:8px"><a class="btn primary" href="${esc(openURL)}" target="_blank" rel="noreferrer">${reg?"打开飞书，创建应用":"打开飞书，确认授权"}</a></div>
+        ${s.userCode?`<div class="help" style="margin-top:6px">页面要你输验证码的话，填 <code>${esc(s.userCode)}</code></div>`:""}
+        <div class="st" id="ost">等待你在飞书里确认…</div>
+      </div>`;
+    return;
+  }
   panel.innerHTML = `
     <div class="oauth-code">
       <div class="help">① 复制这个验证码</div>
@@ -798,7 +864,6 @@ async function startOAuth(type, valuesOverride, expectAccount){
     try{ await navigator.clipboard.writeText(s.userCode); $("#copycode").textContent="已复制"; }
     catch(e){ $("#copycode").textContent="请手动复制"; }
   };
-  pollOAuth(type, s.id, expectAccount);
 }
 
 async function pollOAuth(type, id, expectAccount){
@@ -809,7 +874,15 @@ async function pollOAuth(type, id, expectAccount){
     const st = await api("/api/oauth/status?session="+encodeURIComponent(id));
     const el = ost();
     if(!el) return;                              // DOM 没了，停
-    if(st.state === "pending"){ el.className="st"; el.textContent="③ 等待授权…"; continue; }
+    if(st.state === "pending"){
+      // 阶段换了（建应用 → 授权）：换上新的链接和码。只有两段式的渠道会换阶段。
+      if(st.phase && (st.phase + "|" + (st.userCode||"")) !== OAUTH_STEP && st.verificationUri){
+        renderOAuthStep(type, st);
+      } else if(!(DESCRIPTORS.find(x=>x.type===type)?.oauth?.register)){
+        el.className="st"; el.textContent="③ 等待授权…";
+      }
+      continue;
+    }
     if(st.state === "ok"){
       OAUTH_SESSION = null;
       // 重新授权时授权的可能是另一个账号。凭据按账号名定位，所以那会
@@ -828,6 +901,12 @@ async function pollOAuth(type, id, expectAccount){
       return;
     }
     el.className="st bad"; el.textContent = "授权失败：" + (st.error||"未知原因");
+    // 应用建好了但授权没走完：把 App ID 回填到表单上，下次点连接就接着授权，
+    // 而不是再建一个应用（密钥服务端已经记住了）。
+    if(st.fill){
+      Object.entries(st.fill).forEach(([k,v])=>{ const f=document.getElementById("f_"+k); if(f) f.value=v; });
+      const box=$("#appbox"); if(box) box.classList.add("show");
+    }
     OAUTH_SESSION = null;
     return;
   }

@@ -9,8 +9,10 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -32,6 +34,14 @@ const (
 	ConnectFailed  ConnectState = "error"
 )
 
+// 连接会话的阶段。大多数渠道只有授权一步；飞书在没有 App ID 时先走
+// 「一键创建应用」，再走用户授权 —— 两步各有自己的链接和码，前端要在
+// 阶段切换时换掉显示的内容。
+const (
+	PhaseRegister  = "register"
+	PhaseAuthorize = "authorize"
+)
+
 // ConnectSession 是一次「点连接」的全过程。
 type ConnectSession struct {
 	ID string `json:"id"`
@@ -48,6 +58,13 @@ type ConnectSession struct {
 	identity any
 	created  time.Time
 	cancel   context.CancelFunc
+	// phase 和 cur 是当前阶段及其链接。上面那几个导出字段是开始时的快照
+	// （随 start 响应序列化），之后的变化只走 status，免得和序列化抢锁。
+	phase string
+	cur   oauthdev.Pending
+	// fill 是要回填到表单上的值（一键建好的 App ID）。授权中途失败时用户
+	// 再点一次连接，带着它就会接着授权，而不是又建一个应用。
+	fill map[string]string
 }
 
 // ConnectStatus 是前端轮询时拿到的东西。
@@ -56,12 +73,30 @@ type ConnectStatus struct {
 	Error    string       `json:"error,omitempty"`
 	Account  string       `json:"account,omitempty"`
 	Identity any          `json:"identity,omitempty"`
+	// Phase 和下面三项是当前阶段要给用户看的东西，阶段切换时会变。
+	Phase                   string            `json:"phase,omitempty"`
+	UserCode                string            `json:"userCode,omitempty"`
+	VerificationURI         string            `json:"verificationUri,omitempty"`
+	VerificationURIComplete string            `json:"verificationUriComplete,omitempty"`
+	Fill                    map[string]string `json:"fill,omitempty"`
 }
 
 func (s *ConnectSession) status() ConnectStatus {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return ConnectStatus{State: s.state, Error: s.errMsg, Account: s.account, Identity: s.identity}
+	return ConnectStatus{State: s.state, Error: s.errMsg, Account: s.account, Identity: s.identity,
+		Phase: s.phase, UserCode: s.cur.UserCode, VerificationURI: s.cur.VerificationURI,
+		VerificationURIComplete: s.cur.VerificationURIComplete, Fill: s.fill}
+}
+
+// advance 切到下一个阶段。
+func (s *ConnectSession) advance(phase string, p oauthdev.Pending, fill map[string]string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.phase, s.cur = phase, p
+	if fill != nil {
+		s.fill = fill
+	}
 }
 
 func (s *ConnectSession) finish(account string, identity any, err error) {
@@ -102,37 +137,6 @@ func (m *Manager) StartConnect(typ string, values map[string]string) (*ConnectSe
 			settings[f.Name] = v
 		}
 	}
-	cfg, err := spec.OAuthConfig(settings)
-	if err != nil {
-		return nil, err
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), connectTTL)
-	pending, err := cfg.Start(ctx, m.oauthHTTP())
-	if err != nil {
-		cancel()
-		return nil, err
-	}
-
-	sess := &ConnectSession{
-		ID:                      newSessionID(),
-		UserCode:                pending.UserCode,
-		VerificationURI:         pending.VerificationURI,
-		VerificationURIComplete: pending.VerificationURIComplete,
-		ExpiresAt:               pending.ExpiresAt,
-		state:                   ConnectPending,
-		created:                 time.Now(),
-		cancel:                  cancel,
-	}
-
-	m.connMu.Lock()
-	if m.conns == nil {
-		m.conns = map[string]*ConnectSession{}
-	}
-	m.sweepLocked()
-	m.conns[sess.ID] = sess
-	m.connMu.Unlock()
-
 	// 复制一份表单值：前端可能在授权期间继续改表单，而这次授权该用点下
 	// 按钮那一刻的值。
 	snapshot := make(map[string]string, len(values))
@@ -140,6 +144,45 @@ func (m *Manager) StartConnect(typ string, values map[string]string) (*ConnectSe
 		snapshot[k] = v
 	}
 
+	// 重新授权一条已有连接时，App ID 以那条连接为准。它缺了 App ID 时
+	// 不能顺手走一键建应用 —— 那会在企业里多建一个应用，而原来那条连接
+	// 仍然是坏的。
+	if o := spec.OAuth; o.RegisterURL != "" && o.ClientIDField != "" {
+		if acc := strings.TrimSpace(values[d.AccountField]); acc != "" && strings.TrimSpace(settings[o.ClientIDField]) == "" {
+			if in, ok, err := m.store.Get(typ, acc); err == nil && ok && in.Settings[o.ClientIDField] != "" {
+				settings[o.ClientIDField] = in.Settings[o.ClientIDField]
+				snapshot[o.ClientIDField] = in.Settings[o.ClientIDField]
+			} else if ok {
+				label := o.ClientIDField
+				if f, found := spec.Field(o.ClientIDField); found {
+					label = f.Label
+				}
+				return nil, fmt.Errorf("这条连接缺少 %s：请先在「配置 → 高级设置」里填上，再重新授权", label)
+			}
+		}
+	}
+
+	// 没填 App ID、而渠道支持一键建应用：先建应用，再授权。
+	if reg, ok := registration(spec, settings); ok {
+		return m.startWithRegistration(d, spec, settings, snapshot, reg)
+	}
+
+	cfg, err := spec.OAuthConfig(settings)
+	if err != nil {
+		return nil, err
+	}
+	if spec.OAuth.ClientSecret != nil {
+		if cfg.ClientSecret, err = m.clientSecret(d, spec, cfg.ClientID, values); err != nil {
+			return nil, err
+		}
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), connectTTL)
+	pending, err := cfg.Start(ctx, m.oauthHTTP())
+	if err != nil {
+		cancel()
+		return nil, err
+	}
+	sess := m.newSession(pending, PhaseAuthorize, cancel)
 	go func() {
 		defer cancel()
 		tok, err := cfg.Await(ctx, m.oauthHTTP(), pending)
@@ -148,9 +191,150 @@ func (m *Manager) StartConnect(typ string, values map[string]string) (*ConnectSe
 			return
 		}
 		account, identity, err := m.adoptToken(ctx, d, spec, snapshot, tok)
+		if err == nil && spec.OAuth.ClientSecret != nil {
+			m.forgetPendingApp(d, cfg.ClientID)
+		}
 		sess.finish(account, identity, err)
 	}()
 	return sess, nil
+}
+
+// newSession 登记一个连接会话。
+func (m *Manager) newSession(p oauthdev.Pending, phase string, cancel context.CancelFunc) *ConnectSession {
+	sess := &ConnectSession{
+		ID:                      newSessionID(),
+		UserCode:                p.UserCode,
+		VerificationURI:         p.VerificationURI,
+		VerificationURIComplete: p.VerificationURIComplete,
+		ExpiresAt:               p.ExpiresAt,
+		state:                   ConnectPending,
+		created:                 time.Now(),
+		cancel:                  cancel,
+		phase:                   phase,
+		cur:                     p,
+	}
+	m.connMu.Lock()
+	if m.conns == nil {
+		m.conns = map[string]*ConnectSession{}
+	}
+	m.sweepLocked()
+	m.conns[sess.ID] = sess
+	m.connMu.Unlock()
+	return sess
+}
+
+// registration 判断这次连接要不要先一键建应用。
+func registration(spec httpchan.Spec, settings map[string]string) (oauthdev.AppRegistration, bool) {
+	o := spec.OAuth
+	if o == nil || o.RegisterURL == "" || o.ClientIDField == "" {
+		return oauthdev.AppRegistration{}, false
+	}
+	if strings.TrimSpace(settings[o.ClientIDField]) != "" {
+		return oauthdev.AppRegistration{}, false
+	}
+	return oauthdev.AppRegistration{
+		URL: o.RegisterURL, Name: o.RegisterName, Desc: o.RegisterDesc, UserScopes: o.Scopes,
+	}, true
+}
+
+// startWithRegistration 是两段式连接：扫码建应用 → 扫码授权个人身份。
+func (m *Manager) startWithRegistration(d Descriptor, spec httpchan.Spec, settings, snapshot map[string]string,
+	reg oauthdev.AppRegistration) (*ConnectSession, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), connectTTL)
+	pending, err := reg.Begin(ctx, m.oauthHTTP())
+	if err != nil {
+		cancel()
+		return nil, err
+	}
+	sess := m.newSession(pending, PhaseRegister, cancel)
+	idField := spec.OAuth.ClientIDField
+	go func() {
+		defer cancel()
+		app, err := reg.Await(ctx, m.oauthHTTP(), pending)
+		if err != nil {
+			sess.finish("", nil, err)
+			return
+		}
+		// 应用一建好就把密钥存下来，再往下走授权。授权这一步可能要等企业
+		// 管理员审批应用，用户会隔一阵再回来点连接 —— 那时密钥必须还在，
+		// 否则只能再建一个应用。
+		fill := map[string]string{idField: app.ClientID}
+		if err := m.rememberPendingApp(d, app); err != nil {
+			sess.finish("", nil, fmt.Errorf("应用已建好（App ID %s），但应用密钥没能存进%s: %w", app.ClientID, credstore.BackendName(), err))
+			return
+		}
+		settings[idField] = app.ClientID
+		snapshot[idField] = app.ClientID
+		cfg, err := spec.OAuthConfig(settings)
+		if err != nil {
+			sess.finish("", nil, err)
+			return
+		}
+		cfg.ClientSecret = app.ClientSecret
+		p2, err := cfg.Start(ctx, m.oauthHTTP())
+		if err != nil {
+			sess.advance(PhaseAuthorize, oauthdev.Pending{}, fill)
+			sess.finish("", nil, fmt.Errorf("应用已建好（App ID %s），但个人授权没能开始：%w。"+
+				"如果企业要求管理员审批应用，等审批通过后再点一次连接即可，不会重复建应用", app.ClientID, err))
+			return
+		}
+		sess.advance(PhaseAuthorize, p2, fill)
+		tok, err := cfg.Await(ctx, m.oauthHTTP(), p2)
+		if err != nil {
+			sess.finish("", nil, err)
+			return
+		}
+		account, identity, err := m.adoptToken(ctx, d, spec, snapshot, tok)
+		if err == nil {
+			m.forgetPendingApp(d, app.ClientID)
+		}
+		sess.finish(account, identity, err)
+	}()
+	return sess, nil
+}
+
+// pendingAppRef 是「已建好、还没授权成功」的应用密钥的存放位置。授权成功后
+// 密钥随令牌组一起存进那条连接的条目，这一条就删掉。
+func pendingAppRef(d Descriptor, appID string) credstore.Ref {
+	return credstore.Ref{Integration: d.Integration, Account: "app:" + appID}
+}
+
+func (m *Manager) rememberPendingApp(d Descriptor, app oauthdev.AppCredentials) error {
+	return m.creds.Put(pendingAppRef(d, app.ClientID), app.ClientSecret)
+}
+
+func (m *Manager) forgetPendingApp(d Descriptor, appID string) {
+	_ = m.creds.Delete(pendingAppRef(d, appID))
+}
+
+// clientSecret 找出这次授权要用的应用密钥。按顺序：
+//
+//  1. 表单上刚填的（用 IT 建好的应用）
+//  2. 已保存连接的令牌组里带着的（重新授权）
+//  3. 一键建好、还没授权成功的应用（等完管理员审批回来接着连）
+//
+// 都没有就要用户填，而不是带着空密钥去打授权服务 —— 那样的报错是
+// 「invalid_client」，用户看不出是自己少填了一项。
+func (m *Manager) clientSecret(d Descriptor, spec httpchan.Spec, appID string, values map[string]string) (string, error) {
+	cs := spec.OAuth.ClientSecret
+	if v := strings.TrimSpace(values[cs.Name]); v != "" {
+		return v, nil
+	}
+	if acc := strings.TrimSpace(values[d.AccountField]); acc != "" {
+		if stored, err := m.creds.Secret(credstore.Ref{Integration: d.Integration, Account: acc}).Value(); err == nil {
+			if tok, ok := oauthdev.Parse(stored); ok && tok.ClientSecret != "" {
+				return tok.ClientSecret, nil
+			}
+		}
+	}
+	v, err := m.creds.Secret(pendingAppRef(d, appID)).Value()
+	if err == nil && v != "" {
+		return v, nil
+	}
+	if err != nil && !errors.Is(err, credstore.ErrNotFound) {
+		return "", err
+	}
+	return "", fmt.Errorf("请填写 %s", cs.Label)
 }
 
 // ConnectStatus 查一次连接会话的状态。
