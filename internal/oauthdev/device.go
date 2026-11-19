@@ -36,6 +36,15 @@ type TokenSet struct {
 	ExpiresAt        time.Time `json:"expiresAt,omitempty"`
 	RefreshExpiresAt time.Time `json:"refreshExpiresAt,omitempty"`
 	ObtainedAt       time.Time `json:"obtainedAt"`
+	// ClientSecret 只有「换令牌和刷新都必须带应用密钥」的提供方才有（飞书）。
+	// 那个密钥属于用户自己企业的应用、由用户提供，不是随程序发出去的，所以
+	// 和令牌放在同一个密码管理器条目里：刷新时要用，而且它和这份授权同生
+	// 同灭 —— 删连接时一起删，重新授权时一起换。
+	ClientSecret string `json:"clientSecret,omitempty"`
+	// ClientID 是签发这份令牌的应用。和 ClientSecret 一起存，续期时以它为准：
+	// 配置页上的 App ID 是用户能改的，填错一个（两个应用的 ID 前缀几乎一样）
+	// 就会让续期报 invalid_grant。
+	ClientID string `json:"clientId,omitempty"`
 }
 
 // Marshal 序列化成要存进密码管理器的字符串。
@@ -92,11 +101,20 @@ const (
 	// 标准串（authorization_pending / expired_token），所以 describe
 	// 能原样复用。
 	DialectYunzhijia = "yunzhijia"
+	// DialectFeishu 是飞书：线上格式基本照 RFC 8628，但它是机密客户端 ——
+	// 出码要用 Basic(App ID:App Secret)，换令牌和刷新要带 client_secret，
+	// 刷新走 JSON 请求体。见 feishu.go。
+	DialectFeishu = "feishu"
 )
 
-// Config 是一个渠道的设备流参数。没有 client_secret —— 公共客户端存不住它。
+// Config 是一个渠道的设备流参数。
+//
+// 公共客户端（GitHub、云之家）没有 client_secret —— 随程序发出去的密钥不是
+// 秘密。ClientSecret 只给飞书方言用：那里的密钥是用户自己企业应用的，由
+// 用户提供或一键建应用时拿到，存在本机密码管理器里。
 type Config struct {
 	ClientID      string
+	ClientSecret  string
 	DeviceCodeURL string
 	TokenURL      string
 	Scopes        []string
@@ -157,6 +175,8 @@ func (c Config) Start(ctx context.Context, hc *http.Client) (Pending, error) {
 	case "", DialectRFC8628:
 	case DialectYunzhijia:
 		return c.startYunzhijia(ctx, hc)
+	case DialectFeishu:
+		return c.startFeishu(ctx, hc)
 	default:
 		// 认不出的方言一律拒绝，不要退回默认实现：按错误的线上格式去打
 		// 一个真实的授权服务，错法是「一直等待授权」这种看不出原因的样子。
@@ -213,6 +233,8 @@ func (c Config) Poll(ctx context.Context, hc *http.Client, deviceCode string) (T
 	case "", DialectRFC8628:
 	case DialectYunzhijia:
 		return c.pollYunzhijia(ctx, hc, deviceCode)
+	case DialectFeishu:
+		return c.pollFeishu(ctx, hc, deviceCode)
 	default:
 		return TokenSet{}, fmt.Errorf("不支持的授权方言 %q", c.Dialect)
 	}
@@ -235,6 +257,8 @@ func (c Config) Refresh(ctx context.Context, hc *http.Client, refreshToken strin
 	case "", DialectRFC8628:
 	case DialectYunzhijia:
 		return c.refreshYunzhijia(ctx, hc, refreshToken)
+	case DialectFeishu:
+		return c.refreshFeishu(ctx, hc, refreshToken)
 	default:
 		return TokenSet{}, fmt.Errorf("不支持的授权方言 %q", c.Dialect)
 	}
@@ -246,20 +270,28 @@ func (c Config) Refresh(ctx context.Context, hc *http.Client, refreshToken strin
 	return c.exchange(ctx, hc, form)
 }
 
+// tokenResponse 是 RFC 6749 / 8628 的令牌响应。
+type tokenResponse struct {
+	AccessToken           string `json:"access_token"`
+	RefreshToken          string `json:"refresh_token"`
+	TokenType             string `json:"token_type"`
+	Scope                 string `json:"scope"`
+	ExpiresIn             int    `json:"expires_in"`
+	RefreshTokenExpiresIn int    `json:"refresh_token_expires_in"`
+	Error                 string `json:"error"`
+	ErrorDescription      string `json:"error_description"`
+}
+
 func (c Config) exchange(ctx context.Context, hc *http.Client, form url.Values) (TokenSet, error) {
-	var body struct {
-		AccessToken           string `json:"access_token"`
-		RefreshToken          string `json:"refresh_token"`
-		TokenType             string `json:"token_type"`
-		Scope                 string `json:"scope"`
-		ExpiresIn             int    `json:"expires_in"`
-		RefreshTokenExpiresIn int    `json:"refresh_token_expires_in"`
-		Error                 string `json:"error"`
-		ErrorDescription      string `json:"error_description"`
-	}
+	var body tokenResponse
 	if err := post(ctx, hc, c.TokenURL, form, &body); err != nil {
 		return TokenSet{}, err
 	}
+	return body.tokenSet()
+}
+
+// tokenSet 把令牌响应变成要存的令牌组；响应里带错误码时返回对应的错误。
+func (body tokenResponse) tokenSet() (TokenSet, error) {
 	if body.Error != "" {
 		return TokenSet{}, describe(body.Error, body.ErrorDescription)
 	}
@@ -345,14 +377,24 @@ func describe(code, desc string) error {
 }
 
 func post(ctx context.Context, hc *http.Client, endpoint string, form url.Values, out any) error {
+	return postRaw(ctx, hc, endpoint, "application/x-www-form-urlencoded", form.Encode(), nil, out)
+}
+
+// postRaw 是 post 的通用形：指定请求体类型和额外的请求头。
+func postRaw(ctx context.Context, hc *http.Client, endpoint, contentType, body string, header http.Header, out any) error {
 	if strings.TrimSpace(endpoint) == "" {
 		return fmt.Errorf("缺少授权服务地址")
 	}
-	req, err := http.NewRequestWithContext(ctx, "POST", endpoint, strings.NewReader(form.Encode()))
+	req, err := http.NewRequestWithContext(ctx, "POST", endpoint, strings.NewReader(body))
 	if err != nil {
 		return err
 	}
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	for k, vs := range header {
+		for _, v := range vs {
+			req.Header.Add(k, v)
+		}
+	}
+	req.Header.Set("Content-Type", contentType)
 	// 不指定的话 GitHub 回的是 form 编码，解析起来还要分两套代码。
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("User-Agent", "mcp-hub")

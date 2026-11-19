@@ -162,8 +162,15 @@ func inputSchema(t httpchan.Tool, accounts []string) map[string]any {
 			typ = "string"
 		}
 		prop := map[string]any{"type": typ}
+		if typ == "array" {
+			prop["items"] = map[string]any{"type": "string"}
+		}
 		if p.Description != "" {
 			prop["description"] = p.Description
+		}
+		if p.Format != "" {
+			d, _ := prop["description"].(string)
+			prop["description"] = strings.TrimSpace(d + "。写成 2026-11-20 15:00 或 2026-11-20 即可（本机时区），不用自己换算时间戳")
 		}
 		if len(p.Enum) > 0 {
 			prop["enum"] = toAny(p.Enum)

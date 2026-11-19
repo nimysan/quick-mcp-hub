@@ -74,6 +74,9 @@ type FailWhen struct {
 	Equals any    `json:"equals,omitempty"`
 	// Exists 为真时表示「这个路径存在就算失败」（比如 errcode 字段）。
 	Exists bool `json:"exists,omitempty"`
+	// NotEquals 非空时表示「这个路径存在、且值不等于它就算失败」。飞书这类
+	// 接口成功时 code 是 0，失败码五花八门，没法逐个列进 Equals。
+	NotEquals any `json:"notEquals,omitempty"`
 	// MessagePath 指出错误说明在哪，用于拼报错信息。
 	MessagePath string `json:"messagePath,omitempty"`
 }
@@ -158,6 +161,19 @@ type Param struct {
 	// BodyPath 让 body 参数落到嵌套位置，如 "data.FilterString"。
 	// 留空则放在 body 顶层，键名就是 Name。
 	BodyPath string `json:"bodyPath,omitempty"`
+	// ItemObject 只配 type=array：把模型给的每个字符串套进这个对象模板，
+	// 模板里值为 "{{item}}" 的那一项换成它。飞书的参会人、任务成员都是
+	// [{"type":"user","user_id":"ou_x"}] 这种形状，让模型只给一串 open_id，
+	// 形状由声明钉死。
+	ItemObject map[string]any `json:"itemObject,omitempty"`
+	// Format 让参数接受人能读的时间，发送前换成接口要的格式：
+	//   unix     秒级时间戳字符串
+	//   unix_ms  毫秒级时间戳字符串
+	//   rfc3339  2026-11-20T15:00:00+08:00
+	// 输入可以是 "2026-11-20 15:00"、"2026-11-20"、RFC3339 或者已经是时间戳。
+	// 没有时区的按本机时区。模型换算 Unix 时间戳很容易差几个小时，这一步
+	// 不该交给它。
+	Format string `json:"format,omitempty"`
 }
 
 // Tool 是一个声明出来的 MCP 工具。
@@ -175,7 +191,15 @@ type Tool struct {
 	// 用于把一个工具钉死在某张单据上（FormId=BD_MATERIAL），
 	// 这样「查物料」是一个工具，而不是让模型自己填表单标识。
 	BodyConst map[string]any `json:"bodyConst,omitempty"`
-	Result    Result         `json:"result,omitempty"`
+	// BodyJSONString 列出 body 里要「先序列化成 JSON 字符串再放进去」的路径。
+	//
+	// 飞书发消息的 content 不是对象而是一段 JSON 文本：
+	// {"msg_type":"text","content":"{\"text\":\"你好\"}"}。让模型自己拼这段
+	// 转义过的字符串既容易错，也等于把消息结构的控制权交给了模型（它可以
+	// 换成卡片、@所有人）。所以参数照常落到 content.text，发送前再把
+	// content 整个变成字符串。
+	BodyJSONString []string `json:"bodyJsonString,omitempty"`
+	Result         Result   `json:"result,omitempty"`
 }
 
 // Spec 是一个渠道的完整声明。
@@ -245,6 +269,9 @@ type Spec struct {
 	// 所以这个开关不是「关掉检查」，而是把「方法不能作证」这件事记录下来并
 	// 交给人：页面上会标出来，目录服务器上这类声明的发布也要第二人批准。
 	PostReads bool `json:"postReads,omitempty"`
+	// WriteHelp 非空时替换写开关下面的默认说明（默认列出受控工具名）。
+	// 给业务人员用的渠道可以用一句人话说清打开后会发生什么。
+	WriteHelp string `json:"writeHelp,omitempty"`
 
 	// Test 是「测试连通」用的只读接口，保存渠道前会先打一次。
 	Test  Endpoint `json:"test"`
@@ -290,6 +317,19 @@ type OAuthSpec struct {
 	SetupURL string `json:"setupUrl,omitempty"`
 	// Help 是填 client id 前要知道的事，显示在输入框旁边。
 	Help string `json:"help,omitempty"`
+
+	// ClientSecret 描述「应用密钥」输入框，只有机密客户端方言（飞书）才有。
+	//
+	// 它不是 Fields 里的一个字段：Fields 会落进 channels.json，而密钥只能进
+	// 密码管理器。页面在连接区单独渲染这个框，值随「连接」请求带给服务端，
+	// 授权成功后和令牌一起存进同一个密码管理器条目。
+	ClientSecret *Credential `json:"clientSecret,omitempty"`
+	// RegisterURL 非空时页面提供「一键创建应用」：用户扫码，对方系统在他的
+	// 企业里建好应用并返回 App ID 和密钥，然后接着走用户授权。只有飞书方言
+	// 支持。RegisterName / RegisterDesc 预填在确认页上（{user} 换成扫码人）。
+	RegisterURL  string `json:"registerUrl,omitempty"`
+	RegisterName string `json:"registerName,omitempty"`
+	RegisterDesc string `json:"registerDesc,omitempty"`
 }
 
 // OAuthConfig 把声明和实例设置拼成可执行的设备流参数。
@@ -414,6 +454,9 @@ func (s Spec) Validate() error {
 	if s.FailWhen != nil && strings.TrimSpace(s.FailWhen.Path) == "" {
 		return fmt.Errorf("%s: failWhen 必须给出 path", s.ID)
 	}
+	if fw := s.FailWhen; fw != nil && fw.NotEquals != nil && (fw.Equals != nil || fw.Exists) {
+		return fmt.Errorf("%s: failWhen 的 notEquals 不能和 equals / exists 同时用", s.ID)
+	}
 	for _, f := range s.Fields {
 		if !paramNameRe.MatchString(f.Name) {
 			return fmt.Errorf("%s: 字段名 %q 不合法", s.ID, f.Name)
@@ -491,6 +534,31 @@ func (s Spec) Validate() error {
 		if len(t.BodyConst) > 0 && t.Method == "GET" {
 			return fmt.Errorf("%s/%s: GET 不能带 bodyConst", s.ID, t.Name)
 		}
+		for _, jp := range t.BodyJSONString {
+			if t.Method == "GET" {
+				return fmt.Errorf("%s/%s: GET 不能带 bodyJsonString", s.ID, t.Name)
+			}
+			if err := checkDotPath(jp); err != nil {
+				return fmt.Errorf("%s/%s: bodyJsonString %w", s.ID, t.Name, err)
+			}
+			// 必须有东西落在这个路径下，否则这一条是写错了而不是没生效。
+			used := false
+			if _, ok := t.BodyConst[strings.SplitN(jp, ".", 2)[0]]; ok {
+				used = true
+			}
+			for _, p := range t.Params {
+				k := p.Name
+				if p.BodyPath != "" {
+					k = p.BodyPath
+				}
+				if p.In == InBody && (k == jp || strings.HasPrefix(k, jp+".")) {
+					used = true
+				}
+			}
+			if !used {
+				return fmt.Errorf("%s/%s: bodyJsonString %q 下面没有任何 body 参数或 bodyConst", s.ID, t.Name, jp)
+			}
+		}
 		if t.Result.Columns != nil && t.Result.ColumnsFromParam != "" {
 			return fmt.Errorf("%s/%s: columns 和 columnsFromParam 只能有一个", s.ID, t.Name)
 		}
@@ -516,8 +584,34 @@ func (s Spec) Validate() error {
 			default:
 				return fmt.Errorf("%s/%s: 参数 %s 的 in=%q 不支持", s.ID, t.Name, p.Name, p.In)
 			}
+			switch p.Format {
+			case "", "unix", "unix_ms", "rfc3339":
+			default:
+				return fmt.Errorf("%s/%s: 参数 %s 的 format=%q 不支持（只有 unix / unix_ms / rfc3339）", s.ID, t.Name, p.Name, p.Format)
+			}
+			if p.Format != "" && p.Type != "" && p.Type != "string" {
+				return fmt.Errorf("%s/%s: 参数 %s 有 format 时 type 只能是 string", s.ID, t.Name, p.Name)
+			}
+			if p.ItemObject != nil {
+				if p.Type != "array" {
+					return fmt.Errorf("%s/%s: 参数 %s 的 itemObject 只能配 type=array", s.ID, t.Name, p.Name)
+				}
+				holes := 0
+				for _, v := range p.ItemObject {
+					if v == "{{item}}" {
+						holes++
+					}
+				}
+				if holes != 1 {
+					return fmt.Errorf("%s/%s: 参数 %s 的 itemObject 里必须恰好有一个 \"{{item}}\"", s.ID, t.Name, p.Name)
+				}
+			}
 			switch p.Type {
 			case "", "string", "number", "boolean":
+			case "array":
+				if p.In != InBody {
+					return fmt.Errorf("%s/%s: 参数 %s 的 type=array 只能用在 in=body", s.ID, t.Name, p.Name)
+				}
 			case "object":
 				if p.In != InBody {
 					return fmt.Errorf("%s/%s: 参数 %s 的 type=object 只能用在 in=body", s.ID, t.Name, p.Name)
@@ -686,6 +780,21 @@ func (s Spec) checkOAuth() error {
 		if strings.TrimSpace(o.VerificationURI) == "" {
 			return fmt.Errorf("dialect %s 必须给出 verificationUri（它的出码响应不返回验证地址）", o.Dialect)
 		}
+	case oauthdev.DialectFeishu:
+		// 飞书授权要带应用密钥，所以每个企业必须用自己的应用：写死一个
+		// clientId 发给所有人，就等于把那个应用的密钥也发给了所有人。
+		if o.ClientIDField == "" {
+			return fmt.Errorf("dialect %s 必须用 clientIdField（每个企业用自己的应用），不能写死 clientId", o.Dialect)
+		}
+		if o.ClientSecret == nil || !paramNameRe.MatchString(o.ClientSecret.Name) {
+			return fmt.Errorf("dialect %s 必须给出 clientSecret（换令牌要带应用密钥）", o.Dialect)
+		}
+		if _, clash := s.Field(o.ClientSecret.Name); clash || o.ClientSecret.Name == s.Account.Name || o.ClientSecret.Name == s.Secret.Name {
+			return fmt.Errorf("clientSecret.name %q 不能和已有字段同名（它不能落进配置文件）", o.ClientSecret.Name)
+		}
+		if o.VerificationURI != "" {
+			return fmt.Errorf("dialect %s 的验证地址由授权服务返回，不要填 verificationUri", o.Dialect)
+		}
 	default:
 		return fmt.Errorf("dialect %q 不支持", o.Dialect)
 	}
@@ -704,6 +813,20 @@ func (s Spec) checkOAuth() error {
 	if o.SetupURL != "" {
 		if err := checkBaseURL(o.SetupURL, false); err != nil {
 			return fmt.Errorf("setupUrl %w", err)
+		}
+	}
+	if o.Dialect != oauthdev.DialectFeishu {
+		if o.ClientSecret != nil {
+			return fmt.Errorf("clientSecret 只有机密客户端方言（feishu）才用得上")
+		}
+		if o.RegisterURL != "" || o.RegisterName != "" || o.RegisterDesc != "" {
+			return fmt.Errorf("registerUrl 只有 feishu 方言支持")
+		}
+	}
+	if o.RegisterURL != "" {
+		// 和授权地址同样严格：用户在那一页确认「在我的企业里建一个应用」。
+		if err := checkBaseURL(o.RegisterURL, false); err != nil {
+			return fmt.Errorf("registerUrl %w", err)
 		}
 	}
 	for _, sc := range o.Scopes {

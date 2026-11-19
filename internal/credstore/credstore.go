@@ -117,6 +117,19 @@ func (s *Secret) forget() {
 
 // Source 返回凭据实际来自哪里（"keychain" 或 "env:XXX"），
 // 仅在 Value 成功后有意义。用于日志和 -selftest，不含凭据本身。
+// Reload 丢掉进程内缓存、重新从密码管理器读一次。
+//
+// 令牌会被**别的进程**换掉：Quick 拉起的 MCP 服务和配置页是两个进程，
+// 一边续期之后，飞书会作废旧的刷新令牌，另一边手里的缓存从此只会失败。
+// 表单临时值（Literal）没有后端可读，原样返回。
+func (s *Secret) Reload() (string, error) {
+	if s.service == "" {
+		return s.Value()
+	}
+	s.forget()
+	return s.Value()
+}
+
 func (s *Secret) Source() string { return s.src }
 
 // Loaded 报告是否已经取过（不触发读取）。
@@ -139,7 +152,7 @@ func (s *Secret) Value() (string, error) {
 	}
 	s.loaded = true
 
-	v, err := keyring.Get(s.service, s.ref.Account)
+	v, err := readEntry(s.service, s.ref.Account)
 	if err == nil && v != "" {
 		s.val, s.src = v, "keychain"
 		return s.val, s.err
@@ -189,7 +202,7 @@ func (s *Store) Put(r Ref, secret string) error {
 	if secret == "" {
 		return fmt.Errorf("凭据不能为空")
 	}
-	if err := keyring.Set(s.service(r), r.Account, secret); err != nil {
+	if err := writeEntry(s.service(r), r.Account, secret); err != nil {
 		return fmt.Errorf("写入%s失败: %w", BackendName(), err)
 	}
 	// 把新值推进已发出的句柄：它们是共享的，不更新就会继续返回旧凭据。
@@ -206,7 +219,7 @@ func (s *Store) Delete(r Ref) error {
 	if err := r.valid(); err != nil {
 		return err
 	}
-	err := keyring.Delete(s.service(r), r.Account)
+	err := deleteEntry(s.service(r), r.Account)
 	if err != nil && !errors.Is(err, keyring.ErrNotFound) {
 		return fmt.Errorf("删除%s条目失败: %w", BackendName(), err)
 	}

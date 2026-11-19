@@ -43,6 +43,18 @@ type Runtime struct {
 	// SaveSecret 非空时，刷新到的新令牌会写回密码管理器。为空则刷新结果
 	// 只在本次进程里有效 —— 这不算错（下次会再刷一次），但会白耗一次往返。
 	SaveSecret func(string) error
+	// Reload 绕过进程内缓存重新读凭据。为空表示没有后端可读（表单临时值）。
+	Reload func() (string, error)
+}
+
+// refreshLocks 让同一个账号的续期在进程内串行：两个并发的工具调用同时
+// 发现令牌过期时，只能有一个去续期 —— 飞书每次续期都会作废旧的刷新令牌，
+// 第二个拿着旧的去续一定失败。
+var refreshLocks sync.Map // key: spec.ID + "/" + account -> *sync.Mutex
+
+func refreshLock(key string) *sync.Mutex {
+	mu, _ := refreshLocks.LoadOrStore(key, &sync.Mutex{})
+	return mu.(*sync.Mutex)
 }
 
 // bearer 解析出该放进 Authorization 的令牌。
@@ -57,6 +69,9 @@ func (r Runtime) bearer(ctx context.Context, hc *http.Client, secret string) (st
 	if !tok.Stale(time.Now()) {
 		return tok.AccessToken, nil
 	}
+	if tok.ClientSecret != "" {
+		return r.rotatingRefresh(ctx, hc, tok)
+	}
 	if !tok.CanRefresh(time.Now()) {
 		return "", fmt.Errorf("%s 的授权已过期且没有可用的刷新令牌，请到页面上点这条连接的「重新授权」", r.Spec.Name)
 	}
@@ -64,6 +79,8 @@ func (r Runtime) bearer(ctx context.Context, hc *http.Client, secret string) (st
 	if err != nil {
 		return "", err
 	}
+	// 机密客户端（飞书）的应用密钥和令牌存在同一个条目里，刷新时要带上。
+	cfg.ClientSecret = tok.ClientSecret
 	fresh, err := cfg.Refresh(ctx, hc, tok.RefreshToken)
 	if err != nil {
 		return "", fmt.Errorf("刷新 %s 的授权失败（请到页面上点这条连接的「重新授权」）: %w", r.Spec.Name, err)
@@ -78,6 +95,77 @@ func (r Runtime) bearer(ctx context.Context, hc *http.Client, secret string) (st
 			// 轮换 refresh_token，存不下来就意味着库里那个已经作废了 ——
 			// 继续跑下去会变成「这次好了，之后全坏」，而且查不出原因。
 			return "", fmt.Errorf("刷新到了新令牌但写回密码管理器失败（旧的刷新令牌可能已作废，请到页面上点这条连接的「重新授权」）: %w", err)
+		}
+	}
+	return fresh.AccessToken, nil
+}
+
+// rotatingRefresh 是「刷新令牌每次都轮换」的提供方（飞书）的续期。
+//
+// 和普通续期的区别是先看一眼密码管理器里的最新值：另一个进程或另一个
+// 并发调用可能已经续过了，那时手里这份刷新令牌已经作废，再拿它去续只会
+// 失败，而且失败之后这个进程就一直坏着。续期失败时也再看一次，覆盖两个
+// 进程恰好同时续的情况。
+func (r Runtime) rotatingRefresh(ctx context.Context, hc *http.Client, tok oauthdev.TokenSet) (string, error) {
+	mu := refreshLock(r.Spec.ID + "/" + r.Account)
+	mu.Lock()
+	defer mu.Unlock()
+	latest := func() (oauthdev.TokenSet, bool) {
+		if r.Reload == nil {
+			return oauthdev.TokenSet{}, false
+		}
+		v, err := r.Reload()
+		if err != nil {
+			return oauthdev.TokenSet{}, false
+		}
+		t, ok := oauthdev.Parse(v)
+		return t, ok
+	}
+	if t, ok := latest(); ok {
+		if !t.Stale(time.Now()) {
+			return t.AccessToken, nil
+		}
+		tok = t
+	}
+	if !tok.CanRefresh(time.Now()) {
+		return "", fmt.Errorf("%s 的授权已过期（超过 7 天没用），请到页面上点这条连接的「重新授权」", r.Spec.Name)
+	}
+	settings := r.Settings
+	if issuer := tok.IssuerClientID(); issuer != "" {
+		// 以签发令牌的应用为准，不看配置页上填的 App ID。
+		settings = make(map[string]string, len(r.Settings)+1)
+		for k, v := range r.Settings {
+			settings[k] = v
+		}
+		if f := r.Spec.OAuth.ClientIDField; f != "" {
+			settings[f] = issuer
+		}
+	}
+	cfg, err := r.Spec.OAuthConfig(settings)
+	if err != nil {
+		return "", err
+	}
+	cfg.ClientSecret = tok.ClientSecret
+	fresh, err := cfg.Refresh(ctx, hc, tok.RefreshToken)
+	if err != nil {
+		if t, ok := latest(); ok && !t.Stale(time.Now()) {
+			return t.AccessToken, nil
+		}
+		return "", fmt.Errorf("刷新 %s 的授权失败（请到页面上点这条连接的「重新授权」）: %w", r.Spec.Name, err)
+	}
+	if fresh.ClientSecret == "" {
+		fresh.ClientSecret = tok.ClientSecret
+	}
+	if fresh.ClientID == "" {
+		fresh.ClientID = cfg.ClientID
+	}
+	if r.SaveSecret != nil {
+		stored, err := fresh.Marshal()
+		if err != nil {
+			return "", err
+		}
+		if err := r.SaveSecret(stored); err != nil {
+			return "", fmt.Errorf("刷新到了新令牌但写回密码管理器失败（旧的刷新令牌已作废，请到页面上点这条连接的「重新授权」）: %w", err)
 		}
 	}
 	return fresh.AccessToken, nil
@@ -402,6 +490,7 @@ func (c *Client) buildRequest(ctx context.Context, rt Runtime, t Tool, args map[
 	path := t.Path
 	query := url.Values{}
 	body := deepCopyMap(t.BodyConst)
+	fillNow(body, time.Now())
 
 	for _, p := range t.Params {
 		raw, given := args[p.Name]
@@ -434,6 +523,13 @@ func (c *Client) buildRequest(ctx context.Context, rt Runtime, t Tool, args map[
 			if err != nil {
 				return nil, "", err
 			}
+			if p.Format != "" && s != "" {
+				ft, err := formatTime(p, s)
+				if err != nil {
+					return nil, "", err
+				}
+				s = ft.(string)
+			}
 			if s != "" {
 				query.Set(p.Name, s)
 			}
@@ -448,6 +544,11 @@ func (c *Client) buildRequest(ctx context.Context, rt Runtime, t Tool, args map[
 			if err := setPath(body, bodyKey(p), v); err != nil {
 				return nil, "", err
 			}
+		}
+	}
+	for _, jp := range t.BodyJSONString {
+		if err := stringifyPath(body, jp); err != nil {
+			return nil, "", err
 		}
 	}
 	if i := strings.IndexByte(path, '{'); i >= 0 {
@@ -541,6 +642,9 @@ func (c *Client) send(hc *http.Client, rt Runtime, t Tool, req *http.Request, se
 	if fw := rt.Spec.FailWhen; fw != nil {
 		if got, ok := pick(decoded, fw.Path); ok {
 			failed := fw.Exists || sameJSON(got, fw.Equals)
+			if fw.NotEquals != nil {
+				failed = !sameJSON(got, fw.NotEquals)
+			}
 			if failed {
 				msg := excerpt(raw)
 				if fw.MessagePath != "" {
@@ -744,6 +848,137 @@ func zipRow(cols []string, row []any) map[string]any {
 	return out
 }
 
+// nowMsToken 是 bodyConst 里唯一认的动态值：发送时刻的毫秒时间戳。
+// 「把任务标成完成」要的 completed_at 就是它，不该让模型去报当前时间。
+const nowMsToken = "{{now_ms}}"
+
+func fillNow(m map[string]any, now time.Time) {
+	for k, v := range m {
+		switch t := v.(type) {
+		case string:
+			if t == nowMsToken {
+				m[k] = strconv.FormatInt(now.UnixMilli(), 10)
+			}
+		case map[string]any:
+			fillNow(t, now)
+		}
+	}
+}
+
+// timeLayouts 是 format 参数接受的写法。没有时区的按本机时区解释。
+var timeLayouts = []string{
+	time.RFC3339, "2006-01-02T15:04:05", "2006-01-02 15:04:05", "2006-01-02T15:04", "2006-01-02 15:04", "2006-01-02",
+}
+
+// formatTime 把人能读的时间换成接口要的格式（见 Param.Format）。
+func formatTime(p Param, s string) (any, error) {
+	s = strings.TrimSpace(s)
+	var t time.Time
+	if n, err := strconv.ParseInt(s, 10, 64); err == nil {
+		// 已经是时间戳：13 位按毫秒，否则按秒。
+		if len(s) >= 13 {
+			t = time.UnixMilli(n)
+		} else {
+			t = time.Unix(n, 0)
+		}
+	} else {
+		parsed := false
+		for _, l := range timeLayouts {
+			var err error
+			if l == time.RFC3339 {
+				t, err = time.Parse(l, s)
+			} else {
+				t, err = time.ParseInLocation(l, s, time.Local)
+			}
+			if err == nil {
+				parsed = true
+				break
+			}
+		}
+		if !parsed {
+			return nil, fmt.Errorf("参数 %s 要一个时间，比如 2026-11-20 15:00，收到 %q", p.Name, s)
+		}
+	}
+	switch p.Format {
+	case "unix":
+		return strconv.FormatInt(t.Unix(), 10), nil
+	case "unix_ms":
+		return strconv.FormatInt(t.UnixMilli(), 10), nil
+	default:
+		return t.Format(time.RFC3339), nil
+	}
+}
+
+// asArray 接受字符串数组或逗号分隔的字符串；有 itemObject 时把每一项套进模板。
+func asArray(p Param, v any) (any, error) {
+	var items []string
+	switch t := v.(type) {
+	case []any:
+		for _, x := range t {
+			s, ok := x.(string)
+			if !ok {
+				return nil, fmt.Errorf("参数 %s 要一串字符串", p.Name)
+			}
+			if s = strings.TrimSpace(s); s != "" {
+				items = append(items, s)
+			}
+		}
+	case string:
+		for _, s := range strings.Split(t, ",") {
+			if s = strings.TrimSpace(s); s != "" {
+				items = append(items, s)
+			}
+		}
+	default:
+		return nil, fmt.Errorf("参数 %s 要一串字符串", p.Name)
+	}
+	out := make([]any, 0, len(items))
+	for _, it := range items {
+		if p.ItemObject == nil {
+			out = append(out, it)
+			continue
+		}
+		obj := make(map[string]any, len(p.ItemObject))
+		for k, tv := range p.ItemObject {
+			if tv == "{{item}}" {
+				obj[k] = it
+			} else {
+				obj[k] = tv
+			}
+		}
+		out = append(out, obj)
+	}
+	return out, nil
+}
+
+// stringifyPath 把 body 里某个路径上的值换成它的 JSON 文本（见 Tool.BodyJSONString）。
+// 路径上没有值时什么也不做：那一块全由可选参数构成、而这次一个都没给。
+func stringifyPath(body map[string]any, path string) error {
+	parts := strings.Split(path, ".")
+	m := body
+	for _, k := range parts[:len(parts)-1] {
+		next, ok := m[k].(map[string]any)
+		if !ok {
+			return nil
+		}
+		m = next
+	}
+	last := parts[len(parts)-1]
+	v, ok := m[last]
+	if !ok {
+		return nil
+	}
+	if _, already := v.(string); already {
+		return nil
+	}
+	b, err := json.Marshal(v)
+	if err != nil {
+		return fmt.Errorf("body.%s 序列化失败: %w", path, err)
+	}
+	m[last] = string(b)
+	return nil
+}
+
 // deepCopyMap 复制一份 bodyConst：声明是全进程共享的，直接往里写参数
 // 会污染下一次调用。
 func deepCopyMap(m map[string]any) map[string]any {
@@ -906,7 +1141,16 @@ func checkEnum(p Param, v any) error {
 }
 
 func asTyped(p Param, v any) (any, error) {
+	if p.Format != "" {
+		s, err := asString(p, v)
+		if err != nil {
+			return nil, err
+		}
+		return formatTime(p, s)
+	}
 	switch p.Type {
+	case "array":
+		return asArray(p, v)
 	case "number":
 		switch t := v.(type) {
 		case float64:
