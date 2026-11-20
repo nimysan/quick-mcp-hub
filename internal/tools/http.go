@@ -164,6 +164,17 @@ func inputSchema(t httpchan.Tool, accounts []string) map[string]any {
 		prop := map[string]any{"type": typ}
 		if typ == "array" {
 			prop["items"] = map[string]any{"type": "string"}
+			if len(p.ItemFields) > 0 {
+				ip := map[string]any{}
+				for _, f := range p.ItemFields {
+					ip[f] = map[string]any{"type": "string"}
+				}
+				item := map[string]any{"type": "object", "properties": ip, "additionalProperties": false}
+				if len(p.ItemRequired) > 0 {
+					item["required"] = toAny(p.ItemRequired)
+				}
+				prop["items"] = item
+			}
 		}
 		if p.Description != "" {
 			prop["description"] = p.Description
