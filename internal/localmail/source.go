@@ -42,6 +42,10 @@ const (
 // ErrAccess 表示被 macOS 隐私保护（TCC）拦下。用 errors.Is 判断。
 var ErrAccess = errors.New("无权读取本机邮件数据")
 
+// ErrUnsupported 表示来源的存储格式本构建不认识（例如邮件客户端升级后格式变了）。
+// 这种错误重试没有用，Hub 会停用该来源，直到服务重启。
+var ErrUnsupported = errors.New("存储格式不支持")
+
 // ErrNotFound 表示数据目录、文件夹或邮件不存在。
 var ErrNotFound = errors.New("未找到")
 
@@ -53,6 +57,8 @@ type Folder struct {
 	Special string `json:"special,omitempty"` // inbox / sent / drafts …，读取包认得时才有
 	Total   int64  `json:"total"`             // -1 表示来源没有这个统计
 	Unread  int64  `json:"unread,omitempty"`
+	// NameIncomplete 为真表示来源里读不到真名，Path 是生成的标签（如 folder-3）。
+	NameIncomplete bool `json:"name_incomplete,omitempty"`
 }
 
 // Summary 是列表里的一封邮件，不含正文。
@@ -67,6 +73,9 @@ type Summary struct {
 	Read          bool      `json:"read"`
 	HasAttachment bool      `json:"has_attachment,omitempty"`
 	Preview       string    `json:"preview,omitempty"`
+	// Incomplete 列出这封信没取到的字段（值为字段名，如 read、recipients、folder_name）。
+	// 列在这里的字段是零值，不代表真实状态 —— 例如 read=false 不等于未读。
+	Incomplete []string `json:"incomplete,omitempty"`
 }
 
 // Attachment 只描述附件，不给内容。
@@ -132,8 +141,7 @@ type SourceInfo struct {
 }
 
 // Sources 是本构建认识的全部来源，按配置页上的显示顺序。
-// 新版 Outlook（hxstore）完成后在这里加一条即可。
-var Sources = []SourceInfo{appleMailInfo, outlookLegacyInfo}
+var Sources = []SourceInfo{appleMailInfo, outlookLegacyInfo, outlookInfo}
 
 // SourceByID 按标识取来源。
 func SourceByID(id string) (SourceInfo, bool) {
@@ -165,6 +173,7 @@ type Hub struct {
 	cfg  Config
 	mu   sync.Mutex
 	open map[string]Source
+	dead map[string]error // 格式不支持而停用的来源，不再重试
 }
 
 // NewHub 规范化配置并返回 Hub。不打开任何来源。
@@ -178,7 +187,7 @@ func NewHub(cfg Config) *Hub {
 	if cfg.MaxResults > HardMaxResults {
 		cfg.MaxResults = HardMaxResults
 	}
-	return &Hub{cfg: cfg, open: map[string]Source{}}
+	return &Hub{cfg: cfg, open: map[string]Source{}, dead: map[string]error{}}
 }
 
 // Config 返回规范化后的配置。
@@ -218,6 +227,9 @@ func (h *Hub) Source(id string) (Source, error) {
 	if s, ok := h.open[id]; ok {
 		return s, nil
 	}
+	if err, ok := h.dead[id]; ok {
+		return nil, err
+	}
 	var sc *SourceConfig
 	for i := range h.cfg.Sources {
 		if h.cfg.Sources[i].ID == id {
@@ -230,7 +242,11 @@ func (h *Hub) Source(id string) (Source, error) {
 	}
 	s, err := info.Open(OpenOptions{Dir: sc.Dir, MaxBodyBytes: h.cfg.MaxBodyBytes})
 	if err != nil {
-		return nil, Explain(info, err)
+		err = Explain(info, err)
+		if errors.Is(err, ErrUnsupported) {
+			h.dead[id] = err
+		}
+		return nil, err
 	}
 	h.open[id] = s
 	return s, nil
@@ -248,7 +264,7 @@ func (h *Hub) Search(ctx context.Context, id string, q Query) (Page, error) {
 	}
 	p, err := s.Search(ctx, q)
 	if err != nil {
-		return Page{}, explainID(id, err)
+		return Page{}, h.fail(id, err)
 	}
 	if len(p.Messages) > q.Limit { // 适配器理应已经限好，这里再兜一次
 		p.Messages, p.HasMore, p.NextOffset = p.Messages[:q.Limit], true, q.Offset+q.Limit
@@ -270,7 +286,7 @@ func (h *Hub) Get(ctx context.Context, id string, msgID int64) (*Message, error)
 	}
 	m, err := s.Get(ctx, msgID)
 	if err != nil {
-		return nil, explainID(id, err)
+		return nil, h.fail(id, err)
 	}
 	if b, cut := TruncateUTF8(m.Body, h.cfg.MaxBodyBytes); cut {
 		m.Body, m.BodyTruncated = b, true
@@ -286,7 +302,7 @@ func (h *Hub) Folders(ctx context.Context, id string) ([]Folder, error) {
 	}
 	f, err := s.Folders(ctx)
 	if err != nil {
-		return nil, explainID(id, err)
+		return nil, h.fail(id, err)
 	}
 	if f == nil {
 		f = []Folder{}
@@ -320,10 +336,29 @@ func Explain(info SourceInfo, err error) error {
 			"把启动 mcp-hub 的程序（在 Amazon Quick 里用就是 Amazon Quick）加进去并打开开关，"+
 			"然后完全退出 Amazon Quick 再重新打开。本程序不会尝试绕过这项保护。", ErrAccess, info.Name)
 	}
+	if errors.Is(err, ErrUnsupported) {
+		return fmt.Errorf("%w：%s 的本地存储格式这个版本的 mcp-hub 读不了（多半是 %s 升级了）。"+
+			"这个来源已停用，其他来源不受影响；请等 mcp-hub 更新。详情：%v", ErrUnsupported, info.Name, info.Name, err)
+	}
 	if errors.Is(err, ErrNotFound) || errors.Is(err, fs.ErrNotExist) {
 		return fmt.Errorf("%w：%s %v", ErrNotFound, info.Name, err)
 	}
 	return fmt.Errorf("%s: %w", info.Name, err)
+}
+
+// fail 解释一次调用的错误；格式不支持时关闭并停用这个来源。
+func (h *Hub) fail(id string, err error) error {
+	err = explainID(id, err)
+	if errors.Is(err, ErrUnsupported) {
+		h.mu.Lock()
+		if s, ok := h.open[id]; ok {
+			s.Close()
+			delete(h.open, id)
+		}
+		h.dead[id] = err
+		h.mu.Unlock()
+	}
+	return err
 }
 
 func explainID(id string, err error) error {

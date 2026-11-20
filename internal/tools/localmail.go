@@ -123,7 +123,8 @@ func RegisterLocalMail(s *mcp.Server, hub *localmail.Hub) int {
 		Description: "在这台电脑上的邮件客户端数据里找邮件，按接收时间从新到旧。可按发件人、主题、日期范围、文件夹过滤，" +
 			"多个条件取交集；都不填就是最近的邮件。返回发件人、主题、时间、是否已读、摘要和 id，不含正文 —— 要正文用 localmail_get。" +
 			fmt.Sprintf("每次最多 %d 封，has_more 为 true 时把 next_offset 传给 offset 翻页。", cfg.MaxResults) +
-			"只读本机文件，不联网，也不会把邮件标成已读。" + suffix,
+			"只读本机文件，不联网，也不会把邮件标成已读。" +
+			"某封信的 incomplete 里列出的字段没有读到，它的值不可信（例如 read=false 不代表未读），回答时要说明。" + suffix,
 		Annotations: localReadOnly(),
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in localSearchIn) (*mcp.CallToolResult, localSearchOut, error) {
 		ctx, cancel := context.WithTimeout(ctx, localMailTimeout)

@@ -113,3 +113,38 @@ func TestPick(t *testing.T) {
 		t.Error("MaxResults 应被限在 HardMaxResults")
 	}
 }
+
+// 格式不支持：停用该来源、不再重试，也不影响其他来源。
+func TestHubDisablesUnsupportedSource(t *testing.T) {
+	openErr := error(errors.Join(ErrUnsupported, errors.New("自检不达标")))
+	opens := withFake(t, &openErr, &fakeSource{})
+	h := NewHub(Config{Sources: []SourceConfig{{ID: "fake"}}})
+	for i := 0; i < 3; i++ {
+		_, err := h.Folders(context.Background(), "fake")
+		if !errors.Is(err, ErrUnsupported) || !strings.Contains(err.Error(), "已停用") {
+			t.Fatalf("应返回格式不支持并说明已停用，得到 %v", err)
+		}
+	}
+	if *opens != 1 {
+		t.Errorf("格式不支持后不应重试，打开了 %d 次", *opens)
+	}
+}
+
+func TestOutlookAdapterMarksGaps(t *testing.T) {
+	if !errors.Is(outlookErr(fmt.Errorf("x: %w", hxErrUnsupported())), ErrUnsupported) {
+		t.Error("hxstore.ErrUnsupportedFormat 应映射到 ErrUnsupported")
+	}
+	if !errors.Is(outlookErr(hxErrNotFound()), ErrNotFound) {
+		t.Error("hxstore.ErrNotFound 应映射到 ErrNotFound")
+	}
+	s := outlookSummaryOf(hxSummary("recipients"), outlookMessageGaps)
+	for _, f := range []string{"recipients", "read", "has_attachment", "attachments"} {
+		found := false
+		for _, x := range s.Incomplete {
+			found = found || x == f
+		}
+		if !found {
+			t.Errorf("incomplete 缺 %s：%v", f, s.Incomplete)
+		}
+	}
+}
