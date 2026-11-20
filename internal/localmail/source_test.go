@@ -6,8 +6,29 @@ import (
 	"fmt"
 	"io/fs"
 	"strings"
+	"syscall"
 	"testing"
 )
+
+// L2：普通 Unix 权限不足（EACCES）不能被说成隐私保护，也不能引导去开完全磁盘访问权限；
+// TCC（EPERM）才给授权步骤。
+func TestExplainTellsTCCFromUnixPermission(t *testing.T) {
+	info := SourceInfo{Name: "测试来源"}
+	tcc := Explain(info, &fs.PathError{Op: "open", Path: "/x", Err: syscall.EPERM})
+	if !errors.Is(tcc, ErrAccess) || !strings.Contains(tcc.Error(), "完全磁盘访问权限") {
+		t.Errorf("EPERM 应给授权指引，得到 %v", tcc)
+	}
+	for _, err := range []error{
+		&fs.PathError{Op: "open", Path: "/x", Err: syscall.EACCES},
+		fmt.Errorf("包装: %w", &fs.PathError{Op: "stat", Path: "/y", Err: syscall.EACCES}),
+	} {
+		got := Explain(info, err)
+		if errors.Is(got, ErrAccess) || !errors.Is(got, ErrFilePermission) ||
+			!strings.Contains(got.Error(), "不是 macOS 隐私保护") || !strings.Contains(got.Error(), "/") {
+			t.Errorf("EACCES 应说明是文件权限问题，得到 %v", got)
+		}
+	}
+}
 
 type fakeSource struct {
 	body  string
@@ -48,7 +69,7 @@ func withFake(t *testing.T, openErr *error, src *fakeSource) *int {
 }
 
 func TestHubLazyOpenRetriesAfterAccessError(t *testing.T) {
-	openErr := fmt.Errorf("open: %w", fs.ErrPermission)
+	openErr := error(&fs.PathError{Op: "open", Path: "/x", Err: syscall.EPERM}) // macOS 隐私保护拦截
 	opens := withFake(t, &openErr, &fakeSource{})
 	h := NewHub(Config{Sources: []SourceConfig{{ID: "fake"}}})
 	if *opens != 0 {

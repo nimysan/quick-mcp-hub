@@ -19,6 +19,7 @@ import (
 	"io/fs"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 	"unicode/utf8"
 )
@@ -41,6 +42,9 @@ const (
 
 // ErrAccess 表示被 macOS 隐私保护（TCC）拦下。用 errors.Is 判断。
 var ErrAccess = errors.New("无权读取本机邮件数据")
+
+// ErrFilePermission 表示普通的文件权限不足（EACCES），和隐私保护无关。
+var ErrFilePermission = errors.New("文件权限不足")
 
 // ErrUnsupported 表示来源的存储格式本构建不认识（例如邮件客户端升级后格式变了）。
 // 这种错误重试没有用，Hub 会停用该来源，直到服务重启。
@@ -449,11 +453,17 @@ func Explain(info SourceInfo, err error) error {
 	if err == nil {
 		return nil
 	}
-	if errors.Is(err, ErrAccess) || isPermission(err) {
+	if errors.Is(err, ErrAccess) || isTCC(err) {
 		return fmt.Errorf("%w：%s 的数据被 macOS 隐私保护拦下。"+
 			"请打开「系统设置 → 隐私与安全性 → 完全磁盘访问权限」，"+
 			"把启动 mcp-hub 的程序（在 Amazon Quick 里用就是 Amazon Quick）加进去并打开开关，"+
 			"然后完全退出 Amazon Quick 再重新打开。本程序不会尝试绕过这项保护。", ErrAccess, info.Name)
+	}
+	if errors.Is(err, fs.ErrPermission) {
+		return fmt.Errorf("%w：当前用户没有读取 %s 数据的文件权限（%v）。"+
+			"这是普通的文件权限问题，不是 macOS 隐私保护，开「完全磁盘访问权限」解决不了。"+
+			"请检查数据目录的属主和权限（例如目录属于别的用户，或被改成了不可读），"+
+			"或者在配置里改填正确的数据目录。", ErrFilePermission, info.Name, err)
 	}
 	if errors.Is(err, ErrUnsupported) {
 		return fmt.Errorf("%w：%s 的本地存储格式这个版本的 mcp-hub 读不了（多半是 %s 升级了）。"+
@@ -488,13 +498,11 @@ func explainID(id string, err error) error {
 	return Explain(info, err)
 }
 
-// isPermission 认出 TCC 拦截。SQLite 在被拦时只报含糊的
-// "unable to open database file"，那种情况由读取包先用 os.Open 探一次转成 fs.ErrPermission。
-func isPermission(err error) bool {
-	if errors.Is(err, fs.ErrPermission) {
-		return true
-	}
-	return strings.Contains(err.Error(), "operation not permitted")
+// isTCC 认出 macOS 隐私保护（TCC）的拦截：系统调用返回 EPERM（"operation not permitted"）。
+// 普通的 Unix 权限不足返回 EACCES，由 Explain 另给说明。SQLite 在被拦时只报含糊的
+// "unable to open database file"，那种情况由读取包先用 os.Open 探一次，拿到带 errno 的错误。
+func isTCC(err error) bool {
+	return errors.Is(err, syscall.EPERM) || strings.Contains(err.Error(), "operation not permitted")
 }
 
 // ClampLimit 把请求的条数限在 [1, max]，<=0 取 DefaultLimit（不超过 max）。

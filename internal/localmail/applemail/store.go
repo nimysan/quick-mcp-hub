@@ -13,6 +13,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	_ "modernc.org/sqlite" // 纯 Go SQLite 驱动，免 cgo
@@ -24,6 +25,10 @@ var ErrFullDiskAccess = errors.New("无权读取 Apple Mail 数据（macOS 隐�
 	"请打开「系统设置 → 隐私与安全性 → 完全磁盘访问权限」，" +
 	"把运行 mcp-hub 的程序（mcp-hub 本身，或启动它的终端 / Kiro / Claude 等宿主应用）加入并打开开关，" +
 	"然后完全退出并重新启动该程序")
+
+// ErrFilePermission 表示普通的文件权限不足（例如目录被 chmod 成不可读、属于别的用户）。
+// 这和 macOS 隐私保护无关，开完全磁盘访问权限没有用。
+var ErrFilePermission = errors.New("当前用户没有读取 Apple Mail 数据的文件权限")
 
 // ErrNotFound 表示找不到 Apple Mail 数据目录、邮件或其 .emlx 文件。
 var ErrNotFound = errors.New("未找到")
@@ -262,13 +267,28 @@ func (s *Store) toTime(v int64) time.Time {
 
 func (s *Store) fromTime(t time.Time) int64 { return t.Unix() - s.epoch }
 
-// wrapFSErr 把权限错误统一成 ErrFullDiskAccess，把不存在统一成 ErrNotFound。
+// wrapFSErr 把 macOS 隐私保护（TCC）的拦截统一成 ErrFullDiskAccess，普通文件权限不足
+// 统一成 ErrFilePermission，不存在统一成 ErrNotFound。
 func wrapFSErr(path string, err error) error {
 	switch {
-	case errors.Is(err, fs.ErrPermission):
+	case IsTCCDenied(err):
 		return fmt.Errorf("%w（被拒绝的路径: %s，原始错误: %v）", ErrFullDiskAccess, path, err)
+	case errors.Is(err, fs.ErrPermission):
+		return fmt.Errorf("%w（路径: %s）: %w", ErrFilePermission, path, err)
 	case errors.Is(err, fs.ErrNotExist):
 		return fmt.Errorf("%w: %s", ErrNotFound, path)
 	}
 	return err
+}
+
+// IsTCCDenied 认出 macOS 隐私保护的拦截：TCC 拒绝时系统调用返回 EPERM
+// （"operation not permitted"）；普通的 Unix 权限不足返回的是 EACCES（"permission denied"），
+// 那种情况开完全磁盘访问权限没有用。
+func IsTCCDenied(err error) bool {
+	return errors.Is(err, syscall.EPERM) || strings.Contains(err.Error(), "operation not permitted")
+}
+
+// denied 报告 err 是不是读不了（隐私保护或文件权限），这两种都要报错，不能当成「没有正文」。
+func denied(err error) bool {
+	return errors.Is(err, ErrFullDiskAccess) || errors.Is(err, ErrFilePermission)
 }

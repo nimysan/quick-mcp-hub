@@ -8,10 +8,12 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"io/fs"
 	"mime/quotedprintable"
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -435,6 +437,8 @@ func TestPermissionDeniedIsExplained(t *testing.T) {
 	if os.Geteuid() == 0 {
 		t.Skip("root 不受文件权限限制")
 	}
+	// chmod 000 是普通的文件权限不足（EACCES），不是 macOS 隐私保护（EPERM）：
+	// 要报 ErrFilePermission，不能引导用户去开完全磁盘访问权限。
 	f := buildFixture(t)
 	md := filepath.Join(f.base, "MailData")
 	if err := os.Chmod(md, 0); err != nil {
@@ -442,15 +446,15 @@ func TestPermissionDeniedIsExplained(t *testing.T) {
 	}
 	t.Cleanup(func() { os.Chmod(md, 0o755) })
 	_, err := Open(f.root)
-	if !errors.Is(err, ErrFullDiskAccess) || !strings.Contains(err.Error(), "完全磁盘访问权限") {
-		t.Fatalf("want ErrFullDiskAccess with guidance, got %v", err)
+	if !errors.Is(err, ErrFilePermission) || errors.Is(err, ErrFullDiskAccess) || strings.Contains(err.Error(), "完全磁盘访问权限") {
+		t.Fatalf("want ErrFilePermission without TCC guidance, got %v", err)
 	}
 	os.Chmod(md, 0o755)
 
 	os.Chmod(f.root, 0)
 	t.Cleanup(func() { os.Chmod(f.root, 0o755) })
-	if _, err := Open(f.root); !errors.Is(err, ErrFullDiskAccess) {
-		t.Fatalf("根目录被拒应返回 ErrFullDiskAccess, got %v", err)
+	if _, err := Open(f.root); !errors.Is(err, ErrFilePermission) {
+		t.Fatalf("根目录被拒应返回 ErrFilePermission, got %v", err)
 	}
 	os.Chmod(f.root, 0o755)
 
@@ -463,8 +467,20 @@ func TestPermissionDeniedIsExplained(t *testing.T) {
 	acctDir := filepath.Join(f.base, acct)
 	os.Chmod(acctDir, 0)
 	t.Cleanup(func() { os.Chmod(acctDir, 0o755) })
-	if _, err := s.GetMessage(context.Background(), 1, 0); !errors.Is(err, ErrFullDiskAccess) {
-		t.Fatalf("want ErrFullDiskAccess, got %v", err)
+	if _, err := s.GetMessage(context.Background(), 1, 0); !errors.Is(err, ErrFilePermission) {
+		t.Fatalf("want ErrFilePermission, got %v", err)
+	}
+}
+
+// TCC 拦截时系统调用返回 EPERM，这种才给完全磁盘访问权限的指引。
+func TestWrapFSErrTellsTCCFromUnixPermission(t *testing.T) {
+	tcc := wrapFSErr("/x", &fs.PathError{Op: "open", Path: "/x", Err: syscall.EPERM})
+	if !errors.Is(tcc, ErrFullDiskAccess) {
+		t.Errorf("EPERM 应是 ErrFullDiskAccess，得到 %v", tcc)
+	}
+	unix := wrapFSErr("/x", &fs.PathError{Op: "open", Path: "/x", Err: syscall.EACCES})
+	if !errors.Is(unix, ErrFilePermission) || errors.Is(unix, ErrFullDiskAccess) {
+		t.Errorf("EACCES 应是 ErrFilePermission，得到 %v", unix)
 	}
 }
 

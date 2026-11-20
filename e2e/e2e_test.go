@@ -384,7 +384,7 @@ func TestLocalMailErrorPaths(t *testing.T) {
 		args map[string]any
 		want string // 错误说明里应有的关键词
 	}{
-		{"无权限目录", "localmail_list_folders", map[string]any{"source": "apple_mail"}, "完全磁盘访问权限"},
+		{"无权限目录（普通文件权限，不是隐私保护）", "localmail_list_folders", map[string]any{"source": "apple_mail"}, "不是 macOS 隐私保护"},
 		{"目录不存在", "localmail_list_folders", map[string]any{"source": "outlook_legacy"}, "未找到"},
 		{"格式不认识", "localmail_search", map[string]any{"source": "outlook"}, ""},
 		{"格式不认识第二次", "localmail_search", map[string]any{"source": "outlook"}, ""},
@@ -964,8 +964,8 @@ func TestLocalMailRealIsolation(t *testing.T) {
 			t.Errorf("%s：没有文件夹", g.Source)
 		}
 	}
-	if isErr, text := h.call(t, "localmail_search", map[string]any{"source": "outlook_legacy"}, nil); !isErr || !strings.Contains(text, "完全磁盘访问权限") {
-		t.Errorf("无权限来源应返回授权指引")
+	if isErr, text := h.call(t, "localmail_search", map[string]any{"source": "outlook_legacy"}, nil); !isErr || !strings.Contains(text, "文件权限") {
+		t.Errorf("chmod 000 的来源应返回文件权限说明")
 	}
 	for _, src := range []string{"apple_mail", "outlook"} {
 		var p page

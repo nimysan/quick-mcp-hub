@@ -69,14 +69,14 @@ func (s *Store) GetMessage(ctx context.Context, id int64, maxBodyBytes int) (*Me
 
 	path, err := s.locateEmlx(sum.MailboxURL, id)
 	if err != nil {
-		if errors.Is(err, ErrFullDiskAccess) {
+		if denied(err) {
 			return nil, err
 		}
 		return fallback("本机没有这封信的 .emlx 正文文件（可能只同步了邮件头）: " + err.Error())
 	}
 	data, err := os.ReadFile(path)
 	if err != nil {
-		if e := wrapFSErr(path, err); errors.Is(e, ErrFullDiskAccess) {
+		if e := wrapFSErr(path, err); denied(e) {
 			return nil, e
 		}
 		return fallback("读取 " + path + " 失败: " + err.Error())
