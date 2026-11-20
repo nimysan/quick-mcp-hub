@@ -10,11 +10,13 @@
 
 **把企业现有系统接入 [Amazon Quick](https://aws.amazon.com/cn/quick/desktop/)，以员工本人的身份访问。**
 
-**无需在企业侧做集成开发，也无需开放网络访问** —— 接入在员工自己的电脑上完成。
+**无需在企业侧做集成开发，也无需额外开通网络访问** —— 接入在员工自己的电脑上完成，
+走的是员工本来就有的网络和账号。
 
 安装后在配置页面填一次账号，Quick 即可使用这些系统：公司邮箱、金蝶云之家、飞书、QQ、GitHub、Jira。
 
 单个可执行文件，无运行时依赖（不需要 Node 或 Python）；双击即打开配置页面。
+**Windows、macOS、Linux 均提供发布包**，Windows 另有安装包。
 Claude Desktop、Cursor、Cline、Kiro 这类读 MCP 配置的客户端同样可用。
 
 ---
