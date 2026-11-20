@@ -245,6 +245,10 @@ jobs:
       - name: 建 Release 并上传资产
         env:
           GH_TOKEN: ${{ github.token }}
+          # 这个 job 不 checkout（只要产物），所以没有 .git。gh 默认从 git remote
+          # 推断仓库，没有仓库上下文时直接报 "not a git repository" 退出 1。
+          # GH_REPO 显式给出仓库，省掉一次克隆。
+          GH_REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
           TAG="${GITHUB_REF#refs/tags/}"
@@ -272,18 +276,18 @@ jobs:
             echo "Release ${TAG} 已存在，覆盖上传资产"
             gh release upload "$TAG" dist/pkg/*.zip dist/pkg/*.exe dist/pkg/SHA256SUMS*.txt --clobber
           else
-            # --verify-tag：tag 必须已经存在（流水线本来就由它触发），
-            # 避免拼错 ref 时凭空建一个新 tag。
+            # 不用 --verify-tag：它要在本地 git 里查这个 tag，而这个 job 没有
+            # checkout。tag 存在本来就由 job 的 if 条件（refs/tags/v*）保证。
             gh release create "$TAG" \
               --title "$TAG" \
               --notes-file notes.md \
-              --verify-tag \
               dist/pkg/*.zip dist/pkg/*.exe dist/pkg/SHA256SUMS*.txt
           fi
 
       - name: 核对资产并写任务摘要
         env:
           GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
           TAG="${GITHUB_REF#refs/tags/}"
