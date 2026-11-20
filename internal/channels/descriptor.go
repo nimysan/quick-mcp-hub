@@ -402,10 +402,11 @@ var planned = []Descriptor{}
 func All() []Descriptor {
 	specs := specs()
 	mans := pluginManifests()
-	out := make([]Descriptor, 0, len(mailprovider.All)+len(specs)+len(mans)+len(planned))
+	out := make([]Descriptor, 0, len(mailprovider.All)+1+len(specs)+len(mans)+len(planned))
 	for _, p := range mailprovider.All {
 		out = append(out, mailDescriptor(p))
 	}
+	out = append(out, localMailDescriptor())
 	for _, s := range specs {
 		out = append(out, httpDescriptor(s))
 	}

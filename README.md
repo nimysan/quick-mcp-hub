@@ -48,8 +48,17 @@ Claude Desktop、Cursor、Cline、Kiro 这类读 MCP 配置的客户端同样可
 | QQ（本机 NapCat） | 自动配置 | 5 项（群、好友、聊天记录） | 发群消息、发私聊 |
 | GitHub | 授权登录或个人令牌 | 5 项（仓库、Issue、搜索） | 新建 Issue |
 | Jira Cloud | 站点 + 邮箱 + API Token | 8 项（项目、JQL、详情、评论） | 建/改/指派/流转/评论 |
+| 本机邮件（macOS） | 勾选来源，无需密码 | 3 项（文件夹、搜索、读正文），Apple Mail / 旧版 Outlook | 无写工具 |
 
 新增渠道只需增加一份渠道声明，不改程序。
+
+**本机邮件**直接读这台 Mac 上邮件 App 的本地数据，不连邮件服务器、不需要密码，
+也不会改动任何邮件文件。默认关闭，在配置页添加「本机邮件（只读）」并勾选来源后才注册工具
+（`localmail_list_folders` / `localmail_search` / `localmail_get`，用 `source` 参数选
+`apple_mail` 或 `outlook_legacy`）。读 Apple Mail 需要给 **Amazon Quick** 授「完全磁盘访问权限」
+（系统设置 → 隐私与安全性 → 完全磁盘访问权限），授权后完全退出并重开 Amazon Quick；
+没授权时工具返回这段指引，服务和其他来源照常可用。正文长度上限（默认 32 KB）和每页条数上限（默认 50）
+可在「高级设置」里改。
 
 ---
 
