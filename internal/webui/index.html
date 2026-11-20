@@ -213,6 +213,9 @@ function writeOn(d, inst){
 
 function activeTools(v){
   const d=v.descriptor, inst=v.instance;
+  // 本机邮件：一个来源都没开时服务不注册任何工具（开关字段就是 bool 字段，见 placeholderSteps）。
+  if(d.kind === "localmail" &&
+     !d.fields.some(f=>f.kind==="bool" && inst.settings?.[f.name] === "true")) return [];
   const write = new Set(d.writeTools||[]);
   const on = writeOn(d, inst);
   return (d.tools||[]).filter(t=>!write.has(t) || on);
@@ -1138,6 +1141,14 @@ function renderDetailMain(v, tab, st){
     // 稿子把服务器设置单独成一块并标「SSL / TLS 加密」—— 那是事实，保留。
     const basic = d.fields.filter(f=>!f.advanced && f.kind!=="bool");
     const adv   = d.fields.filter(f=>f.advanced);
+    // 本机邮件没有服务器也没有凭据：高级字段是数据目录和读取上限，文案单独给。
+    const local = d.kind === "localmail";
+    const advHead = local
+      ? `<h2>高级设置</h2><span class="meta">数据目录与读取上限，一般不用改</span>`
+      : `<h2>服务器设置</h2><span class="meta">${ic("LockKeyhole")} SSL / TLS 加密</span>`;
+    const saveNote = local
+      ? `${ic("HardDrive")} 不需要密码，配置只保存在本机`
+      : `${ic("LockKeyhole")} 凭据保存在本机，界面中保持隐藏`;
     box.innerHTML = `
       <section class="card pad24">
         <div class="sec-head"><h2>账号配置</h2>
@@ -1146,12 +1157,11 @@ function renderDetailMain(v, tab, st){
         ${adv.length?`
           <div class="hsep"></div>
           <div class="sec-head" style="margin-bottom:12px">
-            <h2>服务器设置</h2>
-            <span class="meta">${ic("LockKeyhole")} SSL / TLS 加密</span></div>
+            ${advHead}</div>
           <div class="dgrid">${adv.map(f=>detailField(f,i,d.accountField)).join("")}</div>`:""}
       </section>
       <div class="dsave">
-        <span class="tiny">${ic("LockKeyhole")} 凭据保存在本机，界面中保持隐藏</span>
+        <span class="tiny">${saveNote}</span>
         <button id="dcancel">取消</button>
         <button class="primary" id="dsave">保存配置</button>
         <span class="st" id="dst"></span>

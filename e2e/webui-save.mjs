@@ -40,6 +40,7 @@ const legacyDir = process.env.E2E_LEGACY_DIR || path.join(realHome, "Library", "
   "UBF8T346G9.Office", "Outlook", "Outlook 15 Profiles", "Main Profile", "Data");
 
 const LOCAL = "本机";
+const LOCAL_OFF = "本机-来源全关";
 const MAIL = "e2e-fake@example.invalid";
 const seed = [
   { type: "custommail", account: MAIL, enabled: true, settings: {
@@ -51,6 +52,9 @@ if (!expectBug) {
     name: LOCAL, apple_mail: "true", outlook_legacy: "true", outlook: "false",
     apple_mail_dir: appleDir, outlook_legacy_dir: legacyDir,
     maxBodyBytes: "10000", maxResults: "30" } });
+  // 来源全关的本机邮件：服务不会注册任何工具，配置页也不能说「已启用」（L3）。
+  seed.push({ type: "localmail", account: LOCAL_OFF, enabled: true, settings: {
+    name: LOCAL_OFF, apple_mail: "false", outlook_legacy: "false", outlook: "false" } });
 }
 fs.writeFileSync(cfgFile, JSON.stringify({ channels: seed }));
 
@@ -174,6 +178,29 @@ async function main() {
     await waitSaved();
     s = savedSettings("localmail", LOCAL);
     check(s.apple_mail === "false" && s.outlook === "true", "本机邮件·权限页保存：关掉的来源确实关了");
+
+    // ---------- L3：本机邮件的文案和工具数 ----------
+    await open("localmail", LOCAL, "account");
+    const acc = await evaluate(`document.getElementById("dmain").textContent`);
+    check(!/服务器设置|SSL|TLS/.test(acc) && acc.includes("高级设置"), "本机邮件·账号配置页：高级字段标题不提服务器和 SSL / TLS");
+    check(!acc.includes("凭据") && acc.includes("不需要密码"), "本机邮件·账号配置页：保存栏不提凭据");
+
+    await open("localmail", LOCAL_OFF, "perm");
+    const offPills = await evaluate(`document.querySelectorAll("#dmain .tools .pill.ok").length`);
+    const perm = await evaluate(`document.getElementById("dmain").innerText`);
+    check(offPills === 0 && perm.includes("0 个已启用"), `本机邮件·来源全关：权限页显示 0 个工具已启用（标「已启用」的 ${offPills} 个）`);
+    await open("localmail", LOCAL, "perm");
+    const onPills = await evaluate(`document.querySelectorAll("#dmain .tools .pill.ok").length`);
+    check(onPills === 3, `本机邮件·开了来源：权限页 3 个工具已启用（实际 ${onPills} 个）`);
+  }
+
+  // ---------- L3：企业邮箱的文案不受影响 ----------
+  if (!expectBug) {
+    await open("custommail", MAIL, "account");
+    const acc = await evaluate(`document.getElementById("dmain").textContent`);
+    // 只有本机邮件有高级字段，其他渠道本来就没有「服务器设置」这一块；这里确认保存栏文案没变、也没多出新块。
+    check(acc.includes("凭据保存在本机") && !acc.includes("高级设置") && !acc.includes("不需要密码"),
+      "企业邮箱·账号配置页：保存栏凭据文案保持原样，没有多出本机邮件的文案");
   }
 
   // ---------- 企业邮箱：截请求体 ----------
