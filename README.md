@@ -7,8 +7,6 @@
 装一个程序，在页面上填一次账号，Quick 里就多出一批能用的功能：读写公司邮箱、
 读写金蝶云之家的消息和审批、读写飞书的消息与日程任务文档、读写 QQ、查 GitHub 和 Jira。
 
-![MCP Hub 配置页面：上方是三步进度，左边「我的连接」是已配好的账号，下面是「内置渠道」，右边是「接入 Amazon Quick」](docs/images/config-mcp-done.png)
-
 使用者是公司里的财务和运营，不是程序员。所以目标机**不需要 Node、不需要
 Python、不需要任何运行时** —— 整个程序就是一个可执行文件，双击打开的就是
 配置页面，没有命令行、不用手工编辑 JSON。
@@ -37,20 +35,7 @@ mcp-hub 换一个接入位置：不改企业系统，不改 Quick，把连接点
 
 ## 集成架构
 
-```
-┌──────────────── 员工电脑（信任边界）────────────────┐
-│                                                     │
-│   Amazon Quick Desktop                              │
-│            │                                        │
-│            │  local MCP connector（本机通道，不过网络）│
-│            ▼                                        │
-│   mcp-hub（一个程序，一次配置）                       │
-│            │                                        │
-└────────────┼────────────────────────────────────────┘
-             │  以员工本人的账号访问
-             ▼
-   企业系统（内网 OA · 财务 · 人事，或 SaaS）
-```
+![集成架构：Amazon Quick Desktop 与 mcp-hub 同在员工电脑这个信任边界内，两者走本机通道不过网络；mcp-hub 以员工本人的账号访问企业系统（内网 OA、财务、人事或 SaaS）](docs/images/architecture.png)
 
 | 设计 | 带来什么 |
 |---|---|
@@ -80,37 +65,16 @@ mcp-hub 省掉的是复制粘贴这一步，**没有新增数据外发面**。
 
 ---
 
-## 怎么用
+## 开始用
 
-### 1. 装
+一个安装包，不需要管理员权限。双击打开的就是配置页面：在「内置渠道」里点要用的
+渠道，按提示扫码或填账号，点「测试并保存」，再把右侧那段 JSON 粘进 Quick。
 
-一个安装包，**不需要管理员权限**。下载地址（Windows / macOS / Linux 全套）见
-[`docs/使用说明.md`](docs/使用说明.md)。
+![MCP Hub 配置页面：上方是三步进度，左边「我的连接」是已配好的账号，下面是「内置渠道」，右边是「接入 Amazon Quick」](docs/images/config-mcp-done.png)
 
-升级前先退出 Amazon Quick —— Quick 以 stdio 启动的子进程锁着 `mcp-hub.exe`。
-
-### 2. 配
-
-双击打开的就是配置页面（上面那张图）。在「内置渠道」里点要用的渠道，按提示扫码
-或填账号，点「测试并保存」—— 连不通就不保存，不会留下一条配好却用不了的连接。
-
-关掉页面程序仍在托盘里运行；要完全退出，右键托盘图标选「退出 mcp-hub」。
-
-### 3. 接到 Quick
-
-配置页面右侧「接入 Amazon Quick」里有一段 JSON，复制它，然后在 Quick 里
-**Customize → Connectors → Create → Add MCP**，Connection type 选 **Local**，
-点 **Paste JSON** 粘进去再点 **Apply**。
-
-![Quick 的 Add MCP 窗口：Connection type 选 Local，把配置粘进 JSON config 再点 Apply](docs/images/add-locl-mcp.png)
-
-成功是这样：Connectors 列表里出现 Mcp Hub（Local / Me，开关打开），
-点进去右侧列出 Quick 认到的全部功能和读写权限。
-
-![Connectors 列表里的 Mcp Hub（Local / Me，开关打开），右侧是 Quick 认到的功能清单](docs/images/local-mcp-on-quick.png)
-
-之后**每次新增渠道、加账号或者改了写开关**，都要在 Quick 里把这个连接器关掉再打开
-（重连）—— 配置页面和给 Quick 用的那个服务是两个程序，后者在启动时读一次配置。
+**下载地址、安装、逐个渠道怎么配、怎么接到 Amazon Quick、常见问题** 全部在
+[`docs/使用说明.md`](docs/使用说明.md)，同内容的 Word 在 `docs/MCP-Hub-使用说明.docx`
+（可以直接发给客户）。
 
 ---
 
