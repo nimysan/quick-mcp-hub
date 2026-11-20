@@ -1,0 +1,36 @@
+{
+  "projectName": "quick-mcp-hub",
+  "projectOwner": "nimysan",
+  "repoType": "github",
+  "repoHost": "https://github.com",
+  "files": [
+    "README.md"
+  ],
+  "imageSize": 100,
+  "commit": false,
+  "commitConvention": "angular",
+  "contributorsPerLine": 7,
+  "contributorsSortAlphabetically": false,
+  "contributors": [
+    {
+      "login": "nimysan",
+      "name": "Sean Ye",
+      "avatar_url": "https://avatars.githubusercontent.com/u/55108?v=4",
+      "profile": "https://github.com/nimysan",
+      "contributions": [
+        "code",
+        "doc",
+        "infra"
+      ]
+    },
+    {
+      "login": "Jeremyforwork",
+      "name": "Jeremy Zhong",
+      "avatar_url": "https://avatars.githubusercontent.com/u/143385324?v=4",
+      "profile": "https://github.com/Jeremyforwork",
+      "contributions": [
+        "code"
+      ]
+    }
+  ]
+}

@@ -117,6 +117,31 @@ Secret Service。不写进配置文件、不写进日志、不上传。
 
 ---
 
+## 合作模式
+
+外部合作者**不直接推主干**，一律走 PR：
+
+1. Fork，或在本仓库开一个分支（`feat/渠道名`、`fix/xxx`）
+2. 提 PR 到 `main`，写清改了什么、怎么验证的
+3. 由下列任一位维护者评审并合并 —— 合作者自己不合自己的 PR
+
+**有合并权限的人**
+
+| 维护者 | GitHub | 范围 |
+|---|---|---|
+| Sean Ye | [@nimysan](https://github.com/nimysan) | 全部 |
+
+新增渠道的 PR 请在描述里附上：这个渠道能做哪些事、哪些算写操作（需要开关）、
+以及用一个真实账号跑通的证据。渠道声明里把写操作标错，等于默认把不可逆动作
+交给模型 —— 这是评审时最先看的一条。
+
+> 这一节是约定。要在技术上拦住直推 `main`，还需要在仓库的
+> **Settings → Branches** 里给 `main` 开分支保护：要求通过 PR 合并、至少 1 个
+> approval、并勾上「Require review from Code Owners」（审阅人由
+> [`.github/CODEOWNERS`](.github/CODEOWNERS) 指定）。
+
+---
+
 ## 贡献与致谢
 
 感谢以下参与方对本项目的贡献：
@@ -126,6 +151,36 @@ Secret Service。不写进配置文件、不写进日志、不上传。
 百盈集团旗下数字科技企业，AWS 亚马逊云科技 GSPP 全球解决方案提供商、
 大湾区亚马逊云科技行业数字化赋能中心（简称：大湾区 IDAC）运营单位，
 聚焦企业上云与全球化出海服务。
+
+### Contributors ✨
+
+<!-- ALL-CONTRIBUTORS-BADGE:START - Do not remove or modify this section -->
+[![All Contributors](https://img.shields.io/badge/all_contributors-2-orange.svg?style=flat-square)](#contributors-)
+<!-- ALL-CONTRIBUTORS-BADGE:END -->
+
+本项目遵循 [all-contributors](https://github.com/all-contributors/all-contributors)
+规范，表格由工具生成（图标含义见 [emoji 对照表](https://allcontributors.org/docs/en/emoji-key)）：
+
+<!-- ALL-CONTRIBUTORS-LIST:START - Do not remove or modify this section -->
+<!-- prettier-ignore-start -->
+<!-- markdownlint-disable -->
+<table>
+  <tbody>
+    <tr>
+      <td align="center" valign="top" width="14.28%"><a href="https://github.com/nimysan"><img src="https://avatars.githubusercontent.com/u/55108?v=4&size=100" width="100px" height="100px" alt="Sean Ye"/><br /><sub><b>Sean Ye</b></sub></a><br /><a href="https://github.com/nimysan/quick-mcp-hub/commits?author=nimysan" title="Code">💻</a> <a href="https://github.com/nimysan/quick-mcp-hub/commits?author=nimysan" title="Documentation">📖</a> <a href="#infra-nimysan" title="Infrastructure (Hosting, Build-Tools, etc)">🚇</a></td>
+      <td align="center" valign="top" width="14.28%"><a href="https://github.com/Jeremyforwork"><img src="https://avatars.githubusercontent.com/u/143385324?v=4&size=100" width="100px" height="100px" alt="Jeremy Zhong"/><br /><sub><b>Jeremy Zhong</b></sub></a><br /><a href="https://github.com/nimysan/quick-mcp-hub/commits?author=Jeremyforwork" title="Code">💻</a></td>
+    </tr>
+  </tbody>
+</table>
+
+<!-- markdownlint-restore -->
+<!-- prettier-ignore-end -->
+
+<!-- ALL-CONTRIBUTORS-LIST:END -->
+
+要记一位新的贡献者，在任意 issue 或 PR 里评论
+`@all-contributors please add @用户名 for code, doc`，机器人会开 PR 更新这张表；
+也可以本地跑 `npx all-contributors-cli add 用户名 code,doc`。
 
 ---
 
