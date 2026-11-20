@@ -4,6 +4,7 @@ import (
 	"context"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
@@ -57,5 +58,31 @@ func TestLocalMailToolsAreReadOnly(t *testing.T) {
 	}
 	if !r.IsError {
 		t.Error("来源打不开时应返回 IsError")
+	}
+}
+
+// since/before 是本地日历日：东八区的「2026-11-21」从本地零点开始，不是 UTC 零点。
+func TestParseLocalDateUsesLocalZone(t *testing.T) {
+	old := time.Local
+	time.Local = time.FixedZone("CST", 8*3600)
+	defer func() { time.Local = old }()
+
+	got, err := parseLocalDate("2026-11-21")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := time.Date(2026, 11, 21, 0, 0, 0, 0, time.Local)
+	if !got.Equal(want) {
+		t.Fatalf("parseLocalDate = %v，想要本地零点 %v", got, want)
+	}
+	// 本地 11-21 03:00 收到的信（UTC 11-20 19:00）必须落在 since=11-21 里。
+	if early := time.Date(2026, 11, 20, 19, 0, 0, 0, time.UTC); early.Before(got) {
+		t.Error("本地凌晨收到的信被 since 排除了")
+	}
+	if z, err := parseLocalDate(""); err != nil || !z.IsZero() {
+		t.Errorf("空串应为零值，得到 %v %v", z, err)
+	}
+	if _, err := parseLocalDate("2026/11/21"); err == nil {
+		t.Error("格式不对应报错")
 	}
 }

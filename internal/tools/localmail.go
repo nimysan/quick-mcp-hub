@@ -38,8 +38,8 @@ type localSearchIn struct {
 	FolderID int64  `json:"folder_id,omitempty" jsonschema:"只看这个文件夹，取值来自 localmail_list_folders 的 id；不填为全部文件夹"`
 	From     string `json:"from,omitempty" jsonschema:"发件人显示名或地址包含这段文字"`
 	Subject  string `json:"subject,omitempty" jsonschema:"主题包含这段文字"`
-	Since    string `json:"since,omitempty" jsonschema:"起始日期（含），格式 YYYY-MM-DD"`
-	Before   string `json:"before,omitempty" jsonschema:"截止日期（不含），格式 YYYY-MM-DD"`
+	Since    string `json:"since,omitempty" jsonschema:"起始日期（含），格式 YYYY-MM-DD，按这台电脑的时区"`
+	Before   string `json:"before,omitempty" jsonschema:"截止日期（不含），格式 YYYY-MM-DD，按这台电脑的时区"`
 	Limit    int    `json:"limit,omitempty" jsonschema:"最多返回几封，默认 20"`
 	Offset   int    `json:"offset,omitempty" jsonschema:"翻页：上一次结果里的 next_offset"`
 }
@@ -58,6 +58,22 @@ type localGetIn struct {
 type localGetOut struct {
 	Source string `json:"source"`
 	localmail.Message
+}
+
+// parseLocalDate 按本机时区解析 YYYY-MM-DD。
+//
+// 本机邮件比的是绝对时刻，而用户说的「11 月 20 日」是本地日历日。用 parseDate
+// （UTC 零点）会让东八区每天 0–8 点收到的信落到前一天：since 漏掉它们，
+// before 又把次日凌晨的信带进来。IMAP 的 SINCE/BEFORE 只认日期，不受影响。
+func parseLocalDate(s string) (time.Time, error) {
+	if s == "" {
+		return time.Time{}, nil
+	}
+	t, err := time.ParseInLocation(dateLayout, s, time.Local)
+	if err != nil {
+		return time.Time{}, fmt.Errorf("日期 %q 格式不对，应为 YYYY-MM-DD", s)
+	}
+	return t, nil
 }
 
 // RegisterLocalMail 注册本机邮件的三个只读工具，返回注册数。
@@ -137,10 +153,10 @@ func RegisterLocalMail(s *mcp.Server, hub *localmail.Hub) int {
 			FolderID: in.FolderID, From: strings.TrimSpace(in.From), Subject: strings.TrimSpace(in.Subject),
 			Limit: in.Limit, Offset: in.Offset,
 		}
-		if q.Since, err = parseDate(in.Since); err != nil {
+		if q.Since, err = parseLocalDate(in.Since); err != nil {
 			return nil, localSearchOut{}, err
 		}
-		if q.Before, err = parseDate(in.Before); err != nil {
+		if q.Before, err = parseLocalDate(in.Before); err != nil {
 			return nil, localSearchOut{}, err
 		}
 		p, err := hub.Search(ctx, id, q)
