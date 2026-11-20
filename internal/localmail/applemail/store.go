@@ -39,8 +39,27 @@ type Store struct {
 	db      *sql.DB
 	cols    map[string]map[string]bool // 表 → 列集合
 	epoch   int64                      // 数据库时间值加上它得到 Unix 秒
-	// Immutable 为真表示 mode=ro 打不开、退回了 immutable=1（看不到 WAL 里未合并的最新改动）。
+	dbPath  string
+	// immutable 为真表示以 immutable=1 打开（看不到 WAL 里未合并的最新改动）：
+	// 要么 -wal / -shm 不全（避免新建文件），要么 mode=ro 打不开（fallback）。
 	immutable bool
+	fallback  bool
+}
+
+// sidecarsExist 报告 -wal 和 -shm 是否都已存在。
+func sidecarsExist(dbPath string) bool {
+	for _, suf := range []string{"-wal", "-shm"} {
+		if _, err := os.Stat(dbPath + suf); err != nil {
+			return false
+		}
+	}
+	return true
+}
+
+// Stale 报告这个连接是否该重开：因缺 -wal / -shm 用了 immutable=1，
+// 而现在两个都出现了（Mail.app 启动了），重开后能用 mode=ro 读到最新数据。
+func (s *Store) Stale() bool {
+	return s.immutable && !s.fallback && sidecarsExist(s.dbPath)
 }
 
 // DefaultRoot 返回 ~/Library/Mail。
@@ -106,18 +125,29 @@ func Open(root string) (*Store, error) {
 	}
 	f.Close()
 
-	s := &Store{root: root, base: base, version: ver}
-	// 首选 mode=ro：共享锁 + 读 WAL，能看到 Mail.app 刚写入的数据。
-	// 只有它打不开（例如 -shm 不可用）才退回 immutable=1；immutable 跳过 WAL，
-	// Mail.app 正在写时可能读到旧数据甚至 "malformed"，所以只作后备。
-	db, err := openRO(dbPath, false)
-	if err != nil {
+	s := &Store{root: root, base: base, version: ver, dbPath: dbPath}
+	// 硬约束：不在 Mail 的数据目录里新建任何文件。SQLite 用 mode=ro 读 WAL 库时，
+	// 缺 -wal 或 -shm 会自己建出来（Mail.app 正常退出后两个通常都不在）。
+	// 所以两个都已存在才用 mode=ro（共享锁 + 读 WAL，能看到 Mail.app 刚写入的数据）；
+	// 缺任一个就用 immutable=1：只读主库，不碰也不建 -wal / -shm。
+	// immutable 时 Mail 一旦启动就会出现这两个文件，Stale 据此报告过期，由上层重新打开。
+	// shortcut: 检查和打开之间 Mail 恰好退出并删掉两个文件时，mode=ro 仍会重建它们；
+	// 窗口只有微秒级，要彻底消除得换成能拒绝建文件的 VFS。
+	imm := !sidecarsExist(dbPath)
+	db, err := openRO(dbPath, imm)
+	if err != nil && !imm {
+		// mode=ro 打不开（例如 -shm 不可写）才退回 immutable=1。immutable 跳过 WAL，
+		// Mail.app 正在写时可能读到旧数据甚至 "malformed"，所以只作后备。
 		db2, err2 := openRO(dbPath, true)
 		if err2 != nil {
 			return nil, fmt.Errorf("只读打开 %s 失败: %v（immutable 后备也失败: %v）", dbPath, err, err2)
 		}
-		db, s.immutable = db2, true
+		db, err, s.fallback = db2, nil, true
 	}
+	if err != nil {
+		return nil, fmt.Errorf("只读打开 %s 失败: %w", dbPath, err)
+	}
+	s.immutable = imm || s.fallback
 	s.db = db
 	if err := s.loadSchema(); err != nil {
 		db.Close()
@@ -158,7 +188,7 @@ func (s *Store) Close() error { return s.db.Close() }
 // Version 返回探测到的数据目录版本，例如 "V10"。
 func (s *Store) Version() string { return s.version }
 
-// Immutable 报告是否退回了 immutable 模式打开。
+// Immutable 报告是否以 immutable 模式打开。
 func (s *Store) Immutable() bool { return s.immutable }
 
 func (s *Store) loadSchema() error {

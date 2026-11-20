@@ -11,8 +11,9 @@ import (
 // mode=ro 的读连接是进程里最后一个连接时，关闭时也不能做检查点：主库和
 // 未合并的 -wal 都必须原样不动（Mail.app 没在跑、WAL 里还有数据的情况）。
 //
-// 注意这里**不**断言 -shm：SQLite 读 WAL 库必须有 -shm，没有时会新建一个，
-// 见 reports/localmail-e2e.md 的 review 发现。
+// 注意这里直接用 mode=ro 打开、**不**断言 -shm：SQLite 读 WAL 库必须有 -shm，
+// 没有时会新建一个。所以 Open 只在 -wal、-shm 都存在时才用 mode=ro，
+// 见 sidecar_test.go 的 TestOpenNeverCreatesSidecars。
 func TestReadOnlyOpenLeavesDBAndWALUntouched(t *testing.T) {
 	dir := t.TempDir()
 	w := filepath.Join(dir, "writer.db")

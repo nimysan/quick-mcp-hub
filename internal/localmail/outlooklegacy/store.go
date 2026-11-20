@@ -2,8 +2,9 @@
 // Outlook.sqlite 提供元数据，Messages/*.olk15Message 是正文缓存，
 // Message Sources/*.olk15MsgSource 是完整 MIME，Message Attachments/*.olk15MsgAttachment 是附件。
 //
-// 本包绝不写任何 Outlook 文件：SQLite 以 mode=ro + query_only 打开，
-// 没有未合并的 WAL 时再加 immutable=1（连 -shm 都不碰）；数据文件只用 os.Open 读。
+// 本包绝不写也绝不新建任何 Outlook 文件：SQLite 以 mode=ro + query_only 打开，
+// 只有 -wal 有数据且 -shm 已存在时才读 WAL，否则加 immutable=1（连 -wal / -shm 都不碰）；
+// 数据文件只用 os.Open 读。
 package outlooklegacy
 
 import (
@@ -43,7 +44,9 @@ type Options struct {
 type Store struct {
 	db        *sql.DB
 	dataDir   string
+	dbPath    string
 	immutable bool
+	forced    bool // immutable 由调用方指定，不自动重开
 	maxBody   int
 }
 
@@ -57,8 +60,9 @@ func Open(dataDir string, opt Options) (*Store, error) {
 	if _, err := os.Stat(dbPath); err != nil {
 		return nil, fmt.Errorf("找不到旧版 Outlook 数据库: %w", err)
 	}
-	imm := walEmpty(dbPath)
-	if opt.Immutable != nil {
+	imm := !walReadable(dbPath)
+	forced := opt.Immutable != nil
+	if forced {
 		imm = *opt.Immutable
 	}
 	db, err := sql.Open("sqlite", dsn(dbPath, imm))
@@ -74,18 +78,29 @@ func Open(dataDir string, opt Options) (*Store, error) {
 	if maxBody <= 0 {
 		maxBody = 256 << 10
 	}
-	return &Store{db: db, dataDir: dataDir, immutable: imm, maxBody: maxBody}, nil
+	return &Store{db: db, dataDir: dataDir, dbPath: dbPath, immutable: imm, forced: forced, maxBody: maxBody}, nil
 }
 
 // Immutable 报告本次是否以 immutable=1 打开。
 func (s *Store) Immutable() bool { return s.immutable }
 
+// Stale 报告这个连接是否该重开：自动选了 immutable=1，而现在 -wal 有了数据、
+// -shm 也在（Outlook 写入了新邮件），重开后能用 mode=ro 读到。
+func (s *Store) Stale() bool { return s.immutable && !s.forced && walReadable(s.dbPath) }
+
 // Close 关闭数据库连接。
 func (s *Store) Close() error { return s.db.Close() }
 
-func walEmpty(dbPath string) bool {
+// walReadable 报告能否用 mode=ro 读 WAL 而不新建文件：-wal 有数据且 -shm 已存在。
+// -wal 为空时没有要读的数据，用 immutable=1 连 -shm 都不碰；
+// 缺 -wal 或 -shm 时 mode=ro 会把缺的那个建出来，违反只读约束。
+func walReadable(dbPath string) bool {
 	fi, err := os.Stat(dbPath + "-wal")
-	return errors.Is(err, os.ErrNotExist) || (err == nil && fi.Size() == 0)
+	if err != nil || fi.Size() == 0 {
+		return false
+	}
+	_, err = os.Stat(dbPath + "-shm")
+	return err == nil
 }
 
 func dsn(dbPath string, immutable bool) string {
