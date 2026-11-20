@@ -169,12 +169,26 @@ type SourceConfig struct {
 // Hub 惰性打开各来源并缓存。打开失败不缓存：用户授权之后重试就能成功，
 // 不需要重启服务（macOS 的完全磁盘访问权限通常要重启宿主程序才生效，
 // 那一步由用户做，这里不假设）。
+//
+// 打开按来源各自进行，同一来源同时只打开一次（singleflight），不持有全局锁：
+// 新版 Outlook 第一次打开要建索引，不能拖住其他来源。调用方只等到自己的 ctx
+// 结束为止；打开本身在后台继续，结果留给下一次调用。
 type Hub struct {
-	cfg  Config
-	mu   sync.Mutex
-	open map[string]Source
-	dead map[string]error // 格式不支持而停用的来源，不再重试
+	cfg    Config
+	mu     sync.Mutex
+	open   map[string]*entry // 已打开或正在打开的来源
+	dead   map[string]error  // 格式不支持而停用的来源，不再重试
+	closed bool
 }
+
+// entry 是一个来源的打开结果。ready 关闭之后 src / err 不再改变。
+type entry struct {
+	ready chan struct{}
+	src   Source
+	err   error
+}
+
+var errHubClosed = errors.New("本机邮件服务已关闭")
 
 // NewHub 规范化配置并返回 Hub。不打开任何来源。
 func NewHub(cfg Config) *Hub {
@@ -187,7 +201,7 @@ func NewHub(cfg Config) *Hub {
 	if cfg.MaxResults > HardMaxResults {
 		cfg.MaxResults = HardMaxResults
 	}
-	return &Hub{cfg: cfg, open: map[string]Source{}, dead: map[string]error{}}
+	return &Hub{cfg: cfg, open: map[string]*entry{}, dead: map[string]error{}}
 }
 
 // Config 返回规范化后的配置。
@@ -220,41 +234,77 @@ func (h *Hub) Pick(id string) (string, error) {
 	return "", fmt.Errorf("来源 %q 未启用，可用的是：%s", id, strings.Join(ids, " / "))
 }
 
-// Source 返回一个已打开的来源，第一次调用时打开。
-func (h *Hub) Source(id string) (Source, error) {
+// acquire 返回一个已打开的来源，第一次调用时打开。
+func (h *Hub) acquire(ctx context.Context, id string) (Source, error) {
 	h.mu.Lock()
-	defer h.mu.Unlock()
-	if s, ok := h.open[id]; ok {
-		return s, nil
+	if h.closed {
+		h.mu.Unlock()
+		return nil, errHubClosed
 	}
 	if err, ok := h.dead[id]; ok {
+		h.mu.Unlock()
 		return nil, err
 	}
-	var sc *SourceConfig
-	for i := range h.cfg.Sources {
-		if h.cfg.Sources[i].ID == id {
-			sc = &h.cfg.Sources[i]
+	e := h.open[id]
+	if e == nil {
+		var sc *SourceConfig
+		for i := range h.cfg.Sources {
+			if h.cfg.Sources[i].ID == id {
+				sc = &h.cfg.Sources[i]
+			}
 		}
+		info, ok := SourceByID(id)
+		if sc == nil || !ok {
+			h.mu.Unlock()
+			return nil, fmt.Errorf("来源 %q 未启用", id)
+		}
+		e = &entry{ready: make(chan struct{})}
+		h.open[id] = e
+		go h.doOpen(id, info, OpenOptions{Dir: sc.Dir, MaxBodyBytes: h.cfg.MaxBodyBytes}, e)
 	}
-	info, ok := SourceByID(id)
-	if sc == nil || !ok {
-		return nil, fmt.Errorf("来源 %q 未启用", id)
+	h.mu.Unlock()
+
+	select {
+	case <-e.ready:
+	case <-ctx.Done():
+		return nil, fmt.Errorf("等待打开来源 %s 时超时或被取消（打开仍在后台进行，稍后重试即可）: %w", id, ctx.Err())
 	}
-	s, err := info.Open(OpenOptions{Dir: sc.Dir, MaxBodyBytes: h.cfg.MaxBodyBytes})
+	if e.err != nil {
+		return nil, e.err
+	}
+	return e.src, nil
+}
+
+// doOpen 在后台打开一个来源，结果写进 e。
+func (h *Hub) doOpen(id string, info SourceInfo, opt OpenOptions, e *entry) {
+	s, err := info.Open(opt)
 	if err != nil {
 		err = Explain(info, err)
+	}
+	h.mu.Lock()
+	var orphan Source
+	if h.closed && err == nil { // 打开期间 Hub 关了：结果没人用，直接关掉
+		orphan, s, err = s, nil, errHubClosed
+	}
+	e.src, e.err = s, err
+	if err != nil {
+		if h.open[id] == e {
+			delete(h.open, id) // 失败不缓存
+		}
 		if errors.Is(err, ErrUnsupported) {
 			h.dead[id] = err
 		}
-		return nil, err
 	}
-	h.open[id] = s
-	return s, nil
+	h.mu.Unlock()
+	close(e.ready)
+	if orphan != nil {
+		orphan.Close()
+	}
 }
 
 // Search 在一个来源里列邮件，限制条数并截短摘要。
 func (h *Hub) Search(ctx context.Context, id string, q Query) (Page, error) {
-	s, err := h.Source(id)
+	s, err := h.acquire(ctx, id)
 	if err != nil {
 		return Page{}, err
 	}
@@ -280,7 +330,7 @@ func (h *Hub) Search(ctx context.Context, id string, q Query) (Page, error) {
 
 // Get 取一封邮件，正文不超过 MaxBodyBytes。
 func (h *Hub) Get(ctx context.Context, id string, msgID int64) (*Message, error) {
-	s, err := h.Source(id)
+	s, err := h.acquire(ctx, id)
 	if err != nil {
 		return nil, err
 	}
@@ -296,7 +346,7 @@ func (h *Hub) Get(ctx context.Context, id string, msgID int64) (*Message, error)
 
 // Folders 列一个来源的文件夹。
 func (h *Hub) Folders(ctx context.Context, id string) ([]Folder, error) {
-	s, err := h.Source(id)
+	s, err := h.acquire(ctx, id)
 	if err != nil {
 		return nil, err
 	}
@@ -310,16 +360,27 @@ func (h *Hub) Folders(ctx context.Context, id string) ([]Folder, error) {
 	return f, nil
 }
 
-// Close 关闭已打开的来源。
+// Close 关闭已打开的来源；正在打开的来源打开完成后自动关闭。
 func (h *Hub) Close() error {
 	h.mu.Lock()
-	defer h.mu.Unlock()
+	h.closed = true
+	var srcs []Source
+	for id, e := range h.open {
+		select {
+		case <-e.ready:
+			if e.src != nil {
+				srcs = append(srcs, e.src)
+			}
+		default:
+		}
+		delete(h.open, id)
+	}
+	h.mu.Unlock()
 	var first error
-	for id, s := range h.open {
+	for _, s := range srcs {
 		if err := s.Close(); err != nil && first == nil {
 			first = err
 		}
-		delete(h.open, id)
 	}
 	return first
 }
@@ -351,12 +412,20 @@ func (h *Hub) fail(id string, err error) error {
 	err = explainID(id, err)
 	if errors.Is(err, ErrUnsupported) {
 		h.mu.Lock()
-		if s, ok := h.open[id]; ok {
-			s.Close()
-			delete(h.open, id)
+		var s Source
+		if e, ok := h.open[id]; ok {
+			select {
+			case <-e.ready:
+				s = e.src
+				delete(h.open, id)
+			default:
+			}
 		}
 		h.dead[id] = err
 		h.mu.Unlock()
+		if s != nil {
+			s.Close()
+		}
 	}
 	return err
 }
