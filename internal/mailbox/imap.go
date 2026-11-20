@@ -84,6 +84,15 @@ func connect(cfg config.Config) (*session, error) {
 		return nil, fmt.Errorf("连接 IMAP %s 失败: %w", cfg.IMAPAddr(), err)
 	}
 
+	// 必须先等到服务器的欢迎语再发命令。go-imap 默认不等，建连后立刻发 ID；
+	// QQ 邮箱对抢在欢迎语之前到达的命令不回应，连接挂到被服务器关掉为止
+	// （日志里是 ID 的 unexpected EOF，接着登录报 use of closed network
+	// connection）。实测不等 1/10 能连上，等了 10/10。
+	if err := c.WaitGreeting(); err != nil {
+		c.Close()
+		return nil, fmt.Errorf("连接 IMAP %s 失败，没等到服务器欢迎语: %w", cfg.IMAPAddr(), err)
+	}
+
 	if _, err := c.ID(&imap.IDData{
 		Name:      "mcp-hub",
 		Version:   Version,
