@@ -2,6 +2,12 @@
 
 <img src="packaging/logo.png" width="96" alt="MCP Hub">
 
+[![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg?style=flat-square)](LICENSE)
+![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey.svg?style=flat-square)
+<!-- ALL-CONTRIBUTORS-BADGE:START - Do not remove or modify this section -->
+[![All Contributors](https://img.shields.io/badge/all_contributors-2-orange.svg?style=flat-square)](#contributors-)
+<!-- ALL-CONTRIBUTORS-BADGE:END -->
+
 **让 Amazon Quick 用上企业现有系统，不需要先做一个整合项目。**
 
 装一个程序，在页面上填一次账号，Quick 里就多出一批能用的功能：读写公司邮箱、
@@ -53,7 +59,7 @@ mcp-hub 省掉的是复制粘贴这一步，**没有新增数据外发面**。
 | 渠道 | 接入方式 | 只读 | 需开写开关 |
 |---|---|---|---|
 | 金蝶云之家 | 扫码授权 | 11 项（消息、审批、日程、通讯录） | 同意审批、发群消息、发私聊 |
-| 飞书（国内版） | 扫码自动建应用 + 扫码授权 | 18 项（消息、日程与忙闲、任务、搜文档读文档、多维表格） | 发消息、回复、建日程、邀请参会人、回复邀请、建任务、完成任务、评论任务、加记录、改记录 |
+| 飞书（国内版） | 扫码自动建应用 + 扫码授权 | 18 项（消息、日程与忙闲、任务、搜文档读文档、多维表格） | 10 项（发消息、回复、建日程、邀请参会人、建任务、改多维表格记录……） |
 | 企业邮箱 | 邮箱地址 + 密码 | 3 项（最近邮件、搜索、读正文） | 发送邮件 |
 | QQ 邮箱 | 邮箱地址 + 授权码 | 同上 | 发送邮件 |
 | QQ（本机 NapCat） | 自动配置 | 5 项（群、好友、聊天记录） | 发群消息、发私聊 |
@@ -73,8 +79,8 @@ mcp-hub 省掉的是复制粘贴这一步，**没有新增数据外发面**。
 ![MCP Hub 配置页面：上方是三步进度，左边「我的连接」是已配好的账号，下面是「内置渠道」，右边是「接入 Amazon Quick」](docs/images/config-mcp-done.png)
 
 **下载地址、安装、逐个渠道怎么配、怎么接到 Amazon Quick、常见问题** 全部在
-[`docs/使用说明.md`](docs/使用说明.md)，同内容的 Word 在 `docs/MCP-Hub-使用说明.docx`
-（可以直接发给客户）。
+[`docs/使用说明.md`](docs/使用说明.md)，同内容的 Word 在
+[`docs/MCP-Hub-使用说明.docx`](docs/MCP-Hub-使用说明.docx)（可以直接发给客户）。
 
 ---
 
@@ -146,10 +152,6 @@ Secret Service。不写进配置文件、不写进日志、不上传。
 
 ### Contributors ✨
 
-<!-- ALL-CONTRIBUTORS-BADGE:START - Do not remove or modify this section -->
-[![All Contributors](https://img.shields.io/badge/all_contributors-2-orange.svg?style=flat-square)](#contributors-)
-<!-- ALL-CONTRIBUTORS-BADGE:END -->
-
 本项目遵循 [all-contributors](https://github.com/all-contributors/all-contributors)
 规范，表格由工具生成（图标含义见 [emoji 对照表](https://allcontributors.org/docs/en/emoji-key)）：
 
@@ -207,7 +209,7 @@ Secret Service。不写进配置文件、不写进日志、不上传。
 
 | 看什么 | 去哪 |
 |---|---|
-| 怎么下载、安装、配置、接到 Quick（含下载地址） | [`docs/使用说明.md`](docs/使用说明.md) · 同内容的 Word：`docs/MCP-Hub-使用说明.docx` |
+| 怎么下载、安装、配置、接到 Quick（含下载地址） | [`docs/使用说明.md`](docs/使用说明.md) · 同内容的 Word：[`MCP-Hub-使用说明.docx`](docs/MCP-Hub-使用说明.docx) |
 | 发布包里给客户的那份 | [`packaging/快速开始.md`](packaging/快速开始.md) |
 | 怎么构建、为什么这样实现（贡献者看） | [`docs/实现笔记.md`](docs/实现笔记.md) |
 | 第三方开源组件清单 | [`THIRD-PARTY-NOTICES.md`](THIRD-PARTY-NOTICES.md) |
