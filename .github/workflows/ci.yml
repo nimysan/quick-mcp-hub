@@ -211,24 +211,18 @@ jobs:
             stage/out/SHA256SUMS-setup.txt
           retention-days: 30
 
-  publish-s3:
-    name: 上传公开下载地址
-    # GitHub Release 解决不了客户下载：仓库是私有的，客户点 Release 链接只会
-    # 看到 404，而资产 URL 的鉴权看的是访问者身份，不是链接本身，所以也没法
-    # 把链接转发出去。公开下载走 S3 + CloudFront。
+  publish-release:
+    name: 发布 GitHub Release
+    # 版本的事实来源就是这个 tag 和它的 Release 资产，不再往 S3/CDN 传一份。
     #
-    # key 里带版本号，所以**不需要** CloudFront 失效：每个版本是一组新 key，
-    # 已缓存的老版本本来就不该变。karo-admin-mobile 那边每次发版都要手动
-    # invalidation，是因为它的 latest manifest 用的是固定 key。
+    # 幂等：同一个 tag 重跑（重新触发流水线、或补传产物）不会失败 ----
+    # Release 已存在就 upload --clobber 覆盖资产，而不是报「already exists」。
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     needs: [build, installer-windows]
     permissions:
-      contents: read
-      # OIDC 换临时凭据。这个仓库里没有、也不该有长期 AK/SK：
-      # 账号 675046263436 的 karo-mcms-github-actions 角色信任
-      # repo:nimysan/*:*，本仓库已经在范围内。
-      id-token: write
+      # 整条流水线唯一要写仓库的权限：建 Release、上传资产。
+      contents: write
     steps:
       - uses: actions/download-artifact@v4
         with:
@@ -236,72 +230,70 @@ jobs:
           merge-multiple: true
           path: dist/pkg
 
-      - name: 取临时凭据
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          # 角色 ARN 带账号号，放仓库变量而不是写进文件。
-          role-to-assume: ${{ vars.AWS_PUBLISH_ROLE_ARN }}
-          aws-region: us-east-1
-          role-session-name: mcp-hub-publish-${{ github.run_id }}
-
-      - name: 上传到 S3
-        env:
-          # 桶挂在 CloudFront E1S139XADZ4HWZ(pub.itheone.org)后面，
-          # origin path 是 /static，所以 key 的 static/ 这一层在 URL 里不出现。
-          BUCKET: karo-media-contents
-          PREFIX: static/mcp-hub
+      - name: 断言产物齐全
+        # 少一个平台比传错更难发现：下载页看起来正常，只有用那个平台的客户打不开。
         run: |
           set -euo pipefail
-          TAG="${GITHUB_REF#refs/tags/}"
           ls -l dist/pkg
-
-          # 断言产物齐全。少传一个平台比传错更难发现：下载页看起来正常，
-          # 只有用那个平台的客户打不开。
-          for f in dist/pkg/*.zip dist/pkg/*.exe dist/pkg/SHA256SUMS.txt; do
+          for f in dist/pkg/*.zip dist/pkg/*.exe dist/pkg/SHA256SUMS.txt dist/pkg/SHA256SUMS-setup.txt; do
             test -s "$f" || { echo "::error::缺少产物 $f"; exit 1; }
           done
-
-          # 版本化的 key 是不可变的，所以可以让 CDN 长期缓存。
-          aws s3 cp dist/pkg/ "s3://${BUCKET}/${PREFIX}/${TAG}/" \
-            --recursive \
-            --exclude "*" \
-            --include "*.zip" \
-            --include "*.exe" \
-            --include "SHA256SUMS*.txt" \
-            --cache-control "public, max-age=31536000, immutable" \
-            --no-progress
-
-          # 刻意不用 aws s3 ls 校验：那要 s3:ListBucket，而这个 OIDC 角色只有写权限，
-          # 所以 v0.1.5 那次 8 个文件全传上去了、却因为那一行报了整步失败
-          # （AccessDenied ListObjectsV2），连带下面的下载地址摘要被跳过。
-          #
-          # 而且要验的本来就不是「S3 里有这个 key」，是「客户点那个链接下得到东西」----
-          # 走公开地址把 CloudFront 那一段也一起验了（origin path、OAC 权限配错时
-          # S3 里有文件但链接是 403/404，aws s3 ls 看不见这类故障），还不需要任何 AWS 权限。
-          echo "== 公开地址实测 =="
-          for f in dist/pkg/*.exe dist/pkg/*.zip dist/pkg/SHA256SUMS*.txt; do
-            n="$(basename "$f")"
-            u="https://pub.itheone.org/mcp-hub/${TAG}/${n}"
-            code=""
-            # 首次请求要回源取对象，偶尔会慢或抖，所以重试几次再判失败。
-            for i in 1 2 3 4 5; do
-              code="$(curl -sS -o /dev/null -I -w '%{http_code}' "$u" || echo 000)"
-              [ "$code" = "200" ] && break
-              echo "  重试 ${i}：${n} 返回 ${code}"
-              sleep 3
-            done
-            if [ "$code" != "200" ]; then
-              echo "::error::${u} 返回 ${code} ---- S3 已写入但公开地址取不到，检查 CloudFront(E1S139XADZ4HWZ) 的 origin path 与 OAC 权限"
-              exit 1
-            fi
-            echo "  200  ${n}"
+          for t in windows-amd64 windows-arm64 darwin-arm64 darwin-amd64 linux-amd64; do
+            ls dist/pkg/*-"${t}".zip >/dev/null 2>&1 || { echo "::error::缺少 ${t} 的发布包"; exit 1; }
           done
 
-      - name: 写下载地址到任务摘要
+      - name: 建 Release 并上传资产
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           TAG="${GITHUB_REF#refs/tags/}"
-          BASE="https://pub.itheone.org/mcp-hub/${TAG}"
+          VER="${TAG#v}"
+
+          {
+            echo "## 下载"
+            echo
+            echo "| 系统 | 文件 |"
+            echo "|---|---|"
+            echo "| Windows（安装包，推荐） | \`mcp-hub-${VER}-windows-amd64-setup.exe\` |"
+            echo "| Windows 免安装 | \`mcp-hub-${VER}-windows-amd64.zip\` |"
+            echo "| Windows ARM | \`mcp-hub-${VER}-windows-arm64.zip\` |"
+            echo "| macOS（M 系列） | \`mcp-hub-${VER}-darwin-arm64.zip\` |"
+            echo "| macOS（Intel） | \`mcp-hub-${VER}-darwin-amd64.zip\` |"
+            echo "| Linux | \`mcp-hub-${VER}-linux-amd64.zip\` |"
+            echo
+            echo "校验和见 \`SHA256SUMS.txt\`（压缩包）与 \`SHA256SUMS-setup.txt\`（安装包）。"
+            echo
+            echo "**升级前先退出 Amazon Quick** —— Quick 以 stdio 启动的子进程占着 \`mcp-hub.exe\`，"
+            echo "不退出会在安装时报文件被占用。"
+          } > notes.md
+
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "Release ${TAG} 已存在，覆盖上传资产"
+            gh release upload "$TAG" dist/pkg/*.zip dist/pkg/*.exe dist/pkg/SHA256SUMS*.txt --clobber
+          else
+            # --verify-tag：tag 必须已经存在（流水线本来就由它触发），
+            # 避免拼错 ref 时凭空建一个新 tag。
+            gh release create "$TAG" \
+              --title "$TAG" \
+              --notes-file notes.md \
+              --verify-tag \
+              dist/pkg/*.zip dist/pkg/*.exe dist/pkg/SHA256SUMS*.txt
+          fi
+
+      - name: 核对资产并写任务摘要
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          TAG="${GITHUB_REF#refs/tags/}"
+          # 不看上一步的退出码就算完：以资产清单为准，确认 8 个文件都在。
+          gh release view "$TAG" --json assets \
+            -q '.assets[] | "\(.name)\t\(.size)"' | tee assets.txt
+          n=$(wc -l < assets.txt | tr -d ' ')
+          [ "$n" -ge 8 ] || { echo "::error::Release 资产只有 ${n} 个，少于 8"; exit 1; }
+
+          BASE="https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}"
           {
             echo "## ${TAG} 下载地址"
             echo
@@ -311,7 +303,7 @@ jobs:
             done
           } >> "$GITHUB_STEP_SUMMARY"
 
-# 刻意没有「发布 GitHub Release」这个 job：客户拿到的是 pub.itheone.org 上的
-# 公开地址，Release 页面没人看，而它需要 contents: write（整个流水线唯一
-# 要写仓库的权限）并且产出一个要人去手动点发布的草稿。要加回来之前，
-# 先问清楚谁会去那个页面下载。
+# 资产地址形如
+#   https://github.com/<owner>/<repo>/releases/download/<tag>/<文件名>
+# 私有仓库的这个地址要访问者有仓库权限，所以它不是一个可以转发给外部客户的
+# 公开链接。仓库转公开后即为公开可下载。
