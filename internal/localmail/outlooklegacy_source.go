@@ -38,6 +38,9 @@ func openOutlookLegacy(opt OpenOptions) (Source, error) {
 
 func (o *outlookLegacySource) Close() error { return o.s.Close() }
 
+// Stale 见 outlooklegacy.Store.Stale：Outlook 写入了 WAL，Hub 会重开。
+func (o *outlookLegacySource) Stale() bool { return o.s.Stale() }
+
 func (o *outlookLegacySource) Folders(ctx context.Context) ([]Folder, error) {
 	fs, err := o.s.Folders(ctx)
 	if err != nil {

@@ -43,6 +43,9 @@ func appleErr(err error) error {
 
 func (a *appleSource) Close() error { return a.s.Close() }
 
+// Stale 见 applemail.Store.Stale：immutable 打开后 Mail.app 启动了，Hub 会重开。
+func (a *appleSource) Stale() bool { return a.s.Stale() }
+
 func (a *appleSource) Folders(ctx context.Context) ([]Folder, error) {
 	boxes, err := a.s.ListMailboxes(ctx)
 	if err != nil {

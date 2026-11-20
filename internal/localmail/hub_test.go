@@ -101,7 +101,8 @@ type closeCounter struct {
 	inUse  atomic.Int32
 	misuse atomic.Int32
 	hold   time.Duration
-	fail   error
+	// failFolders 为真时 Folders 返回格式不支持（模拟运行中途发现格式变了）。
+	failFolders atomic.Bool
 }
 
 func (c *closeCounter) use() {
@@ -115,7 +116,13 @@ func (c *closeCounter) use() {
 		c.misuse.Add(1)
 	}
 }
-func (c *closeCounter) Folders(context.Context) ([]Folder, error) { c.use(); return nil, c.fail }
+func (c *closeCounter) Folders(context.Context) ([]Folder, error) {
+	c.use()
+	if c.failFolders.Load() {
+		return nil, errors.Join(ErrUnsupported, errors.New("中途发现格式变了"))
+	}
+	return nil, nil
+}
 func (c *closeCounter) Search(context.Context, Query) (Page, error) {
 	c.use()
 	return Page{}, nil
@@ -130,4 +137,155 @@ func (c *closeCounter) Close() error {
 	}
 	c.closes.Add(1)
 	return nil
+}
+
+// staleCounter 是能报告过期的 closeCounter。
+type staleCounter struct {
+	closeCounter
+	stale atomic.Bool
+}
+
+func (s *staleCounter) Stale() bool { return s.stale.Load() }
+
+// M3：运行中发现格式不支持时，停用来源，但要等正在进行的调用都结束才关闭；
+// 停用之后的调用直接拿到说明，不再用这个来源。
+func TestHubUnsupportedWaitsForInFlightCalls(t *testing.T) {
+	src := &closeCounter{hold: 30 * time.Millisecond}
+	register(t, SourceInfo{ID: "x", Name: "来源X", Open: func(OpenOptions) (Source, error) { return src, nil }})
+	h := NewHub(Config{Sources: []SourceConfig{{ID: "x"}}})
+	defer h.Close()
+	ctx := context.Background()
+	if _, err := h.Search(ctx, "x", Query{}); err != nil {
+		t.Fatal(err)
+	}
+
+	var wg sync.WaitGroup
+	for i := 0; i < 16; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			if i%2 == 0 {
+				h.Search(ctx, "x", Query{})
+			} else {
+				h.Get(ctx, "x", 1)
+			}
+		}(i)
+	}
+	time.Sleep(10 * time.Millisecond) // 让上面的调用先拿到来源
+	// 模拟一次调用中途报格式不支持：它自己还持有引用时走 fail。
+	e, err := h.acquire(ctx, "x")
+	if err != nil {
+		t.Fatal(err)
+	}
+	h.fail("x", e, errors.Join(ErrUnsupported, errors.New("中途发现格式变了")))
+	if src.closes.Load() != 0 {
+		t.Error("本次调用还持有来源时不应关闭")
+	}
+	h.release(e)
+	wg.Wait()
+
+	if n := src.misuse.Load(); n != 0 {
+		t.Errorf("来源在关闭时还有调用在用，或关闭后又被使用：%d 次", n)
+	}
+	if n := src.closes.Load(); n != 1 {
+		t.Errorf("来源应在最后一个调用结束后关闭一次，实际 %d 次", n)
+	}
+	if _, err := h.Search(ctx, "x", Query{}); !errors.Is(err, ErrUnsupported) {
+		t.Errorf("停用后应直接返回格式不支持，得到 %v", err)
+	}
+}
+
+// 真实调用路径：来源自己的方法返回 ErrUnsupported，并发调用照样不会用到已关闭的来源。
+func TestHubUnsupportedFromSourceUnderLoad(t *testing.T) {
+	src := &closeCounter{hold: 5 * time.Millisecond}
+	register(t, SourceInfo{ID: "x", Name: "来源X", Open: func(OpenOptions) (Source, error) { return src, nil }})
+	h := NewHub(Config{Sources: []SourceConfig{{ID: "x"}}})
+	defer h.Close()
+	ctx := context.Background()
+	h.Search(ctx, "x", Query{}) // 先打开
+	var wg sync.WaitGroup
+	for i := 0; i < 24; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			switch i % 3 {
+			case 0:
+				h.Search(ctx, "x", Query{})
+			case 1:
+				h.Get(ctx, "x", 1)
+			default:
+				h.Folders(ctx, "x")
+			}
+		}(i)
+	}
+	src.failFolders.Store(true) // Folders 从现在起报格式不支持
+	wg.Wait()
+	if _, err := h.Folders(ctx, "x"); !errors.Is(err, ErrUnsupported) {
+		t.Fatalf("应已停用，得到 %v", err)
+	}
+	if n := src.misuse.Load(); n != 0 {
+		t.Errorf("关闭时还有调用在用，或关闭后又被使用：%d 次", n)
+	}
+	if n := src.closes.Load(); n != 1 {
+		t.Errorf("应只关闭一次，实际 %d 次", n)
+	}
+}
+
+// 过期的连接（例如 Mail.app 启动后的 immutable 连接）在下一次调用时重开；
+// 旧连接等还在用它的调用结束后才关闭。
+func TestHubReopensStaleSource(t *testing.T) {
+	var opened []*staleCounter
+	var mu sync.Mutex
+	register(t, SourceInfo{ID: "x", Name: "来源X", Open: func(OpenOptions) (Source, error) {
+		mu.Lock()
+		defer mu.Unlock()
+		s := &staleCounter{closeCounter: closeCounter{hold: 40 * time.Millisecond}}
+		opened = append(opened, s)
+		return s, nil
+	}})
+	h := NewHub(Config{Sources: []SourceConfig{{ID: "x"}}})
+	ctx := context.Background()
+	h.Get(ctx, "x", 1)
+
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() { defer wg.Done(); h.Get(ctx, "x", 1) }() // 还在用旧连接
+	time.Sleep(10 * time.Millisecond)
+	opened[0].stale.Store(true)
+	if _, err := h.Get(ctx, "x", 1); err != nil {
+		t.Fatal(err)
+	}
+	wg.Wait()
+	h.Close()
+
+	mu.Lock()
+	defer mu.Unlock()
+	if len(opened) != 2 {
+		t.Fatalf("过期后应重开一次，共打开 %d 次", len(opened))
+	}
+	for i, s := range opened {
+		if n := s.misuse.Load(); n != 0 {
+			t.Errorf("第 %d 个连接在用时被关闭或关闭后被使用：%d 次", i, n)
+		}
+		if n := s.closes.Load(); n != 1 {
+			t.Errorf("第 %d 个连接应关闭一次，实际 %d 次", i, n)
+		}
+	}
+}
+
+// Hub.Close 不打断正在进行的调用：来源在调用结束后才关闭。
+func TestHubCloseWaitsForInFlight(t *testing.T) {
+	src := &closeCounter{hold: 50 * time.Millisecond}
+	register(t, SourceInfo{ID: "x", Name: "来源X", Open: func(OpenOptions) (Source, error) { return src, nil }})
+	h := NewHub(Config{Sources: []SourceConfig{{ID: "x"}}})
+	ctx := context.Background()
+	h.Folders(ctx, "x")
+	done := make(chan struct{})
+	go func() { h.Get(ctx, "x", 1); close(done) }()
+	time.Sleep(10 * time.Millisecond)
+	h.Close()
+	<-done
+	if src.misuse.Load() != 0 || src.closes.Load() != 1 {
+		t.Errorf("misuse=%d closes=%d，想要 0 / 1", src.misuse.Load(), src.closes.Load())
+	}
 }

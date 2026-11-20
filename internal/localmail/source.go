@@ -182,11 +182,20 @@ type Hub struct {
 }
 
 // entry 是一个来源的打开结果。ready 关闭之后 src / err 不再改变。
+// refs、retired 由 Hub.mu 保护：retired 之后不再发给新调用，
+// refs 归零时才关闭 src，正在进行的调用不会用到已关闭的来源。
 type entry struct {
-	ready chan struct{}
-	src   Source
-	err   error
+	ready   chan struct{}
+	src     Source
+	err     error
+	done    bool // 打开已结束（和 ready 关闭同时设置，在锁内读）
+	refs    int
+	retired bool
 }
+
+// staler 是来源可选实现的接口：Stale 为真表示缓存的连接该重开
+// （例如 Apple Mail 以 immutable 打开后 Mail.app 启动了，重开才能读到新邮件）。
+type staler interface{ Stale() bool }
 
 var errHubClosed = errors.New("本机邮件服务已关闭")
 
@@ -234,45 +243,95 @@ func (h *Hub) Pick(id string) (string, error) {
 	return "", fmt.Errorf("来源 %q 未启用，可用的是：%s", id, strings.Join(ids, " / "))
 }
 
-// acquire 返回一个已打开的来源，第一次调用时打开。
-func (h *Hub) acquire(ctx context.Context, id string) (Source, error) {
+// acquire 返回一个已打开的来源，第一次调用时打开。用完必须调 release。
+func (h *Hub) acquire(ctx context.Context, id string) (*entry, error) {
+	for {
+		e, err := h.entryFor(id)
+		if err != nil {
+			return nil, err
+		}
+		select {
+		case <-e.ready:
+		case <-ctx.Done():
+			return nil, fmt.Errorf("等待打开来源 %s 时超时或被取消（打开仍在后台进行，稍后重试即可）: %w", id, ctx.Err())
+		}
+		if e.err != nil {
+			return nil, e.err
+		}
+		h.mu.Lock()
+		if !e.retired {
+			e.refs++
+			h.mu.Unlock()
+			return e, nil
+		}
+		h.mu.Unlock() // 等待期间被停用或换成了新连接：重新取
+	}
+}
+
+// entryFor 取 id 的打开条目，没有就开始打开；缓存的连接过期了就停用它、重新打开。
+func (h *Hub) entryFor(id string) (*entry, error) {
 	h.mu.Lock()
+	defer h.mu.Unlock()
 	if h.closed {
-		h.mu.Unlock()
 		return nil, errHubClosed
 	}
 	if err, ok := h.dead[id]; ok {
-		h.mu.Unlock()
 		return nil, err
 	}
 	e := h.open[id]
-	if e == nil {
-		var sc *SourceConfig
-		for i := range h.cfg.Sources {
-			if h.cfg.Sources[i].ID == id {
-				sc = &h.cfg.Sources[i]
+	if e != nil && e.done && e.err == nil {
+		if st, ok := e.src.(staler); ok && st.Stale() {
+			if s := h.retireLocked(id, e); s != nil {
+				go s.Close() // 没有调用在用它，锁外关闭
 			}
+			e = nil
 		}
-		info, ok := SourceByID(id)
-		if sc == nil || !ok {
-			h.mu.Unlock()
-			return nil, fmt.Errorf("来源 %q 未启用", id)
-		}
-		e = &entry{ready: make(chan struct{})}
-		h.open[id] = e
-		go h.doOpen(id, info, OpenOptions{Dir: sc.Dir, MaxBodyBytes: h.cfg.MaxBodyBytes}, e)
 	}
-	h.mu.Unlock()
+	if e != nil {
+		return e, nil
+	}
+	var sc *SourceConfig
+	for i := range h.cfg.Sources {
+		if h.cfg.Sources[i].ID == id {
+			sc = &h.cfg.Sources[i]
+		}
+	}
+	info, ok := SourceByID(id)
+	if sc == nil || !ok {
+		return nil, fmt.Errorf("来源 %q 未启用", id)
+	}
+	e = &entry{ready: make(chan struct{})}
+	h.open[id] = e
+	go h.doOpen(id, info, OpenOptions{Dir: sc.Dir, MaxBodyBytes: h.cfg.MaxBodyBytes}, e)
+	return e, nil
+}
 
-	select {
-	case <-e.ready:
-	case <-ctx.Done():
-		return nil, fmt.Errorf("等待打开来源 %s 时超时或被取消（打开仍在后台进行，稍后重试即可）: %w", id, ctx.Err())
+// release 归还一次 acquire。条目已停用且没人在用时关闭来源。
+func (h *Hub) release(e *entry) {
+	h.mu.Lock()
+	e.refs--
+	last := e.retired && e.refs == 0
+	h.mu.Unlock()
+	if last {
+		e.src.Close()
 	}
-	if e.err != nil {
-		return nil, e.err
+}
+
+// retireLocked 停用一个条目：不再发给新调用。返回现在就可以关闭的来源
+// （打开已成功且没有调用在用），否则返回 nil，由最后一个 release 或 doOpen 关闭。
+// 调用方持有 h.mu。
+func (h *Hub) retireLocked(id string, e *entry) Source {
+	if h.open[id] == e {
+		delete(h.open, id)
 	}
-	return e.src, nil
+	if e.retired {
+		return nil
+	}
+	e.retired = true
+	if e.done && e.src != nil && e.refs == 0 {
+		return e.src
+	}
+	return nil
 }
 
 // doOpen 在后台打开一个来源，结果写进 e。
@@ -283,10 +342,10 @@ func (h *Hub) doOpen(id string, info SourceInfo, opt OpenOptions, e *entry) {
 	}
 	h.mu.Lock()
 	var orphan Source
-	if h.closed && err == nil { // 打开期间 Hub 关了：结果没人用，直接关掉
+	if e.retired && err == nil { // 打开期间 Hub 关了：结果没人用，直接关掉
 		orphan, s, err = s, nil, errHubClosed
 	}
-	e.src, e.err = s, err
+	e.src, e.err, e.done = s, err, true
 	if err != nil {
 		if h.open[id] == e {
 			delete(h.open, id) // 失败不缓存
@@ -304,17 +363,18 @@ func (h *Hub) doOpen(id string, info SourceInfo, opt OpenOptions, e *entry) {
 
 // Search 在一个来源里列邮件，限制条数并截短摘要。
 func (h *Hub) Search(ctx context.Context, id string, q Query) (Page, error) {
-	s, err := h.acquire(ctx, id)
+	e, err := h.acquire(ctx, id)
 	if err != nil {
 		return Page{}, err
 	}
+	defer h.release(e)
 	q.Limit = ClampLimit(q.Limit, h.cfg.MaxResults)
 	if q.Offset < 0 {
 		q.Offset = 0
 	}
-	p, err := s.Search(ctx, q)
+	p, err := e.src.Search(ctx, q)
 	if err != nil {
-		return Page{}, h.fail(id, err)
+		return Page{}, h.fail(id, e, err)
 	}
 	if len(p.Messages) > q.Limit { // 适配器理应已经限好，这里再兜一次
 		p.Messages, p.HasMore, p.NextOffset = p.Messages[:q.Limit], true, q.Offset+q.Limit
@@ -330,13 +390,14 @@ func (h *Hub) Search(ctx context.Context, id string, q Query) (Page, error) {
 
 // Get 取一封邮件，正文不超过 MaxBodyBytes。
 func (h *Hub) Get(ctx context.Context, id string, msgID int64) (*Message, error) {
-	s, err := h.acquire(ctx, id)
+	e, err := h.acquire(ctx, id)
 	if err != nil {
 		return nil, err
 	}
-	m, err := s.Get(ctx, msgID)
+	defer h.release(e)
+	m, err := e.src.Get(ctx, msgID)
 	if err != nil {
-		return nil, h.fail(id, err)
+		return nil, h.fail(id, e, err)
 	}
 	if b, cut := TruncateUTF8(m.Body, h.cfg.MaxBodyBytes); cut {
 		m.Body, m.BodyTruncated = b, true
@@ -346,13 +407,14 @@ func (h *Hub) Get(ctx context.Context, id string, msgID int64) (*Message, error)
 
 // Folders 列一个来源的文件夹。
 func (h *Hub) Folders(ctx context.Context, id string) ([]Folder, error) {
-	s, err := h.acquire(ctx, id)
+	e, err := h.acquire(ctx, id)
 	if err != nil {
 		return nil, err
 	}
-	f, err := s.Folders(ctx)
+	defer h.release(e)
+	f, err := e.src.Folders(ctx)
 	if err != nil {
-		return nil, h.fail(id, err)
+		return nil, h.fail(id, e, err)
 	}
 	if f == nil {
 		f = []Folder{}
@@ -360,20 +422,16 @@ func (h *Hub) Folders(ctx context.Context, id string) ([]Folder, error) {
 	return f, nil
 }
 
-// Close 关闭已打开的来源；正在打开的来源打开完成后自动关闭。
+// Close 停用所有来源。没有调用在用的立即关闭；正在用的等最后一个调用结束再关；
+// 正在打开的打开完成后自动关闭。
 func (h *Hub) Close() error {
 	h.mu.Lock()
 	h.closed = true
 	var srcs []Source
 	for id, e := range h.open {
-		select {
-		case <-e.ready:
-			if e.src != nil {
-				srcs = append(srcs, e.src)
-			}
-		default:
+		if s := h.retireLocked(id, e); s != nil {
+			srcs = append(srcs, s)
 		}
-		delete(h.open, id)
 	}
 	h.mu.Unlock()
 	var first error
@@ -407,21 +465,13 @@ func Explain(info SourceInfo, err error) error {
 	return fmt.Errorf("%s: %w", info.Name, err)
 }
 
-// fail 解释一次调用的错误；格式不支持时关闭并停用这个来源。
-func (h *Hub) fail(id string, err error) error {
+// fail 解释一次调用的错误；格式不支持时停用这个来源，等正在进行的调用都结束再关闭。
+func (h *Hub) fail(id string, e *entry, err error) error {
 	err = explainID(id, err)
 	if errors.Is(err, ErrUnsupported) {
 		h.mu.Lock()
-		var s Source
-		if e, ok := h.open[id]; ok {
-			select {
-			case <-e.ready:
-				s = e.src
-				delete(h.open, id)
-			default:
-			}
-		}
 		h.dead[id] = err
+		s := h.retireLocked(id, e) // 本次调用还持有引用，这里一般是 nil，由 release 关闭
 		h.mu.Unlock()
 		if s != nil {
 			s.Close()
