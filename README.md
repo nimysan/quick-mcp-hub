@@ -123,22 +123,14 @@ Secret Service。不写进配置文件、不写进日志、不上传。
 
 1. Fork，或在本仓库开一个分支（`feat/渠道名`、`fix/xxx`）
 2. 提 PR 到 `main`，写清改了什么、怎么验证的
-3. 由下列任一位维护者评审并合并 —— 合作者自己不合自己的 PR
-
-**有合并权限的人**
-
-| 维护者 | GitHub | 范围 |
-|---|---|---|
-| Sean Ye | [@nimysan](https://github.com/nimysan) | 全部 |
+3. 等三平台测试通过，由维护者评审合并 —— 合作者自己不合自己的 PR
 
 新增渠道的 PR 请在描述里附上：这个渠道能做哪些事、哪些算写操作（需要开关）、
 以及用一个真实账号跑通的证据。渠道声明里把写操作标错，等于默认把不可逆动作
 交给模型 —— 这是评审时最先看的一条。
 
-> 这一节是约定。要在技术上拦住直推 `main`，还需要在仓库的
-> **Settings → Branches** 里给 `main` 开分支保护：要求通过 PR 合并、至少 1 个
-> approval、并勾上「Require review from Code Owners」（审阅人由
-> [`.github/CODEOWNERS`](.github/CODEOWNERS) 指定）。
+`main` 已开启分支保护：必须通过 PR 合并、三平台测试通过、至少 1 个评审通过，
+禁止 force push 和删除分支。评审人由 [`.github/CODEOWNERS`](.github/CODEOWNERS) 自动指派。
 
 ---
 
