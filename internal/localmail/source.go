@@ -466,11 +466,11 @@ func Explain(info SourceInfo, err error) error {
 			"或者在配置里改填正确的数据目录。", ErrFilePermission, info.Name, err)
 	}
 	if errors.Is(err, ErrUnsupported) {
-		return fmt.Errorf("%w：%s 的本地存储格式这个版本的 mcp-hub 读不了（多半是 %s 升级了）。"+
-			"这个来源已停用，其他来源不受影响；请等 mcp-hub 更新。详情：%v", ErrUnsupported, info.Name, info.Name, err)
+		return fmt.Errorf("%w：%s 的本地存储格式这个版本的 mcp-hub 读不了（多半是「%s」升级了）。"+
+			"这个来源已停用，其他来源不受影响；请等 mcp-hub 更新。详情：%s", ErrUnsupported, info.Name, info.Name, cause(err))
 	}
 	if errors.Is(err, ErrNotFound) || errors.Is(err, fs.ErrNotExist) {
-		return fmt.Errorf("%w：%s %v", ErrNotFound, info.Name, err)
+		return fmt.Errorf("%w：%s %s", ErrNotFound, info.Name, cause(err))
 	}
 	return fmt.Errorf("%s: %w", info.Name, err)
 }
@@ -488,6 +488,30 @@ func (h *Hub) fail(id string, e *entry, err error) error {
 		}
 	}
 	return err
+}
+
+// cause 取读取包给出的原因，放进「详情」。适配器用 errors.Join(本包哨兵, 原错误) 包装，
+// 直接 %v 会得到哨兵文本加换行再加原因的两行；这里去掉本包的哨兵，多段用「；」连成一行。
+func cause(err error) string {
+	j, ok := err.(interface{ Unwrap() []error })
+	if !ok {
+		return oneLine(err.Error())
+	}
+	var parts []string
+	for _, e := range j.Unwrap() {
+		if e == nil || e == ErrUnsupported || e == ErrNotFound || e == ErrAccess || e == ErrFilePermission {
+			continue
+		}
+		parts = append(parts, cause(e))
+	}
+	if len(parts) == 0 {
+		return oneLine(err.Error())
+	}
+	return strings.Join(parts, "；")
+}
+
+func oneLine(s string) string {
+	return strings.Join(strings.Fields(strings.ReplaceAll(s, "\n", "；")), " ")
 }
 
 func explainID(id string, err error) error {

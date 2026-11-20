@@ -135,6 +135,25 @@ func TestPick(t *testing.T) {
 	}
 }
 
+// L4：格式不支持的说明是一行，「多半是」后面没有多余空格，「详情」只给读取包的原因。
+func TestExplainUnsupportedIsOneLine(t *testing.T) {
+	err := Explain(outlookInfo, outlookErr(fmt.Errorf("%w: 不是 Nostromo 容器", hxErrUnsupported())))
+	msg := err.Error()
+	if !errors.Is(err, ErrUnsupported) {
+		t.Fatalf("应仍是 ErrUnsupported：%v", err)
+	}
+	if strings.Contains(msg, "\n") || strings.Contains(msg, "多半是 ") {
+		t.Errorf("说明应是一行、没有多余空格：%q", msg)
+	}
+	if !strings.Contains(msg, "多半是「新版 Outlook for Mac」升级了") || !strings.HasSuffix(msg, "详情：新版 Outlook 存储格式不支持: 不是 Nostromo 容器") {
+		t.Errorf("文案不对：%q", msg)
+	}
+	nf := Explain(appleMailInfo, errors.Join(ErrNotFound, errors.New("未找到: /x/Envelope Index")))
+	if strings.Contains(nf.Error(), "\n") || !strings.HasSuffix(nf.Error(), "Apple Mail 未找到: /x/Envelope Index") {
+		t.Errorf("未找到的说明应是一行：%q", nf.Error())
+	}
+}
+
 // 格式不支持：停用该来源、不再重试，也不影响其他来源。
 func TestHubDisablesUnsupportedSource(t *testing.T) {
 	openErr := error(errors.Join(ErrUnsupported, errors.New("自检不达标")))
