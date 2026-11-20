@@ -8,7 +8,7 @@
 [![All Contributors](https://img.shields.io/badge/all_contributors-2-orange.svg?style=flat-square)](#contributors-)
 <!-- ALL-CONTRIBUTORS-BADGE:END -->
 
-**让 Amazon Quick 用上企业现有系统，不需要先做一个整合项目。**
+**让 [Amazon Quick](https://aws.amazon.com/cn/quick/desktop/) 用上企业现有系统，不需要先做一个整合项目。**
 
 装一个程序，填一次账号，Quick 里就多出一批功能：公司邮箱、金蝶云之家、飞书、QQ、GitHub、Jira。
 
@@ -64,7 +64,7 @@ mcp-hub 换个位置接入 —— 连接点放在员工自己的电脑上：
 ## 开始用
 
 一个安装包，不要管理员权限。双击 → 在「内置渠道」里点渠道 → 扫码或填账号 →
-点「测试并保存」→ 把右侧那段配置粘进 Quick。
+点「测试并保存」→ 把右侧那段配置粘进 [Amazon Quick Desktop](https://aws.amazon.com/cn/quick/desktop/)。
 
 ![MCP Hub 配置页面：上方是三步进度，左边「我的连接」是已配好的账号，下面是「内置渠道」，右边是「接入 Amazon Quick」](docs/images/config-mcp-done.png)
 
