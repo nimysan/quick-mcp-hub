@@ -510,3 +510,30 @@ func TestMailboxSegmentsRejectsTraversal(t *testing.T) {
 		t.Errorf("got %v %v", segs, ok)
 	}
 }
+
+// L1：纯 HTML 邮件标记很重、文本很少时，正文没超过上限就不能标截断，也不能丢字。
+func TestHTMLBodyNotFalselyTruncated(t *testing.T) {
+	var b strings.Builder
+	for i := 0; i < 150; i++ { // 约 30 KB 的 HTML，文本只有约 1.2 KB
+		fmt.Fprintf(&b, `<table style="border:0;padding:0;margin:0;width:100%%"><tr><td class="x-cell-%d">段%d</td></tr></table>`, i, i)
+	}
+	raw := "From: a@example.com\nSubject: html\nMIME-Version: 1.0\nContent-Type: text/html; charset=utf-8\n\n" +
+		"<html><body>" + b.String() + "<p>结尾</p></body></html>\n"
+	p, err := parseRFC822([]byte(raw), 2048)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(p.text) >= 2048 {
+		t.Fatalf("夹具不对：转出的文本 %d 字节，应短于上限", len(p.text))
+	}
+	if p.truncated || !strings.Contains(p.text, "段149") || !strings.Contains(p.text, "结尾") {
+		t.Errorf("文本 %d 字节，truncated=%v，应完整且不标截断", len(p.text), p.truncated)
+	}
+
+	// 文本真的超过上限时照常截断。
+	long := "<html><body><p>" + strings.Repeat("长文本", 2000) + "</p></body></html>"
+	p, _ = parseRFC822([]byte("Content-Type: text/html; charset=utf-8\n\n"+long), 2048)
+	if !p.truncated || len(p.text) > 2048 {
+		t.Errorf("超长正文应截断：len=%d truncated=%v", len(p.text), p.truncated)
+	}
+}

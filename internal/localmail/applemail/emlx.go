@@ -126,6 +126,9 @@ type parsed struct {
 	attachments        []Attachment
 }
 
+// htmlMinRead 是 HTML 正文至少读多少字节再转文本（见 parseRFC822）。
+const htmlMinRead = 2 << 20
+
 func parseRFC822(raw []byte, maxBody int) (*parsed, error) {
 	mr, err := gomail.CreateReader(bytes.NewReader(raw))
 	if err != nil && !message.IsUnknownCharset(err) {
@@ -144,7 +147,10 @@ func parseRFC822(raw []byte, maxBody int) (*parsed, error) {
 	p.cc = addrList(h, "Cc")
 
 	var plain, html bytes.Buffer
-	htmlLimit := maxBody * 4 // HTML 转文本会缩水，多读一些
+	// HTML 转文本会大幅缩水（样式、标签、表格布局），只读「上限 × 4」的话，
+	// 转完常常远短于上限，却被标成截断。整封 .emlx 已经读进内存了，
+	// 多读只多花转换时间，所以 HTML 至少读 htmlMinRead，转完再按 maxBody 截断。
+	htmlLimit := max(maxBody*4, htmlMinRead)
 	for {
 		part, err := mr.NextPart()
 		if err == io.EOF {
