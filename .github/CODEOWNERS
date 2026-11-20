@@ -1,0 +1,6 @@
+# 合并权限见 README 的「合作模式」一节。
+#
+# 这个文件只决定「PR 自动请谁评审」。要让它成为硬性门槛，需要在
+# Settings → Branches 给 main 开分支保护并勾上 Require review from Code Owners。
+
+*       @nimysan

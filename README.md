@@ -2,64 +2,36 @@
 
 <img src="packaging/logo.png" width="96" alt="MCP Hub">
 
-**让 Amazon Quick 用上企业现有系统，不需要先做一个整合项目。**
+[![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg?style=flat-square)](LICENSE)
+![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey.svg?style=flat-square)
+<!-- ALL-CONTRIBUTORS-BADGE:START - Do not remove or modify this section -->
+[![All Contributors](https://img.shields.io/badge/all_contributors-2-orange.svg?style=flat-square)](#contributors-)
+<!-- ALL-CONTRIBUTORS-BADGE:END -->
 
-装一个程序，在页面上填一次账号，Quick 里就多出一批能用的功能：读写公司邮箱、
-读写金蝶云之家的消息和审批、读写飞书的消息与日程任务文档、读写 QQ、查 GitHub 和 Jira。
+**把企业现有系统接入 [Amazon Quick](https://aws.amazon.com/cn/quick/desktop/)，以员工本人的身份访问。**
 
-![MCP Hub 配置页面：上方是三步进度，左边「我的连接」是已配好的账号，下面是「内置渠道」，右边是「接入 Amazon Quick」](docs/images/config-mcp-done.png)
+**无需在企业侧做集成开发，也无需开放网络访问** —— 接入在员工自己的电脑上完成。
 
-使用者是公司里的财务和运营，不是程序员。所以目标机**不需要 Node、不需要
-Python、不需要任何运行时** —— 整个程序就是一个可执行文件，双击打开的就是
-配置页面，没有命令行、不用手工编辑 JSON。
+安装后在配置页面填一次账号，Quick 即可使用这些系统：公司邮箱、金蝶云之家、飞书、QQ、GitHub、Jira。
 
-Claude Desktop、Cursor、Cline、Kiro 这类读 MCP 配置的客户端同样能用。
-
----
-
-## 它解决什么问题
-
-Quick 能回答问题、能办事，前提是看得到企业的数据。标准路径是做一个系统对接项目：
-IT 立项 → 注册应用 → 开放网络 → 安全评审。而国内的 HR、财务、OA 多为私有化部署，
-接口不标准，业务部门自己推不动 —— 有需求的是财务和运营，能拍板的是 IT，中间卡住。
-
-mcp-hub 换一个接入位置：不改企业系统，不改 Quick，把连接点放到员工自己的电脑上。
-
-- **不需要 IT 立项**
-- **不需要注册应用**（飞书那类必须有应用的，扫码代办）
-- **不需要给内网系统开公网入口**
-- **不需要把密码交给云端**
-
-用起来就是直接问 Quick：「我有哪些审批待办？」「我那张请款单批到哪一步了？」
-「搜一下财务上周发的邮件。」
+单个可执行文件，无运行时依赖（不需要 Node 或 Python）；双击即打开配置页面。
+Claude Desktop、Cursor、Cline、Kiro 这类读 MCP 配置的客户端同样可用。
 
 ---
 
 ## 集成架构
 
-```
-┌──────────────── 员工电脑（信任边界）────────────────┐
-│                                                     │
-│   Amazon Quick Desktop                              │
-│            │                                        │
-│            │  local MCP connector（本机通道，不过网络）│
-│            ▼                                        │
-│   mcp-hub（一个程序，一次配置）                       │
-│            │                                        │
-└────────────┼────────────────────────────────────────┘
-             │  以员工本人的账号访问
-             ▼
-   企业系统（内网 OA · 财务 · 人事，或 SaaS）
-```
+![集成架构：Amazon Quick Desktop 与 mcp-hub 同在员工电脑这个信任边界内，两者走本机通道不过网络；mcp-hub 以员工本人的账号访问企业系统（内网 OA、财务、人事或 SaaS）](docs/images/architecture.png)
 
-| 设计 | 带来什么 |
+| 设计 | 结果 |
 |---|---|
-| 连接器跟 Quick 同在本机 | 两者之间不过网络，天然在企业内网里，不用给系统开公网入口 |
-| 用员工本人的账号 | 权限恰好等于这个人的权限，不多不少，不需要管理员授权 |
-| 一个连接器汇总所有系统 | Quick 侧只配一次，以后加系统不用再动 Quick |
+| 连接器与 Quick 同在员工电脑 | 两者走本机通道，不经网络；无需为内网系统开放公网入口 |
+| 以员工本人的账号访问 | 权限与本人一致，无需管理员授权 |
+| 无需在企业侧新建应用 | 飞书这类必须有应用的平台，由程序扫码代为创建 |
+| 一个连接器汇总所有系统 | Quick 侧只配置一次，新增系统不再改动 Quick |
+| 凭据只存本机 | 交由操作系统的凭据服务保管，见下节 |
 
-数据流向和合规边界与原来一致：员工本来就能把邮件内容复制粘贴进 Quick，
-mcp-hub 省掉的是复制粘贴这一步，**没有新增数据外发面**。
+员工本可手工把邮件内容粘贴进 Quick，本程序省去这一步，**不新增数据外发路径**。
 
 ---
 
@@ -68,129 +40,90 @@ mcp-hub 省掉的是复制粘贴这一步，**没有新增数据外发面**。
 | 渠道 | 接入方式 | 只读 | 需开写开关 |
 |---|---|---|---|
 | 金蝶云之家 | 扫码授权 | 11 项（消息、审批、日程、通讯录） | 同意审批、发群消息、发私聊 |
-| 飞书（国内版） | 扫码自动建应用 + 扫码授权 | 18 项（消息、日程与忙闲、任务、搜文档读文档、多维表格） | 发消息、回复、建日程、邀请参会人、回复邀请、建任务、完成任务、评论任务、加记录、改记录 |
-| 企业邮箱（IMAP/SMTP） | 邮箱地址 + 密码 | 3 项（最近邮件、搜索、读正文） | 发送邮件 |
+| 飞书（国内版） | 扫码建应用 + 扫码授权 | 18 项（消息、日程、任务、文档、多维表格） | 10 项（发消息、建日程、建任务、改记录……） |
+| 企业邮箱 | 邮箱地址 + 密码 | 3 项（最近邮件、搜索、读正文） | 发送邮件 |
 | QQ 邮箱 | 邮箱地址 + 授权码 | 同上 | 发送邮件 |
 | QQ（本机 NapCat） | 自动配置 | 5 项（群、好友、聊天记录） | 发群消息、发私聊 |
-| GitHub | OAuth 授权或个人令牌 | 5 项（仓库、Issue、搜索） | 新建 Issue |
+| GitHub | 授权登录或个人令牌 | 5 项（仓库、Issue、搜索） | 新建 Issue |
 | Jira Cloud | 站点 + 邮箱 + API Token | 8 项（项目、JQL、详情、评论） | 建/改/指派/流转/评论 |
 
-新增一个渠道**不需要改程序逻辑** —— 多数渠道是一份 JSON 声明（接口地址、字段路径、
-工具描述、读写标记），所以一线交付遇到的系统可以做成渠道合进主干，所有客户共享。
+新增渠道只需增加一份渠道声明，不改程序。
 
 ---
 
-## 怎么用
+## 开始用
 
-### 1. 装
+安装包无需管理员权限。双击 → 在「内置渠道」里选渠道 → 扫码或填账号 →
+「测试并保存」→ 把右侧那段配置粘入 [Amazon Quick Desktop](https://aws.amazon.com/cn/quick/desktop/)。
 
-一个安装包，**不需要管理员权限**。下载地址（Windows / macOS / Linux 全套）见
-[`docs/使用说明.md`](docs/使用说明.md)。
+![MCP Hub 配置页面：上方是三步进度，左边「我的连接」是已配好的账号，下面是「内置渠道」，右边是「接入 Amazon Quick」](docs/images/config-mcp-done.png)
 
-升级前先退出 Amazon Quick —— Quick 以 stdio 启动的子进程锁着 `mcp-hub.exe`。
-
-### 2. 配
-
-双击打开的就是配置页面（上面那张图）。在「内置渠道」里点要用的渠道，按提示扫码
-或填账号，点「测试并保存」—— 连不通就不保存，不会留下一条配好却用不了的连接。
-
-关掉页面程序仍在托盘里运行；要完全退出，右键托盘图标选「退出 mcp-hub」。
-
-### 3. 接到 Quick
-
-配置页面右侧「接入 Amazon Quick」里有一段 JSON，复制它，然后在 Quick 里
-**Customize → Connectors → Create → Add MCP**，Connection type 选 **Local**，
-点 **Paste JSON** 粘进去再点 **Apply**。
-
-![Quick 的 Add MCP 窗口：Connection type 选 Local，把配置粘进 JSON config 再点 Apply](docs/images/add-locl-mcp.png)
-
-成功是这样：Connectors 列表里出现 Mcp Hub（Local / Me，开关打开），
-点进去右侧列出 Quick 认到的全部功能和读写权限。
-
-![Connectors 列表里的 Mcp Hub（Local / Me，开关打开），右侧是 Quick 认到的功能清单](docs/images/local-mcp-on-quick.png)
-
-之后**每次新增渠道、加账号或者改了写开关**，都要在 Quick 里把这个连接器关掉再打开
-（重连）—— 配置页面和给 Quick 用的那个服务是两个程序，后者在启动时读一次配置。
+下载地址与详细步骤见 [`docs/使用说明.md`](docs/使用说明.md)，
+[Word 版](docs/MCP-Hub-使用说明.docx)可直接提供给客户。
 
 ---
 
 ## 凭据怎么保存
 
-这一节是本项目的核心承诺，所以写明确切机制。
+- **密码只交给操作系统** —— Windows 凭据管理器、macOS 钥匙串、Linux Secret Service。
+  不进配置文件、不进日志、不上传。
+- **模型拿不到密码** —— 只能让程序以使用者本人的身份执行操作。
+- **配置文件不含凭据** —— 仅记录渠道、账号、服务器地址与开关状态，可直接用于排查。
+- **卸载不清除密码** —— 需在系统凭据管理器中删除 `mcp-hub` 开头的条目。
+- **无遥测、无数据回传、无服务端。**
+- **不代为下载第三方程序** —— QQ 渠道依赖的 NapCat 由使用者自行安装。
 
-### 密码只进操作系统的密码管理器
-
-| 平台 | 后端 |
-|---|---|
-| Windows | 凭据管理器（Credential Manager / DPAPI） |
-| macOS | 钥匙串（Keychain） |
-| Linux | Secret Service（D-Bus，需 gnome-keyring / KWallet 之类） |
-
-凭据**不写进配置文件、不写进日志、不经命令行参数**传递 —— 命令行参数对同机
-其他进程可见，还会进 shell 历史。
-
-读取是惰性的：配了 6 个渠道而本次只用邮箱时，另外 5 份凭据不会被解出来放进
-内存。程序内部也**没有任何把凭据明文返回给模型的路径**。
-
-### 磁盘上的两个文件里有什么
-
-**`channels.json`**（用户配置目录）—— 只有渠道类型、账号名、主机端口、开关状态：
-
-```json
-{ "type": "custommail", "account": "zhangsan@example.com",
-  "settings": { "allowSend": "false", "imapHost": "mail.example.com", "imapPort": "993" },
-  "enabled": true, "updatedAt": "..." }
-```
-
-**`credentials-index.json`** —— 只记「哪个集成的哪个账号已配置」，用来让
-`-list-secrets` 能列出条目。系统密码管理器没有通用的「列出我写过哪些条目」
-接口，所以才需要它。删掉它只会让列表变空，密码管理器里的凭据不受影响。
-
-**这两个文件都不含任何凭据**，可以直接查看、备份、发给别人排查问题。
-
-### 自己管理凭据
-
-```bash
-mcp-hub -list-secrets               # 列出已配置条目，不打印凭据内容
-mcp-hub -set-secret                 # 写入（从 stdin 读，不回显）
-mcp-hub -rm-secret                  # 删除一条
-```
-
-凭据由操作系统的密码管理器保管，**卸载 mcp-hub 不会自动清除它们** ——
-要彻底移除请先用 `-rm-secret` 删掉，或在系统的凭据管理器/钥匙串里手工删除。
-
-### 不做什么
-
-- **没有遥测、没有数据回传。** 程序只连接用户自己配置的那些系统。
-- **不代为下载第三方程序。** QQ 渠道依赖的 NapCat 由用户自行获取安装。
-- **不内置任何账号、密钥或服务端。** 发布包里没有凭据，也没有我方服务器。
-
-### 写操作默认关闭
-
-发邮件、同意审批、发消息、建 Issue 这类**不可逆动作**对应的工具，默认**不注册
-给模型** —— 必须用户在页面上逐个渠道、逐个账号手动打开开关。关着的工具模型
-看不到，因此不可能被诱导调用。
+**写操作默认关闭。** 发邮件、同意审批、发消息等不可逆动作默认不提供给模型，
+需逐个渠道、逐个账号手动开启。未开启的功能模型不可见。
 
 ---
 
-## 适用边界
+## 适用范围
 
-适合：业务部门先试点、没有整合预算、系统在内网、一人一机各用自己的账号。
+按个人身份与单机配置设计：每台电脑各自配置、各自授权，不提供集中授权、
+统一策略与统一审计，也没有管理端。
 
-不适合：需要集中授权、统一策略和统一审计的场景 —— 它是个人身份视角的工具，
-每台电脑各自配置、各自授权，没有管理端。
+---
+
+## 合作模式
+
+开分支或 Fork → 提 PR 到 `main` → 三平台测试通过后由维护者合并。
+
+新增渠道的 PR 需写明哪些操作属于写操作，并附一个真实账号跑通的记录 ——
+写操作标注错误将导致不可逆动作被默认开放给模型。
+
+`main` 已启用分支保护：必须经 PR 合并、CI 必须通过、禁止 force push。
 
 ---
 
 ## 贡献与致谢
 
-感谢以下参与方对本项目的贡献：
-
-**百盈云创** —— 贡献了**飞书渠道**（[PR #27](https://github.com/nimysan/quick-mcp-hub/pull/27)：
-以用户本人身份读写消息、日程、任务、云文档和多维表格，扫码一键建应用）。
+**百盈云创** —— 贡献了**飞书渠道**（[PR #27](https://github.com/nimysan/quick-mcp-hub/pull/27)）。
 百盈集团旗下数字科技企业，AWS 亚马逊云科技 GSPP 全球解决方案提供商、
 大湾区亚马逊云科技行业数字化赋能中心（简称：大湾区 IDAC）运营单位，
 聚焦企业上云与全球化出海服务。
+
+### Contributors ✨
+
+<!-- ALL-CONTRIBUTORS-LIST:START - Do not remove or modify this section -->
+<!-- prettier-ignore-start -->
+<!-- markdownlint-disable -->
+<table>
+  <tbody>
+    <tr>
+      <td align="center" valign="top" width="14.28%"><a href="https://github.com/nimysan"><img src="https://avatars.githubusercontent.com/u/55108?v=4&size=100" width="100px" height="100px" alt="Sean Ye"/><br /><sub><b>Sean Ye</b></sub></a><br /><a href="https://github.com/nimysan/quick-mcp-hub/commits?author=nimysan" title="Code">💻</a> <a href="https://github.com/nimysan/quick-mcp-hub/commits?author=nimysan" title="Documentation">📖</a> <a href="#infra-nimysan" title="Infrastructure (Hosting, Build-Tools, etc)">🚇</a></td>
+      <td align="center" valign="top" width="14.28%"><a href="https://github.com/Jeremyforwork"><img src="https://avatars.githubusercontent.com/u/143385324?v=4&size=100" width="100px" height="100px" alt="Jeremy Zhong"/><br /><sub><b>Jeremy Zhong</b></sub></a><br /><a href="https://github.com/nimysan/quick-mcp-hub/commits?author=Jeremyforwork" title="Code">💻</a></td>
+    </tr>
+  </tbody>
+</table>
+
+<!-- markdownlint-restore -->
+<!-- prettier-ignore-end -->
+
+<!-- ALL-CONTRIBUTORS-LIST:END -->
+
+加贡献者：在任意 issue 或 PR 中评论 `@all-contributors please add @用户名 for code`
+（[图标含义](https://allcontributors.org/docs/en/emoji-key)）。
 
 ---
 
@@ -205,16 +138,15 @@ mcp-hub -rm-secret                  # 删除一条
 > 完整条款见 LICENSE 第 7 条（Disclaimer of Warranty）与第 8 条
 > （Limitation of Liability）。
 
-使用者需要知道并自行承担的部分：
+使用者自行承担的部分：
 
 - **账号与数据属于使用者自己。** 本软件以使用者本人的身份访问其自行配置的系统，
-  由此产生的一切操作与后果（包括误发邮件、误批单据、误发消息）由使用者负责。
-- **写开关一旦打开，模型即可执行不可逆动作。** 是否打开由使用者决定。
-- **第三方系统的接口、条款和可用性不受本项目控制**，随时可能变化。
-- **使用第三方系统须遵守其各自的服务条款。** 特别是 QQ 渠道依赖的 NapCat 使用
-  非官方协议，账号风险落在使用者登录的那个 QQ 号上；该组件不由本项目提供。
-- **本软件未做代码签名**，首次运行会被 Windows SmartScreen 或 macOS Gatekeeper
-  拦下，这是预期行为。
+  由此产生的一切操作与后果（含误发邮件、误批单据、误发消息）由使用者负责。
+- **写开关一旦开启，模型即可执行不可逆动作**，是否开启由使用者决定。
+- **第三方系统的接口、条款与可用性不受本项目控制**，随时可能变化。
+- **使用第三方系统须遵守其各自的服务条款。** QQ 渠道依赖的 NapCat 使用非官方协议，
+  账号风险落在使用者登录的那个 QQ 号上；该组件不由本项目提供。
+- **本软件未做代码签名**，首次运行会被 Windows SmartScreen 或 macOS Gatekeeper 拦下。
 
 第三方组件的许可与归属声明见 [`THIRD-PARTY-NOTICES.md`](THIRD-PARTY-NOTICES.md)
 和 [`NOTICE`](NOTICE)。所有依赖均为宽松型许可，不含传染性条款。
@@ -225,20 +157,7 @@ mcp-hub -rm-secret                  # 删除一条
 
 | 看什么 | 去哪 |
 |---|---|
-| 怎么下载、安装、配置、接到 Quick（含下载地址） | [`docs/使用说明.md`](docs/使用说明.md) · 同内容的 Word：`docs/MCP-Hub-使用说明.docx` |
-| 发布包里给客户的那份 | [`packaging/快速开始.md`](packaging/快速开始.md) |
-| 为什么这样实现（贡献者看） | [`docs/实现笔记.md`](docs/实现笔记.md) |
+| 下载、安装、配置、接入 Quick | [`docs/使用说明.md`](docs/使用说明.md) · [Word 版](docs/MCP-Hub-使用说明.docx) |
+| 发布包中提供给客户的版本 | [`packaging/快速开始.md`](packaging/快速开始.md) |
+| 构建方式与实现取舍 | [`docs/实现笔记.md`](docs/实现笔记.md) |
 | 第三方开源组件清单 | [`THIRD-PARTY-NOTICES.md`](THIRD-PARTY-NOTICES.md) |
-
----
-
-## 构建
-
-```bash
-make build      # 当前平台
-make all        # windows / darwin / linux 全套到 dist/
-make package    # 五个平台的发布 zip + Windows 安装包所需文件
-```
-
-全平台纯 Go 交叉编译（`CGO_ENABLED=0`），在 macOS 上就能产出 Windows 的 exe。
-实现上的取舍、踩过的坑和接口的实际行为记在 [`docs/实现笔记.md`](docs/实现笔记.md)。
