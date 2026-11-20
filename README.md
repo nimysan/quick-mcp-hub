@@ -129,8 +129,8 @@ Secret Service。不写进配置文件、不写进日志、不上传。
 以及用一个真实账号跑通的证据。渠道声明里把写操作标错，等于默认把不可逆动作
 交给模型 —— 这是评审时最先看的一条。
 
-`main` 已开启分支保护：必须通过 PR 合并、三平台测试通过、至少 1 个评审通过，
-禁止 force push 和删除分支。评审人由 [`.github/CODEOWNERS`](.github/CODEOWNERS) 自动指派。
+`main` 已开启分支保护：必须通过 PR 合并、三平台测试通过，禁止 force push 和删除分支。
+评审不是硬性门槛，但 [`.github/CODEOWNERS`](.github/CODEOWNERS) 会把每个 PR 自动指给维护者。
 
 ---
 
