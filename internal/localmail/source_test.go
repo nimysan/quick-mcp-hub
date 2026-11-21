@@ -74,6 +74,9 @@ func withFake(t *testing.T, openErr *error, src *fakeSource) *int {
 
 func TestHubLazyOpenRetriesAfterAccessError(t *testing.T) {
 	openErr := error(&fs.PathError{Op: "open", Path: "/x", Err: syscall.EPERM}) // macOS 隐私保护拦截
+	if runtime.GOOS != "darwin" {
+		openErr = ErrAccess // 别的平台没有 TCC，EPERM 只是普通权限错误；这里测的是失败不缓存
+	}
 	opens := withFake(t, &openErr, &fakeSource{})
 	h := NewHub(Config{Sources: []SourceConfig{{ID: "fake"}}})
 	if *opens != 0 {
