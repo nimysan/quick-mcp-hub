@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>mcp-hub 飞书文档读取</title>
+<style>
+  body { font: 14px/1.6 -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif; margin: 16px; min-width: 340px; color: #1f2329; }
+  h1 { font-size: 16px; margin: 0 0 8px; }
+  label { display: block; margin-top: 10px; font-weight: 600; }
+  input { width: 100%; box-sizing: border-box; padding: 6px 8px; margin-top: 4px; font: inherit; }
+  button { margin-top: 12px; padding: 6px 14px; font: inherit; cursor: pointer; }
+  .help { color: #646a73; font-size: 12px; }
+  .st { margin-top: 12px; padding: 8px; border-radius: 6px; background: #f5f6f7; }
+  .ok { background: #e8f7ee; } .bad { background: #fdecec; }
+</style>
+</head>
+<body>
+  <h1>mcp-hub 飞书文档读取</h1>
+  <div class="help">只读：让本机 mcp-hub 读你在浏览器里本来就能打开的飞书 / Lark 云文档。
+    文档所有者禁止了复制或导出的，一律不读。</div>
+  <label for="token">配对码</label>
+  <input id="token" autocomplete="off" spellcheck="false" placeholder="在 mcp-hub 配置页面里点「生成配对码」后粘到这里">
+  <label for="port">mcp-hub 配置页面端口</label>
+  <input id="port" inputmode="numeric" placeholder="7801">
+  <div class="help">没改过就留空。</div>
+  <button id="save">保存并连接</button>
+  <div class="st" id="st">读取状态中…</div>
+  <script src="options.js"></script>
+</body>
+</html>

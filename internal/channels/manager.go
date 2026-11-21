@@ -29,6 +29,10 @@ type Manager struct {
 	// （例如只跑配置页面时也要装上它，否则「测试并保存」用不了）。
 	Plugins *wasmplug.Registry
 
+	// BrowserCheck 由配置页面装上：检查浏览器扩展是否连着（飞书网页文档渠道的
+	// 「测试」）。MCP 进程里为空 —— 那边没有扩展连接。
+	BrowserCheck func(ctx context.Context) (any, error)
+
 	connMu sync.Mutex
 	conns  map[string]*ConnectSession
 }
@@ -127,11 +131,17 @@ func (m *Manager) Save(typ string, values map[string]string) (Instance, error) {
 
 	ref := credstore.Ref{Integration: d.Integration, Account: account}
 	// 编辑时密码留空表示「不改」，此时必须钥匙串里本来就有。
-	if secret != "" {
+	// 没有凭据字段的渠道（浏览器扩展类）没有东西要存，跳过这一步。
+	switch {
+	case d.SecretField == "":
+	case secret != "":
 		if err := m.creds.Put(ref, secret); err != nil {
 			return Instance{}, err
 		}
-	} else if _, err := m.creds.Secret(ref).Value(); err != nil {
+	default:
+		if _, err := m.creds.Secret(ref).Value(); err == nil {
+			break
+		}
 		label := d.SecretField
 		if f, ok := d.Field(d.SecretField); ok {
 			label = f.Label
@@ -228,6 +238,9 @@ func (m *Manager) Test(ctx context.Context, typ, account string, values map[stri
 			return err
 		}
 		return nil
+	case KindBrowser:
+		_, err := m.testBrowser(ctx)
+		return err
 	case KindMail:
 		cfg, err := m.mailConfig(d, account, values)
 		if err != nil {
@@ -257,6 +270,9 @@ func (m *Manager) Identify(ctx context.Context, typ, account string, values map[
 	}
 	if d.Kind == KindPlugin {
 		return m.testPlugin(ctx, d, account, values)
+	}
+	if d.Kind == KindBrowser {
+		return m.testBrowser(ctx)
 	}
 	if d.Kind != KindHTTP {
 		return nil, m.Test(ctx, typ, account, values)

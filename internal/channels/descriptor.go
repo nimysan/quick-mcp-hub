@@ -402,7 +402,7 @@ var planned = []Descriptor{}
 func All() []Descriptor {
 	specs := specs()
 	mans := pluginManifests()
-	out := make([]Descriptor, 0, len(mailprovider.All)+len(specs)+len(mans)+len(planned))
+	out := make([]Descriptor, 0, len(mailprovider.All)+len(specs)+len(mans)+len(planned)+1)
 	for _, p := range mailprovider.All {
 		out = append(out, mailDescriptor(p))
 	}
@@ -414,6 +414,7 @@ func All() []Descriptor {
 	for _, m := range mans {
 		out = append(out, pluginDescriptor(m))
 	}
+	out = append(out, feishuWebDescriptor())
 	return append(out, planned...)
 }
 
