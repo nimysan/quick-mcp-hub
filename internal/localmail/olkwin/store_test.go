@@ -62,6 +62,11 @@ func TestFixture(t *testing.T) {
 	if p.Total != 4 || p.NextOffset != -1 || !strings.HasPrefix(subj[0], "mcp-hub-test 111") || !strings.HasPrefix(subj[1], "mcp-hub-test 222") || subj[2] != "Re: 周报" || subj[3] != "no sender" {
 		t.Fatalf("List = %d %q", p.Total, subj)
 	}
+	for _, m := range p.Items {
+		if m.ID <= 0 || m.ID >= 1<<53 || m.FolderID >= 1<<53 {
+			t.Errorf("ID 超出 JSON 安全整数范围：%d / %d", m.ID, m.FolderID)
+		}
+	}
 	m1 := p.Items[0]
 	if !m1.Received.Equal(fxRecv1) || !m1.HasAttachment || m1.Read || m1.From != "Yiming Liang" || m1.FromAddress != "yiming@example.com" ||
 		len(m1.To) != 2 || m1.To[0] != "张三" || m1.Preview != "你好 😀" || m1.FolderID != inbox.ID || m1.ItemID != "M1" || len(m1.Incomplete) != 0 {

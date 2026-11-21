@@ -36,7 +36,7 @@ type Options struct {
 
 // Folder 是一个文件夹。
 type Folder struct {
-	ID           int64  `json:"id"`        // 文件夹 ID 的稳定哈希
+	ID           int64  `json:"id"`        // 文件夹 ID 的稳定哈希（53 位）
 	ParentID     int64  `json:"parent_id"` // 0 表示顶层
 	Name         string `json:"name"`
 	Path         string `json:"path"` // "/" 分隔；多个账户时以账户地址开头
@@ -63,7 +63,7 @@ type Query struct {
 
 // Summary 是列表里的一封邮件。
 type Summary struct {
-	ID            int64     `json:"id"`      // ItemId 的稳定哈希
+	ID            int64     `json:"id"`      // ItemId 的稳定哈希（53 位，JSON 安全）
 	ItemID        string    `json:"item_id"` // Exchange ItemId
 	FolderID      int64     `json:"folder_id"`
 	Subject       string    `json:"subject"`
@@ -224,10 +224,12 @@ func (s *Store) Dir() string { return s.root }
 // Skipped 返回解不开、被跳过的记录数（诊断用）。
 func (s *Store) Skipped() int { return s.skipped }
 
+// hashID 把 Exchange ID 变成稳定的正整数。只取 53 位：ID 经 JSON 交给模型和 MCP 客户端，
+// JavaScript 的数字超过 2^53 会丢精度（真机冒烟里 64 位哈希被客户端改写成了另一个数）。
 func hashID(s string) int64 {
 	h := fnv.New64a()
 	h.Write([]byte(s))
-	v := int64(h.Sum64() & 0x7fffffffffffffff)
+	v := int64(h.Sum64() & (1<<53 - 1))
 	if v == 0 {
 		v = 1
 	}
