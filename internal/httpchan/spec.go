@@ -166,6 +166,18 @@ type Param struct {
 	// [{"type":"user","user_id":"ou_x"}] 这种形状，让模型只给一串 open_id，
 	// 形状由声明钉死。
 	ItemObject map[string]any `json:"itemObject,omitempty"`
+	// ItemFields 只配 type=array：数组的每一项是一个对象，只能有这几个键、
+	// 值都是字符串。ItemRequired 是其中必填的。
+	//
+	// 百度网盘的移动、重命名一次可以处理多个文件，filelist 是
+	// [{"path":"/a","dest":"/b","newname":"c"}]。键由声明钉死，模型只填值：
+	// 多一个键、少一个必填键都在发出去之前报错，而不是让对方系统猜。
+	ItemFields   []string `json:"itemFields,omitempty"`
+	ItemRequired []string `json:"itemRequired,omitempty"`
+	// ArrayOnly 只配 type=array：只接受真正的数组（或一段 JSON 数组文本），
+	// 不把一个字符串按逗号拆开。文件路径里可以有逗号，「/a,b.txt」被拆成
+	// 「/a」和「b.txt」再拿去删除，删掉的就是另一个文件。
+	ArrayOnly bool `json:"arrayOnly,omitempty"`
 	// Format 让参数接受人能读的时间，发送前换成接口要的格式：
 	//   unix     秒级时间戳字符串
 	//   unix_ms  毫秒级时间戳字符串
@@ -199,8 +211,22 @@ type Tool struct {
 	// 换成卡片、@所有人）。所以参数照常落到 content.text，发送前再把
 	// content 整个变成字符串。
 	BodyJSONString []string `json:"bodyJsonString,omitempty"`
-	Result         Result   `json:"result,omitempty"`
+	// BodyEncoding 是请求体的编码：留空或 "json"＝JSON；"form"＝
+	// application/x-www-form-urlencoded。
+	//
+	// 百度网盘的文件管理（删除、移动、重命名）只收表单。表单是扁平的，所以
+	// form 下 bodyPath 不能带点；值是数组或对象的参数整体序列化成一段 JSON
+	// 文本放进那一项 —— 百度的 filelist 正是这个形状
+	// （filelist=[{"path":"/a","newname":"b"}]）。
+	BodyEncoding string `json:"bodyEncoding,omitempty"`
+	Result       Result `json:"result,omitempty"`
 }
+
+// 请求体编码。
+const (
+	BodyJSON = "json"
+	BodyForm = "form"
+)
 
 // Spec 是一个渠道的完整声明。
 type Spec struct {
@@ -282,14 +308,25 @@ type Spec struct {
 // 描述符就会自动长出这个开关，默认关。
 const AllowWriteField = "allowWrite"
 
-// OAuthSpec 是一个渠道的 OAuth 设备流参数。
+// OAuthSpec 是一个渠道的 OAuth 授权参数。
 //
-// 只支持设备流，不支持浏览器回调：桌面程序存不住 client_secret，而 GitHub
-// 这类提供方的 web 流换 token 必须带 secret。设备流只要 client_id。
+// 不支持浏览器回调（授权码流）：桌面程序存不住 client_secret，而 GitHub
+// 这类提供方的 web 流换 token 必须带 secret。支持两种流：
+//
+//	device    设备流，只要 client_id。GitHub、云之家、飞书走这条。
+//	implicit  隐式授权 + 用户把授权后的地址粘回来。百度网盘的设备流换令牌
+//	          必须带应用密钥，不注册开发者应用就只剩这条路。没有刷新令牌。
 type OAuthSpec struct {
-	// Flow 目前只能是 "device"。写出来是为了以后加别的流时，旧客户端能
-	// 干净地拒绝一个它执行不了的声明，而不是半残地跑起来。
+	// Flow 是 "device" 或 "implicit"。写出来是为了以后加别的流时，旧客户端
+	// 能干净地拒绝一个它执行不了的声明，而不是半残地跑起来。
 	Flow string `json:"flow"`
+
+	// AuthorizeURL 是隐式授权的授权页（只有 flow=implicit 用）。
+	AuthorizeURL string `json:"authorizeUrl,omitempty"`
+	// RedirectURI 是隐式授权的回跳地址，只能是 "oob"（授权服务自己的
+	// 「授权成功」页）或 https 地址。它不能指向本机：那等于声称本程序
+	// 能接住回调，而它接不住。
+	RedirectURI string `json:"redirectUri,omitempty"`
 
 	// ClientID 写死在声明里（厂商自己发布的 connector 用这个）。
 	ClientID string `json:"clientId,omitempty"`
@@ -358,6 +395,25 @@ func (s Spec) OAuthConfig(settings map[string]string) (oauthdev.Config, error) {
 		RefreshURL:      s.OAuth.RefreshURL,
 	}, nil
 }
+
+// Implicit 是 flow=implicit 时的授权参数。
+func (s Spec) Implicit() (oauthdev.Implicit, error) {
+	if s.OAuth == nil || s.OAuth.Flow != FlowImplicit {
+		return oauthdev.Implicit{}, fmt.Errorf("渠道 %s 不走隐式授权", s.ID)
+	}
+	return oauthdev.Implicit{
+		AuthorizeURL: s.OAuth.AuthorizeURL,
+		ClientID:     s.OAuth.ClientID,
+		RedirectURI:  s.OAuth.RedirectURI,
+		Scopes:       s.OAuth.Scopes,
+	}, nil
+}
+
+// 授权流。
+const (
+	FlowDevice   = "device"
+	FlowImplicit = "implicit"
+)
 
 // ReservedAccountParam 是多实例时由工具层自动加上的参数名，
 // 渠道声明里不能用它做业务参数，否则账号分派会被业务值顶掉。
@@ -476,6 +532,9 @@ func (s Spec) Validate() error {
 		if err := checkEndpoint(s.Test.Method, s.Test.Path, nil); err != nil {
 			return fmt.Errorf("%s: test %w", s.ID, err)
 		}
+		if err := s.checkFixedQueryAuth(s.Test.Path); err != nil {
+			return fmt.Errorf("%s: test %w", s.ID, err)
+		}
 		if s.Test.Method != "GET" {
 			// 默认只许 GET：方法本身就是「这次测试不会改数据」的证据。
 			//
@@ -534,6 +593,33 @@ func (s Spec) Validate() error {
 		if len(t.BodyConst) > 0 && t.Method == "GET" {
 			return fmt.Errorf("%s/%s: GET 不能带 bodyConst", s.ID, t.Name)
 		}
+		if err := s.checkFixedQueryAuth(t.Path); err != nil {
+			return fmt.Errorf("%s/%s: %w", s.ID, t.Name, err)
+		}
+		switch t.BodyEncoding {
+		case "", BodyJSON:
+		case BodyForm:
+			if t.Method == "GET" {
+				return fmt.Errorf("%s/%s: GET 没有请求体，不能声明 bodyEncoding", s.ID, t.Name)
+			}
+			if len(t.BodyJSONString) > 0 {
+				return fmt.Errorf("%s/%s: bodyEncoding=form 下数组和对象本来就会序列化成 JSON 文本，不要再写 bodyJsonString", s.ID, t.Name)
+			}
+			for _, p := range t.Params {
+				if p.In == InBody && strings.Contains(p.BodyPath, ".") {
+					return fmt.Errorf("%s/%s: bodyEncoding=form 是扁平的，参数 %s 的 bodyPath 不能带点", s.ID, t.Name, p.Name)
+				}
+			}
+			for k, v := range t.BodyConst {
+				switch v.(type) {
+				case string, float64, bool:
+				default:
+					return fmt.Errorf("%s/%s: bodyEncoding=form 下 bodyConst.%s 只能是字符串、数字或布尔", s.ID, t.Name, k)
+				}
+			}
+		default:
+			return fmt.Errorf("%s/%s: bodyEncoding %q 不支持（只有 json / form）", s.ID, t.Name, t.BodyEncoding)
+		}
 		for _, jp := range t.BodyJSONString {
 			if t.Method == "GET" {
 				return fmt.Errorf("%s/%s: GET 不能带 bodyJsonString", s.ID, t.Name)
@@ -591,6 +677,26 @@ func (s Spec) Validate() error {
 			}
 			if p.Format != "" && p.Type != "" && p.Type != "string" {
 				return fmt.Errorf("%s/%s: 参数 %s 有 format 时 type 只能是 string", s.ID, t.Name, p.Name)
+			}
+			if p.ArrayOnly && p.Type != "array" {
+				return fmt.Errorf("%s/%s: 参数 %s 的 arrayOnly 只能配 type=array", s.ID, t.Name, p.Name)
+			}
+			if len(p.ItemFields) > 0 || len(p.ItemRequired) > 0 {
+				if p.Type != "array" || p.ItemObject != nil {
+					return fmt.Errorf("%s/%s: 参数 %s 的 itemFields 只能配 type=array，且不能和 itemObject 同时用", s.ID, t.Name, p.Name)
+				}
+				fset := map[string]bool{}
+				for _, f := range p.ItemFields {
+					if !paramNameRe.MatchString(f) || fset[f] {
+						return fmt.Errorf("%s/%s: 参数 %s 的 itemFields 里 %q 不合法或重复", s.ID, t.Name, p.Name, f)
+					}
+					fset[f] = true
+				}
+				for _, f := range p.ItemRequired {
+					if !fset[f] {
+						return fmt.Errorf("%s/%s: 参数 %s 的 itemRequired 里 %q 不在 itemFields 中", s.ID, t.Name, p.Name, f)
+					}
+				}
 			}
 			if p.ItemObject != nil {
 				if p.Type != "array" {
@@ -742,14 +848,19 @@ func (s Spec) checkOAuth() error {
 	if o == nil {
 		return nil
 	}
-	if o.Flow != "device" {
-		// 只支持设备流。写死这一条，是为了旧客户端遇到以后新增的流时
-		// 干净地拒绝，而不是忽略 flow 字段、按设备流跑出错误的行为。
-		return fmt.Errorf("flow %q 不支持（只支持 device）", o.Flow)
+	if o.Flow == FlowImplicit {
+		return s.checkImplicit()
 	}
-	if s.Auth.Kind != AuthBearer {
-		// 拿到的令牌是按 Bearer 注入的，别的认证方式对不上。
-		return fmt.Errorf("只能和 auth.kind=bearer 搭配（现在是 %s）", s.Auth.Kind)
+	if o.Flow != FlowDevice {
+		// 只支持这两种流。写死这一条，是为了旧客户端遇到以后新增的流时
+		// 干净地拒绝，而不是忽略 flow 字段、按设备流跑出错误的行为。
+		return fmt.Errorf("flow %q 不支持（只支持 device / implicit）", o.Flow)
+	}
+	if o.AuthorizeURL != "" || o.RedirectURI != "" {
+		return fmt.Errorf("authorizeUrl / redirectUri 只有 flow=implicit 才用")
+	}
+	if err := s.checkOAuthAuth(); err != nil {
+		return err
 	}
 	switch {
 	case o.ClientID != "" && o.ClientIDField != "":
@@ -837,6 +948,58 @@ func (s Spec) checkOAuth() error {
 	return nil
 }
 
+// checkOAuthAuth 校验授权拿到的令牌往哪放。令牌组要经过解析（取 access_token、
+// 判过期、续期）才能用，只有 bearer 和 query 两条注入路径做了这一步；别的
+// 方式会把整段令牌组 JSON 原样塞进请求。
+func (s Spec) checkOAuthAuth() error {
+	if s.Auth.Kind != AuthBearer && s.Auth.Kind != AuthQuery {
+		return fmt.Errorf("只能和 auth.kind=bearer 或 query 搭配（现在是 %s）", s.Auth.Kind)
+	}
+	return nil
+}
+
+// checkImplicit 校验 flow=implicit。
+//
+// 规则比设备流严：clientId 必须写死（公开应用），设备流和机密客户端的那些
+// 键一个都不许出现 —— 写了也不生效的字段只会让人以为它在起作用。
+func (s Spec) checkImplicit() error {
+	o := s.OAuth
+	if err := s.checkOAuthAuth(); err != nil {
+		return err
+	}
+	if strings.TrimSpace(o.ClientID) == "" || o.ClientIDField != "" {
+		return fmt.Errorf("flow=implicit 必须写死 clientId（公开应用），不能用 clientIdField")
+	}
+	if o.DeviceCodeURL != "" || o.TokenURL != "" || o.RefreshURL != "" || o.VerificationURI != "" ||
+		o.Dialect != "" || o.ClientSecret != nil || o.RegisterURL != "" || o.RegisterName != "" || o.RegisterDesc != "" {
+		return fmt.Errorf("flow=implicit 不能带设备流的键（deviceCodeUrl / tokenUrl / refreshUrl / verificationUri / dialect / clientSecret / register*）")
+	}
+	// 和设备流的授权地址同理：这是用户真正输入账号密码的那一页。
+	if err := checkBaseURL(o.AuthorizeURL, false); err != nil {
+		return fmt.Errorf("authorizeUrl %w", err)
+	}
+	switch r := strings.TrimSpace(o.RedirectURI); {
+	case r == "oob":
+	case r == "":
+		return fmt.Errorf("flow=implicit 必须给出 redirectUri（\"oob\" 或 https 地址）")
+	default:
+		if err := checkBaseURL(r, false); err != nil {
+			return fmt.Errorf("redirectUri %w", err)
+		}
+	}
+	if o.SetupURL != "" {
+		if err := checkBaseURL(o.SetupURL, false); err != nil {
+			return fmt.Errorf("setupUrl %w", err)
+		}
+	}
+	for _, sc := range o.Scopes {
+		if strings.TrimSpace(sc) == "" || strings.ContainsAny(sc, " \t,") {
+			return fmt.Errorf("scope %q 不合法（一个元素一个作用域）", sc)
+		}
+	}
+	return nil
+}
+
 func checkBaseURL(raw string, local bool) error {
 	// 先查占位符：主机名里带 { 会让 url.Parse 以「非法字符」失败，
 	// 那个报错看不出真正的原因是「不允许用模板拼主机名」。
@@ -880,6 +1043,11 @@ func checkBaseURL(raw string, local bool) error {
 }
 
 // checkEndpoint 校验方法和路径，并确保路径里每个 {name} 都有对应的 path 参数。
+//
+// 路径可以带一段写死的查询串（/rest/2.0/xpan/file?method=list）：百度网盘
+// 这类 RPC 风格的接口靠 method= 区分操作，同一个路径上挂着列目录和删文件。
+// 那段查询串只许是字面量 —— 不能有占位符，也不能和参数同名（否则模型给的
+// 值和声明钉死的值谁说了算就成了实现细节）。
 func checkEndpoint(method, path string, params []Param) error {
 	if !methodsAll[method] {
 		return fmt.Errorf("method %q 不支持", method)
@@ -890,6 +1058,19 @@ func checkEndpoint(method, path string, params []Param) error {
 	if strings.Contains(path, "://") || strings.Contains(path, "//") {
 		return fmt.Errorf("path %q 不能是绝对地址", path)
 	}
+	if strings.Contains(path, "#") {
+		return fmt.Errorf("path %q 不能带 #", path)
+	}
+	fixed, err := fixedQuery(path)
+	if err != nil {
+		return err
+	}
+	for _, p := range params {
+		if _, clash := fixed[p.Name]; clash {
+			return fmt.Errorf("参数 %s 和 path 里写死的查询参数同名", p.Name)
+		}
+	}
+	path, _, _ = strings.Cut(path, "?")
 	declared := map[string]bool{}
 	for _, p := range params {
 		if p.In == InPath {
@@ -905,6 +1086,46 @@ func checkEndpoint(method, path string, params []Param) error {
 		if !strings.Contains(path, "{"+name+"}") {
 			return fmt.Errorf("参数 %s 声明为 in=path，但 path 里没有 {%s}", name, name)
 		}
+	}
+	return nil
+}
+
+// fixedQuery 取出 path 里写死的查询串。没有就返回空。
+func fixedQuery(path string) (url.Values, error) {
+	_, raw, ok := strings.Cut(path, "?")
+	if !ok {
+		return nil, nil
+	}
+	if raw == "" {
+		return nil, fmt.Errorf("path %q 的 ? 后面是空的", path)
+	}
+	if strings.ContainsAny(raw, "{}") {
+		return nil, fmt.Errorf("path %q 的查询串不能带占位符（变化的值声明成 in=query 参数）", path)
+	}
+	vals, err := url.ParseQuery(raw)
+	if err != nil {
+		return nil, fmt.Errorf("path %q 的查询串解析失败: %w", path, err)
+	}
+	for k, v := range vals {
+		if !paramNameRe.MatchString(k) {
+			return nil, fmt.Errorf("path %q 的查询参数名 %q 不合法", path, k)
+		}
+		if len(v) != 1 {
+			return nil, fmt.Errorf("path %q 的查询参数 %s 出现了不止一次", path, k)
+		}
+	}
+	return vals, nil
+}
+
+// checkFixedQueryAuth 不许写死的查询串里出现凭据参数名：一份声明若能写死
+// access_token=…，就能让所有请求带着它指定的令牌去访问。
+func (s Spec) checkFixedQueryAuth(path string) error {
+	if s.Auth.Kind != AuthQuery {
+		return nil
+	}
+	fixed, _ := fixedQuery(path)
+	if _, clash := fixed[s.Auth.Name]; clash {
+		return fmt.Errorf("path 里不能写死凭据参数 %s", s.Auth.Name)
 	}
 	return nil
 }

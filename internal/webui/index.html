@@ -112,7 +112,7 @@ let DESCRIPTORS=[], CHANNELS=[], TAG="", EXEPATH="", LASTCLIENT=null, CFGPATH=""
 // 每个渠道用哪个图标：稿子里邮箱是 Mail、云之家是云、NapCat 是本机程序。
 // 没有对应的用 Plug 兜底 —— 新渠道加进来不会缺图标。
 const ICONS = {qqmail:"Mail", custommail:"Mail", github:"Blocks", jira:"ScrollText",
-  napcat:"Monitor", yunzhijia:"Laptop", ghwasm:"Blocks"};
+  napcat:"Monitor", yunzhijia:"Laptop", ghwasm:"Blocks", baidupan:"HardDrive"};
 const iconOf = t => ICONS[t] || "Plug";
 
 const TAG_LABELS = {email:"邮件", devtools:"开发", project:"项目", erp:"ERP",
@@ -545,7 +545,7 @@ async function openForm(type, account){
   const oauthHTML = d.oauth ? `
     <div class="oauth-box${oauthFirst?" lead":""}">
       <div class="risk-head">🔗 ${account?`授权失效了？重新确认一次`
-        :(oauthFirst?`扫码连接，不用手工生成令牌`:`用 OAuth 连接（不用手工生成令牌）`)}</div>
+        :(oauthFirst?(d.oauth.flow==="implicit"?`在浏览器里授权一次，不用手工生成令牌`:`扫码连接，不用手工生成令牌`):`用 OAuth 连接（不用手工生成令牌）`)}</div>
       ${d.oauth.register ? `
       <div class="help">用飞书扫码确认就行，不用填任何东西。</div>
       <div class="adv-toggle" id="scopetoggle">▸ 查看申请的权限</div>
@@ -563,7 +563,7 @@ async function openForm(type, account){
   // 手动填的后路：默认收起。里面放的是凭据字段，所以「只存进密码管理器」
   // 那句提示也跟着挪进来 —— 折起来的时候它在上面只是噪音。
   const manualHTML = (credFields.length && !(d.oauth && d.oauth.register)) ? `
-    <div class="adv-toggle" id="manualtoggle">▸ 扫不了码？手动填${esc(credFields.map(f=>f.label).join("和"))}</div>
+    <div class="adv-toggle" id="manualtoggle">▸ ${d.oauth&&d.oauth.flow==="implicit"?"已经有令牌了？":"扫不了码？"}手动填${esc(credFields.map(f=>f.label).join("和"))}</div>
     <div class="adv" id="manual">
       <div class="tiny">密码类字段只存进系统密码管理器，不写配置文件、不进日志</div>
       ${credFields.map(fieldHTML).join("")}
@@ -824,7 +824,49 @@ async function startOAuth(type, valuesOverride, expectAccount){
   OAUTH_SESSION = s.id;
   const st0 = await api("/api/oauth/status?session="+encodeURIComponent(s.id));
   renderOAuthStep(type, Object.assign({}, s, st0 && st0.phase ? {phase: st0.phase} : {}));
+  // 隐式授权（百度网盘）没有可轮询的东西：令牌在用户浏览器的地址栏里，
+  // 要等他粘回来。所以不轮询，改为挂「完成连接」按钮。
+  if(st0 && st0.phase === "paste"){ wirePaste(type, s.id, expectAccount); return; }
   pollOAuth(type, s.id, expectAccount);
+}
+
+// wirePaste 挂上隐式授权的「完成连接」按钮。粘错了只提示、会话不结束，
+// 改了可以再点；交对了就和设备流一样落到「已连接」或「授权失败」。
+function wirePaste(type, id, expectAccount){
+  const btn = $("#pastebtn"), box = $("#pasted");
+  if(!btn || !box) return;
+  btn.onclick = async () => {
+    const el = $("#ost");
+    if(!box.value.trim()){ el.className="st bad"; el.textContent="先把授权后浏览器地址栏里的地址粘到上面"; return; }
+    btn.disabled = true; el.className="st"; el.textContent="正在用这个令牌访问一次，确认能用…";
+    const r = await api("/api/oauth/complete",{method:"POST",
+      headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({session:id, pasted:box.value})});
+    btn.disabled = false;
+    if(!r.ok){ el.className="st bad"; el.textContent = r.error || "没认出粘贴的内容"; return; }
+    finishOAuth(r.status, expectAccount);
+  };
+}
+
+// finishOAuth 是授权走到终点后的显示：成功、成功但换了账号、失败。
+function finishOAuth(st, expectAccount){
+  const el = $("#ost");
+  if(!el) return;
+  OAUTH_SESSION = null;
+  if(st.state === "ok"){
+    if(expectAccount && st.account && st.account !== expectAccount){
+      el.className="st bad";
+      el.innerHTML = `授权的是另一个账号「${esc(st.account)}」，已新建为一条连接。`
+        + `<br>原来的「${esc(expectAccount)}」没有变化，仍然需要重新授权或删除。`;
+      setTimeout(()=>{closeModal();refresh();},4000);
+      return;
+    }
+    el.className="st ok";
+    el.textContent = "✅ 已连接为 " + st.account + "，渠道已保存";
+    setTimeout(()=>{closeModal();refresh();},1200);
+    return;
+  }
+  el.className="st bad"; el.textContent = "授权失败：" + (st.error||"未知原因");
 }
 // renderOAuthStep 画出当前这一步要用户做的事。
 //
@@ -836,8 +878,22 @@ function renderOAuthStep(type, s){
   if(!panel) return;
   OAUTH_STEP = (s.phase||"") + "|" + (s.userCode||"");
   const openURL = s.verificationUriComplete || s.verificationUri;
-  // 只有能一键建应用的渠道（飞书）走两步式的显示；云之家、GitHub 照旧。
   const dd = DESCRIPTORS.find(x=>x.type===type);
+  // 隐式授权（百度网盘）：打开授权页 → 授权 → 把跳转后的地址粘回来。
+  if(s.phase === "paste"){
+    panel.innerHTML = `
+      <div class="oauth-code">
+        <div class="help">① 点下面的按钮打开授权页，登录你的${esc(dd?dd.name:"")}账号（可以用手机 App 扫码登录），再点「授权」</div>
+        <div style="margin-top:6px"><a class="btn primary" href="${esc(openURL)}" target="_blank" rel="noreferrer">打开授权页</a></div>
+        <div class="help" style="margin-top:10px">② 授权后浏览器会跳到一个显示「成功」的页面。把<b>地址栏里的整个地址</b>复制下来，粘到这里：</div>
+        <textarea id="pasted" rows="3" style="width:100%;margin-top:4px" placeholder="https://…#expires_in=…&access_token=…"></textarea>
+        <button class="primary" id="pastebtn" style="margin-top:6px">完成连接</button>
+        <div class="st" id="ost"></div>
+        <div class="tiny" style="margin-top:6px">这个地址里带着访问令牌，只粘到这里，不要发给别人。</div>
+      </div>`;
+    return;
+  }
+  // 只有能一键建应用的渠道（飞书）走两步式的显示；云之家、GitHub 照旧。
   if(dd && dd.oauth && dd.oauth.register){
     const reg = s.phase === "register";
     panel.innerHTML = `

@@ -78,6 +78,8 @@ func (s *Server) routes() {
 	api("/api/oauth/start", s.handleOAuthStart)
 	api("/api/oauth/status", s.handleOAuthStatus)
 	api("/api/oauth/cancel", s.handleOAuthCancel)
+	// 隐式授权（百度网盘）：用户把授权后的地址粘回来。
+	api("/api/oauth/complete", s.handleOAuthComplete)
 	// NapCat 自动配置（见 napcat.go）。
 	s.napcatRoutes(api)
 }
@@ -407,6 +409,29 @@ func (s *Server) handleOAuthCancel(w http.ResponseWriter, r *http.Request) {
 	}
 	s.mgr.CancelConnect(req.Session)
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
+// handleOAuthComplete 收下隐式授权粘回来的地址。粘错了回 ok:false 和原因，
+// 会话保持等待，用户改了可以再交；交对了回会话的终态。
+func (s *Server) handleOAuthComplete(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	var req struct {
+		Session string `json:"session"`
+		Pasted  string `json:"pasted"`
+	}
+	if err := json.NewDecoder(io.LimitReader(r.Body, 64<<10)).Decode(&req); err != nil {
+		writeErr(w, http.StatusBadRequest, err)
+		return
+	}
+	st, err := s.mgr.CompleteConnect(req.Session, req.Pasted)
+	if err != nil {
+		writeJSON(w, http.StatusOK, map[string]any{"ok": false, "error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "status": st})
 }
 
 func writeJSON(w http.ResponseWriter, code int, v any) {

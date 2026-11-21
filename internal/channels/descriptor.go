@@ -291,7 +291,11 @@ func httpDescriptor(s httpchan.Spec) Descriptor {
 		secretField.Required = false
 		secretField.Help = strings.TrimSpace(secretField.Help + "。留空则用「连接」按钮授权")
 		host := ""
-		if u, err := url.Parse(s.OAuth.DeviceCodeURL); err == nil {
+		authURL := s.OAuth.DeviceCodeURL
+		if s.OAuth.Flow == httpchan.FlowImplicit {
+			authURL = s.OAuth.AuthorizeURL
+		}
+		if u, err := url.Parse(authURL); err == nil {
 			host = u.Hostname()
 		}
 		oauthInfo = &OAuthInfo{
