@@ -94,6 +94,9 @@ Claude Desktop、Cursor、Cline、Kiro 这类读 MCP 配置的客户端同样可
 新增渠道的 PR 需写明哪些操作属于写操作，并附一个真实账号跑通的记录 ——
 写操作标注错误将导致不可逆动作被默认开放给模型。
 
+使用者能感觉到的改动，在 [`CHANGELOG.md`](CHANGELOG.md) 的「未发布」下加一行。发布时 CI 把这个版本那一节
+放到 Release 页面上，找不到就不发布。
+
 `main` 已启用分支保护：必须经 PR 合并、CI 必须通过、禁止 force push。
 
 ---
@@ -159,6 +162,7 @@ Claude Desktop、Cursor、Cline、Kiro 这类读 MCP 配置的客户端同样可
 
 | 看什么 | 去哪 |
 |---|---|
+| 每个版本改了什么 | [`CHANGELOG.md`](CHANGELOG.md) |
 | 下载、安装、配置、接入 Quick | [`docs/使用说明.md`](docs/使用说明.md) · [Word 版](docs/MCP-Hub-使用说明.docx) |
 | 发布包中提供给客户的版本 | [`packaging/快速开始.md`](packaging/快速开始.md) |
 | 构建方式与实现取舍 | [`docs/实现笔记.md`](docs/实现笔记.md) |
