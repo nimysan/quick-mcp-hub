@@ -1,5 +1,5 @@
 // 本机邮件渠道：只读本机邮件客户端（Mac 上的 Apple Mail、Outlook，Windows 上的
-// 经典版 Outlook）的数据文件，不连任何服务器，也就没有凭据。来源按平台过滤，
+// 经典版和新版 Outlook）的数据文件，不连任何服务器，也就没有凭据。来源按平台过滤，
 // 见 localmail.Sources。
 //
 // 和其他渠道并列成为第四种类型。它和别的渠道不同的地方只有两点：没有密码类
@@ -93,7 +93,7 @@ func localMailDescriptor() Descriptor {
 
 func localMailSummary(goos string) string {
 	if goos == "windows" {
-		return "直接读这台电脑上经典版 Outlook 的本地数据文件 · 不联网、无需密码"
+		return "直接读这台电脑上经典版 Outlook 的数据文件和新版 Outlook 的离线缓存 · 不联网、无需密码"
 	}
 	return "直接读这台 Mac 上邮件 App 的本地数据 · 不联网、无需密码"
 }

@@ -96,6 +96,11 @@ func RegisterLocalMail(s *mcp.Server, hub *localmail.Hub) int {
 		names = append(names, fmt.Sprintf("%s（%s）", id, info.Name))
 	}
 	suffix := fmt.Sprintf(" 当前启用的来源：%s。", strings.Join(names, "、"))
+	for _, id := range ids {
+		if info, _ := localmail.SourceByID(id); info.ToolNote != "" {
+			suffix += info.ToolNote
+		}
+	}
 	if len(ids) > 1 {
 		suffix += "启用了多个来源，localmail_search 和 localmail_get 必须用 source 指定一个。"
 	}

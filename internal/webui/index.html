@@ -589,13 +589,13 @@ async function openForm(type, account){
     </div>` : "";
   // 本机邮件：没有凭据，但有一件必须在保存前看到的事 —— macOS 的完全磁盘
   // 访问权限要授给 Amazon Quick（真正拉起 MCP 服务的那个程序），而不是这个页面。
-  // Windows 上没有这层隐私授权，要提醒的是经典版 Outlook 运行时会锁住数据文件。
+  // Windows 上没有这层隐私授权，要提醒的是经典版 Outlook 运行时会锁住数据文件、新版 Outlook 只有离线缓存。
   const localMailHTML = d.kind!=="localmail" ? "" : d.platform==="windows" ? `
     <div class="risk">
       <div class="risk-head">🗂️ 只读这台电脑上的 Outlook 数据文件</div>
-      <div class="help">直接读经典版 Outlook 存在本机的 .ost / .pst，不联网、不需要密码，也不会改动任何一封邮件。只有已经同步到这台电脑的邮件才读得到。</div>
+      <div class="help">直接读经典版 Outlook 存在本机的 .ost / .pst，和新版 Outlook 的离线缓存，不联网、不需要密码，也不会改动任何一封邮件。只有已经同步到这台电脑的邮件才读得到。</div>
       <div class="help" style="color:var(--warn)">经典版 Outlook 运行时会锁住数据文件，这时读不到：请先完全退出经典版 Outlook（任务管理器里没有 OUTLOOK.EXE）再用。
-        新版 Outlook（olk）用的是另一套存储，暂不支持。</div>
+        新版 Outlook 开着也能读，但只有离线设置里选中的文件夹、离线天数内（默认 30 天）的邮件。</div>
     </div>` : `
     <div class="risk">
       <div class="risk-head">🗂️ 只读这台 Mac 上的邮件文件</div>

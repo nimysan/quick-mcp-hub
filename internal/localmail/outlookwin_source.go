@@ -20,7 +20,7 @@ var outlookWinInfo = SourceInfo{
 	Name: "经典版 Outlook for Windows",
 	Help: "读经典版 Outlook 在这台电脑上的数据文件（.ost / .pst），只含已经同步到本机的部分。" +
 		"Outlook 运行时会锁住这些文件：这时工具会提示先完全退出经典版 Outlook 再试，来源不会被停用。" +
-		"新版 Outlook（olk）用的是另一套存储，这个开关读不到",
+		"新版 Outlook（olk）的离线缓存是另一个开关「新版 Outlook for Windows」",
 	DirLabel: "Outlook 数据文件",
 	DirHelp: "留空自动查找（先看 Outlook 配置文件里登记的文件，再看 %LOCALAPPDATA%\\Microsoft\\Outlook 和「文档\\Outlook Files」）；" +
 		"也可以填 .pst / .ost 文件或所在目录的完整路径，多个用英文分号 ; 隔开",

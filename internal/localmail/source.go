@@ -11,7 +11,7 @@
 //
 // 配置页的开关、工具描述里的来源清单都从 Sources 生成，不需要再改别处。
 // Sources 只含当前平台的来源：Mac 的三个来源只在 darwin 上出现，
-// 经典版 Outlook for Windows 只在 windows 上出现。
+// 经典版和新版 Outlook for Windows 只在 windows 上出现。
 package localmail
 
 import (
@@ -34,6 +34,8 @@ const (
 	SourceOutlook       = "outlook" // 新版 Outlook（HxStore），读取包在 internal/localmail/hxstore
 	// SourceOutlookClassicWin 是经典版 Outlook for Windows 的 .pst / .ost，读取包在 internal/localmail/outlookwin。
 	SourceOutlookClassicWin = "outlook_classic_win"
+	// SourceOutlookNewWin 是新版 Outlook for Windows（olk.exe）的离线缓存，读取包在 internal/localmail/olkwin。
+	SourceOutlookNewWin = "outlook_new_win"
 )
 
 // 默认值与上限。
@@ -152,11 +154,13 @@ type SourceInfo struct {
 	DirLabel, DirHelp string
 	// GOOS 是这个来源所在的平台（runtime.GOOS 的取值）。别的平台上不注册、不显示。
 	GOOS string
-	Open func(opt OpenOptions) (Source, error)
+	// ToolNote 非空时，启用了这个来源就附在工具说明后面（例如覆盖范围的限制）。
+	ToolNote string
+	Open     func(opt OpenOptions) (Source, error)
 }
 
 // allSources 是本构建认识的全部来源，按配置页上的显示顺序。
-var allSources = []SourceInfo{appleMailInfo, outlookLegacyInfo, outlookInfo, outlookWinInfo}
+var allSources = []SourceInfo{appleMailInfo, outlookLegacyInfo, outlookInfo, outlookWinInfo, outlookNewWinInfo}
 
 // Sources 是当前平台上可用的来源。某个平台上一个都没有时为空，本机邮件渠道随之不可添加。
 var Sources = SourcesFor(runtime.GOOS)
@@ -477,6 +481,11 @@ func (h *Hub) Close() error {
 func Explain(info SourceInfo, err error) error {
 	if err == nil {
 		return nil
+	}
+	if errors.Is(err, ErrLocked) && info.ID == SourceOutlookNewWin {
+		// 新版 Outlook 运行时本来就能读，被锁多半是别的程序（杀毒、备份）独占了文件，等一会儿重试。
+		return fmt.Errorf("%w：%s 的数据文件暂时打不开（%s）。新版 Outlook 开着也能读，"+
+			"这多半是杀毒或备份软件正独占着文件；这个来源没有停用，稍后重试即可。", ErrLocked, info.Name, cause(err))
 	}
 	if errors.Is(err, ErrLocked) {
 		return fmt.Errorf("%w：%s 的数据文件正被占用（%s）。"+

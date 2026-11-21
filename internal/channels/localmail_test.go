@@ -112,7 +112,7 @@ func TestLocalMailFieldsFollowPlatform(t *testing.T) {
 		}
 	}
 	mac := []string{localmail.SourceAppleMail, localmail.SourceOutlookLegacy, localmail.SourceOutlook}
-	win := []string{localmail.SourceOutlookClassicWin}
+	win := []string{localmail.SourceOutlookClassicWin, localmail.SourceOutlookNewWin}
 	want, hide := map[string][]string{"darwin": mac, "windows": win}[runtime.GOOS], append(append([]string{}, mac...), win...)
 	for _, id := range want {
 		if !bools[id] {

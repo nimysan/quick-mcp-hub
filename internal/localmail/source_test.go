@@ -208,7 +208,7 @@ func TestSourcesFor(t *testing.T) {
 	if got := ids("darwin"); got != "apple_mail,outlook_legacy,outlook" {
 		t.Errorf("darwin = %s", got)
 	}
-	if got := ids("windows"); got != "outlook_classic_win" {
+	if got := ids("windows"); got != "outlook_classic_win,outlook_new_win" {
 		t.Errorf("windows = %s", got)
 	}
 	if got := ids("linux"); got != "" {
