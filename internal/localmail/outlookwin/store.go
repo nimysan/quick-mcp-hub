@@ -111,8 +111,8 @@ type Store struct {
 	modTime   time.Time
 	size      int64
 
-	once    sync.Once
-	loadErr error
+	loadMu  sync.Mutex
+	loaded  bool
 	folders []Folder
 	byID    map[int64]*Folder
 
@@ -137,6 +137,9 @@ func Open(path string, opt Options) (*Store, error) {
 	p, err := parseHeader(f, fi.Size())
 	if err != nil {
 		f.Close()
+		if !errors.Is(err, errFormat) {
+			return nil, wrap(err)
+		}
 		return nil, errors.Join(ErrUnsupported, err)
 	}
 	p.f = f
@@ -168,10 +171,14 @@ func (s *Store) Stale() bool {
 	return err == nil && (fi.Size() != s.size || !fi.ModTime().Equal(s.modTime))
 }
 
-// wrap 把内部的格式错误统一包成 ErrUnsupported。
+// wrap 把内部的格式错误统一包成 ErrUnsupported；Outlook 的文件锁（打开后读时才碰到的
+// 字节范围锁，ERROR_LOCK_VIOLATION）包成 ErrLocked，免得调用方把它当成格式问题停用来源。
 func wrap(err error) error {
-	if err == nil || errors.Is(err, ErrNotFound) || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+	if err == nil || errors.Is(err, ErrNotFound) || errors.Is(err, ErrLocked) || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 		return err
+	}
+	if isSharingViolation(err) {
+		return errors.Join(ErrLocked, fmt.Errorf("文件正被其他程序锁住（多半是经典版 Outlook 在运行）: %w", err))
 	}
 	if errors.Is(err, errFormat) || errors.Is(err, errNoNode) {
 		return errors.Join(ErrUnsupported, err)
@@ -188,8 +195,18 @@ func (s *Store) Folders(ctx context.Context) ([]Folder, error) {
 }
 
 func (s *Store) load() error {
-	s.once.Do(func() { s.loadErr = s.loadFolders() })
-	return s.loadErr
+	s.loadMu.Lock()
+	defer s.loadMu.Unlock()
+	if s.loaded {
+		return nil
+	}
+	// 失败不缓存：Outlook 退出、锁释放之后下一次调用就能成功。
+	s.folders, s.byID = nil, nil
+	if err := s.loadFolders(); err != nil {
+		return err
+	}
+	s.loaded = true
+	return nil
 }
 
 func (s *Store) loadFolders() error {

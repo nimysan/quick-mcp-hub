@@ -102,7 +102,10 @@ func (p *pstFile) readID(b []byte) uint64 {
 func parseHeader(r io.ReaderAt, size int64) (*pstFile, error) {
 	h := make([]byte, 564)
 	if _, err := r.ReadAt(h, 0); err != nil {
-		return nil, formatErr("读文件头失败: %v", err)
+		if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
+			return nil, formatErr("文件太短，不是 PST/OST")
+		}
+		return nil, err // I/O 错误（例如 Outlook 加了字节范围锁）原样返回，不当作格式问题
 	}
 	if string(h[0:4]) != "!BDN" {
 		return nil, formatErr("不是 PST/OST 文件（魔数不对）")
