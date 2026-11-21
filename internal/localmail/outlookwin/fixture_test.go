@@ -128,6 +128,19 @@ func (f *fixture) slblock(ents ...fxSub) uint64 {
 	return f.block(b, true)
 }
 
+// siblock 写一层 SIBLOCK。SIENTRY 的 nid 键读取器不用（它遍历全部子块），这里填 0。
+func (f *fixture) siblock(children ...uint64) uint64 {
+	b := []byte{0x02, 0x01, byte(len(children)), 0}
+	if f.lay != layoutANSI {
+		b = append(b, 0, 0, 0, 0)
+	}
+	for _, c := range children {
+		b = f.putID(b, 0)
+		b = f.putID(b, c)
+	}
+	return f.block(b, true)
+}
+
 func (f *fixture) node(nid, parent uint32, data, sub uint64) {
 	f.nbt = append(f.nbt, fxNBT{nid, data, sub, parent})
 }
@@ -225,6 +238,16 @@ func pcBlock(props []fxProp) []byte {
 
 // tcBlock 拼一个 TC，行矩阵放在 HN 里。
 func tcBlock(cols []fxCol, rows []map[uint16][]byte) []byte {
+	hn, _ := tcBuild(cols, rows, 0)
+	return hn
+}
+
+// fxRowsNID 是行矩阵放进子节点时用的 NID（LTP 类型）。
+const fxRowsNID = 0x3F
+
+// tcBuild 拼一个 TC。perBlock>0 时行矩阵放进子节点 fxRowsNID，每块 perBlock 行，
+// 返回各块内容，由调用方写成数据树（大文件夹的内容表就是这样存的）。
+func tcBuild(cols []fxCol, rows []map[uint16][]byte, perBlock int) ([]byte, [][]byte) {
 	type place struct {
 		c      fxCol
 		ib, cb int
@@ -290,10 +313,13 @@ func tcBlock(cols []fxCol, rows []map[uint16][]byte) []byte {
 	info = le.AppendUint16(info, uint16(end1))
 	info = le.AppendUint16(info, uint16(rowSize))
 	info = le.AppendUint32(info, 0) // hidRowIndex：读取器不用
-	if len(rows) > 0 {
-		info = le.AppendUint32(info, hid(1))
-	} else {
+	switch {
+	case len(rows) == 0:
 		info = le.AppendUint32(info, 0)
+	case perBlock > 0:
+		info = le.AppendUint32(info, fxRowsNID)
+	default:
+		info = le.AppendUint32(info, hid(1))
 	}
 	info = le.AppendUint32(info, 0)
 	for _, p := range ps {
@@ -301,8 +327,15 @@ func tcBlock(cols []fxCol, rows []map[uint16][]byte) []byte {
 		info = le.AppendUint16(info, uint16(p.ib))
 		info = append(info, byte(p.cb), byte(p.bit))
 	}
+	var parts [][]byte
+	if perBlock > 0 {
+		for i := 0; i < len(matrix); i += perBlock * rowSize {
+			parts = append(parts, matrix[i:min(i+perBlock*rowSize, len(matrix))])
+		}
+		matrix = nil
+	}
 	allocs[0], allocs[1] = info, matrix
-	return hnBlock(clientTC, allocs)
+	return hnBlock(clientTC, allocs), parts
 }
 
 // rowOf 把 fxProp 转成 TC 的一行（只取列里有的）。
@@ -485,6 +518,11 @@ func buildFixture(t *testing.T, lay layout, crypt byte) string {
 	contents := func(nid uint32, rows ...map[uint16][]byte) {
 		f.node(nid&^0x1F|nidTypeContents, 0, f.block(tcBlock(contentCols, rows), false), 0)
 	}
+	// 收件箱的内容表把行矩阵放进子节点，每块 2 行、共两块（XBLOCK），走大文件夹的读法。
+	contentsSub := func(nid uint32, rows ...map[uint16][]byte) {
+		hn, parts := tcBuild(contentCols, rows, 2)
+		f.node(nid&^0x1F|nidTypeContents, 0, f.block(hn, false), f.slblock(fxSub{fxRowsNID, f.xblock(parts...), 0}))
+	}
 
 	f.node(nidMessageStore, 0, f.block(pcBlock([]fxProp{
 		f.str(pidDisplayName, "测试数据文件"),
@@ -519,9 +557,10 @@ func buildFixture(t *testing.T, lay layout, crypt byte) string {
 		rowOf(i32(pidLtpRowID, nidAttach), i32(pidAttachSize, 1234), f.str(pidAttachLongFilename, "报告.pdf")),
 	}), false)
 	attObj := f.block(pcBlock([]fxProp{f.str(pidAttachMimeTag, "application/pdf"), i32(pidAttachMethod, 1)}), false)
-	sub1 := f.slblock(
-		fxSub{nidRecipientTable, recip, 0}, fxSub{nidAttachTable, attTable, 0},
-		fxSub{nidBodySN, bodyBid, 0}, fxSub{nidAttach, attObj, 0},
+	// 子节点树用两层：SIBLOCK 下挂两个 SLBLOCK。
+	sub1 := f.siblock(
+		f.slblock(fxSub{nidBodySN, bodyBid, 0}, fxSub{nidAttachTable, attTable, 0}),
+		f.slblock(fxSub{nidRecipientTable, recip, 0}, fxSub{nidAttach, attObj, 0}),
 	)
 	f.node(nidMsg1, nidInbox, f.block(pcBlock(m1), false), sub1)
 
@@ -542,7 +581,7 @@ func buildFixture(t *testing.T, lay layout, crypt byte) string {
 	f.node(nidAppt, nidCal, f.block(pcBlock([]fxProp{f.str(pidSubject, "会议"), ftime(pidDeliveryTime, fxT1)}), false), 0)
 
 	// 内容表里故意不放发件人地址：List 要从邮件 PC 补上。
-	contents(nidInbox,
+	contentsSub(nidInbox,
 		rowOf(i32(pidLtpRowID, nidMsg1), f.str(pidSubject, subj1), f.str(pidSentRepresentingName, "张三"), ftime(pidDeliveryTime, fxT1), i32(pidMessageFlags, msgFlagRead|msgFlagHasAttach), f.str(pidDisplayTo, "李四")),
 		rowOf(i32(pidLtpRowID, nidMsg2), f.str(pidSubject, "你好 HTML"), f.str(pidSentRepresentingName, "Alice"), ftime(pidDeliveryTime, fxT2), i32(pidMessageFlags, 0)),
 		rowOf(i32(pidLtpRowID, nidMsg3), f.str(pidSubject, "RTF only"), ftime(pidDeliveryTime, fxT3), i32(pidMessageFlags, msgFlagRead)),

@@ -147,6 +147,23 @@ func checkSample(t *testing.T, path string) {
 	if getFail > 0 {
 		t.Errorf("%d 封 Get 失败", getFail)
 	}
+	// 非邮件文件夹（日历、联系人、通讯组）里的条目：指明文件夹时也要能列、能取，不报错。
+	for _, f := range folders {
+		if f.Mail || f.MessageCount == 0 {
+			continue
+		}
+		p, err := s.List(ctx, Query{FolderID: f.ID, Limit: 200})
+		if err != nil {
+			t.Errorf("List(%q): %v", f.Path, err)
+			continue
+		}
+		for _, m := range p.Items {
+			if _, err := s.Get(ctx, m.ID); err != nil {
+				t.Errorf("Get %d（%s）: %v", m.ID, f.Path, err)
+			}
+		}
+		t.Logf("非邮件文件夹 %q: 声明 %d 条，列出 %d 条", f.Path, f.MessageCount, len(p.Items))
+	}
 }
 
 func utf8ok(s string) bool { return strings.ToValidUTF8(s, "") == s }
