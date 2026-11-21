@@ -17,7 +17,12 @@ func (f *fakeRunner) Do(_ context.Context, kind, u string) (feishuweb.Result, er
 	return feishuweb.Result{Status: feishuweb.StatusOK, Markdown: "正文"}, nil
 }
 
-// 三个工具全部标只读；不是飞书文档的地址不发给扩展；检索如实回 not_implemented。
+func (f *fakeRunner) Search(_ context.Context, q, host string) (feishuweb.Result, error) {
+	f.calls = append(f.calls, "search "+q+"@"+host)
+	return feishuweb.Result{Status: feishuweb.StatusOK, Items: []feishuweb.Item{{Title: "周报", URL: "https://x.feishu.cn/docx/AbCdEf123456", Type: "docx"}}}, nil
+}
+
+// 三个工具全部标只读；不是飞书文档的地址不发给扩展；检索的关键词和域名先在这一侧校验。
 func TestFeishuWebTools(t *testing.T) {
 	server := mcp.NewServer(&mcp.Implementation{Name: "t", Version: "0"}, nil)
 	run := &fakeRunner{}
@@ -55,13 +60,31 @@ func TestFeishuWebTools(t *testing.T) {
 		t.Errorf("交出去的任务不对：%v", run.calls)
 	}
 
+	for _, bad := range []map[string]any{
+		{"query": "  "},
+		{"query": strings.Repeat("长", 101)},
+		{"query": "周报", "host": "evil.example"},
+		{"query": "周报", "host": "accounts.feishu.cn"},
+	} {
+		res, err = cs.CallTool(ctx, &mcp.CallToolParams{Name: "feishu_web_search", Arguments: bad})
+		if err != nil || !res.IsError {
+			t.Errorf("%v 应当报错：%v %+v", bad, err, res)
+		}
+	}
+	if len(run.calls) != 1 {
+		t.Fatalf("不合法的检索不该交给扩展：%v", run.calls)
+	}
+
 	res, err = cs.CallTool(ctx, &mcp.CallToolParams{Name: "feishu_web_search",
-		Arguments: map[string]any{"query": "周报"}})
+		Arguments: map[string]any{"query": " 周报\n 2026 ", "host": "https://X.feishu.cn/docx/abc"}})
 	if err != nil || res.IsError {
 		t.Fatalf("%v %+v", err, res)
 	}
+	if got := run.calls[len(run.calls)-1]; got != "search 周报 2026@x.feishu.cn" {
+		t.Errorf("交出去的检索不对：%q", got)
+	}
 	text := res.Content[0].(*mcp.TextContent).Text
-	if !strings.Contains(text, feishuweb.StatusNotImplemented) {
-		t.Errorf("检索应当回 not_implemented：%s", text)
+	if !strings.Contains(text, `"type":"docx"`) {
+		t.Errorf("检索结果不对：%s", text)
 	}
 }

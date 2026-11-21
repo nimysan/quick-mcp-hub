@@ -48,7 +48,16 @@ var ErrHubNotRunning = errors.New("mcp-hub 配置页面（托盘程序）没在�
 
 // Do 交一个任务并等结果。
 func (c *Client) Do(ctx context.Context, kind, docURL string) (Result, error) {
-	body, _ := json.Marshal(map[string]string{"kind": kind, "url": docURL})
+	return c.post(ctx, map[string]string{"kind": kind, "url": docURL})
+}
+
+// Search 交一次检索。host 可空。
+func (c *Client) Search(ctx context.Context, query, host string) (Result, error) {
+	return c.post(ctx, map[string]string{"kind": JobSearch, "query": query, "host": host})
+}
+
+func (c *Client) post(ctx context.Context, job map[string]string) (Result, error) {
+	body, _ := json.Marshal(job)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.BaseURL+JobPath, bytes.NewReader(body))
 	if err != nil {
 		return Result{}, err

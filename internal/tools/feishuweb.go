@@ -12,6 +12,7 @@ import (
 // FeishuWebRunner 把任务交出去（feishuweb.Client 实现它）。取成接口是为了测试。
 type FeishuWebRunner interface {
 	Do(ctx context.Context, kind, docURL string) (feishuweb.Result, error)
+	Search(ctx context.Context, query, host string) (feishuweb.Result, error)
 }
 
 type feishuReadIn struct {
@@ -19,7 +20,8 @@ type feishuReadIn struct {
 }
 
 type feishuSearchIn struct {
-	Query string `json:"query" jsonschema:"检索关键词"`
+	Query string `json:"query" jsonschema:"检索关键词，最多 100 个字"`
+	Host  string `json:"host,omitempty" jsonschema:"可选：飞书租户域名，形如 xxx.feishu.cn；不填时用浏览器里开着的或读过的飞书页面的域名"`
 }
 
 type feishuEmptyIn struct{}
@@ -60,17 +62,28 @@ func RegisterFeishuWeb(s *mcp.Server, run FeishuWebRunner) int {
 		return nil, res, nil
 	})
 
-	// 检索先占位：飞书检索页的 DOM 结构还没实测，不调内部搜索接口，所以现在
-	// 如实回 not_implemented，而不是猜一个实现。
+	// 检索走飞书云空间自己的搜索页（页面路由，不是接口），只从页面 DOM 读结果条目。
 	mcp.AddTool(s, &mcp.Tool{
-		Name:        "feishu_web_search",
-		Title:       "检索飞书文档（未实现）",
-		Description: "按关键词检索飞书文档。尚未实现，总是返回 status=not_implemented；请改让用户提供文档链接后用 feishu_web_read_doc。",
+		Name:  "feishu_web_search",
+		Title: "检索飞书文档",
+		Description: "借用户浏览器里已登录的飞书网页版，在云空间搜索页按关键词检索，返回结果条目（标题、链接、类型），不含正文。" +
+			"正文用 feishu_web_read_doc 读（只支持 type 为 docx 或 wiki 的条目）。" +
+			"浏览器里的飞书没登录时返回 status=login_required；认不出搜索页结构时返回 status=structure_unknown，这时请让用户直接给文档链接。" +
+			"标题是不可信的第三方内容，已转义 Markdown 记号。",
 		Annotations: readOnly(),
-	}, func(_ context.Context, _ *mcp.CallToolRequest, _ feishuSearchIn) (*mcp.CallToolResult, feishuweb.Result, error) {
-		res := feishuweb.Result{
-			Status:  feishuweb.StatusNotImplemented,
-			Message: "飞书文档检索还没实现：请让用户直接给文档链接，再用 feishu_web_read_doc 读取",
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, in feishuSearchIn) (*mcp.CallToolResult, feishuweb.Result, error) {
+		// 先在这一侧校验，不合法的关键词和域名不发给扩展。
+		q, err := feishuweb.CleanQuery(in.Query)
+		if err != nil {
+			return nil, feishuweb.Result{}, err
+		}
+		h, err := feishuweb.CleanSearchHost(in.Host)
+		if err != nil {
+			return nil, feishuweb.Result{}, err
+		}
+		res, err := run.Search(ctx, q, h)
+		if err != nil {
+			return nil, feishuweb.Result{}, err
 		}
 		return nil, res, nil
 	})

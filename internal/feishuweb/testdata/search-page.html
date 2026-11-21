@@ -1,0 +1,49 @@
+<!doctype html>
+<!-- 造的飞书云空间搜索页。真实结构登录后才看得到，这里只模拟几类形态：
+     侧栏里的「最近访问」链接（应当跳过）、结果列表、高亮标签、只有 title 属性的链接、
+     链接文字为空的行、危险链接、外站链接、重复条目、带零宽字符和 Markdown 记号的标题。
+     离线回归：scripts 里的无头 Chrome 打开本文件，跑 extension/search.js，
+     输出应当和 search.json 的 items 一致。 -->
+<html><head><meta charset="utf-8"><title>搜索 - 飞书云文档</title></head>
+<body>
+<aside class="drive-sidebar">
+  <a href="https://x.feishu.cn/docx/RecentDoc0000001">侧栏最近访问</a>
+</aside>
+<main>
+  <input class="search-input" placeholder="搜索" value="周报">
+  <div class="search-result-list">
+    <div class="result-item" role="listitem">
+      <a href="https://x.feishu.cn/docx/AbCdEf1234567890?from=search">2026 <em>周报</em> 第 47 周</a>
+      <span>张三 · 3 天前</span>
+    </div>
+    <div class="result-item" role="listitem">
+      <a href="/wiki/WikiTok12345678#h1">知识库：<em>周报</em>模板</a>
+    </div>
+    <div class="result-item" role="listitem">
+      <a href="https://x.feishu.cn/sheets/SheetTok1234567"><span title="ignored"></span></a>
+      <div>周报统计表</div>
+    </div>
+    <div class="result-item" role="listitem">
+      <a href="https://x.feishu.cn/base/BaseTok12345678" title="周报看板"></a>
+    </div>
+    <div class="result-item" role="listitem">
+      <a href="javascript:alert(1)">恶意链接</a>
+    </div>
+    <div class="result-item" role="listitem">
+      <a href="http://x.feishu.cn/docx/Plain0000000001">明文 http</a>
+    </div>
+    <div class="result-item" role="listitem">
+      <a href="https://evil.example/docx/Evil00000000001">外站</a>
+    </div>
+    <div class="result-item" role="listitem">
+      <a href="https://x.feishu.cn/docx/AbCdEf1234567890">重复条目</a>
+    </div>
+    <div class="result-item" role="listitem">
+      <a href="https://x.feishu.cn/docx/Hostile000000001">[点我](javascript:alert(1))&#8203;<b>&lt;img src=x onerror=alert(1)&gt;</b></a>
+    </div>
+    <div class="result-item" role="listitem">
+      <a href="https://x.feishu.cn/drive/folder/FolderTok123456">文件夹</a>
+    </div>
+  </div>
+</main>
+</body></html>

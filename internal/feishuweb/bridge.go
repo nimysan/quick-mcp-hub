@@ -38,6 +38,9 @@ type Bridge struct {
 	first   *SelfCheck
 	last    *SelfCheck
 	history []Item
+
+	firstSearch *SearchCheck
+	lastSearch  *SearchCheck
 }
 
 // ConnInfo 是扩展连上来时自报的信息，只作展示。
@@ -54,6 +57,9 @@ type Status struct {
 	Conn        *ConnInfo  `json:"conn,omitempty"`
 	FirstCheck  *SelfCheck `json:"firstCheck,omitempty"`
 	LastCheck   *SelfCheck `json:"lastCheck,omitempty"`
+	// 检索自检：第一次和最近一次。
+	FirstSearch *SearchCheck `json:"firstSearch,omitempty"`
+	LastSearch  *SearchCheck `json:"lastSearch,omitempty"`
 }
 
 // 消息格式。扩展 -> hub：hello / result / ping；hub -> 扩展：welcome / job / pong。
@@ -190,7 +196,8 @@ func (b *Bridge) deliver(id string, res RawResult) {
 func (b *Bridge) Status() Status {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	st := Status{Connected: b.conn != nil, ExtensionID: ExtensionID, FirstCheck: b.first, LastCheck: b.last}
+	st := Status{Connected: b.conn != nil, ExtensionID: ExtensionID, FirstCheck: b.first, LastCheck: b.last,
+		FirstSearch: b.firstSearch, LastSearch: b.lastSearch}
 	if b.conn != nil {
 		info := b.info
 		st.Conn = &info

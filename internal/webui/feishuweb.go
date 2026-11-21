@@ -59,15 +59,23 @@ func loopbackOnly(h http.HandlerFunc) http.HandlerFunc {
 
 func (s *Server) handleFeishuJob(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Kind string `json:"kind"`
-		URL  string `json:"url"`
+		Kind  string `json:"kind"`
+		URL   string `json:"url"`
+		Query string `json:"query"`
+		Host  string `json:"host"`
 	}
 	if !decodeJSON(w, r, &req) {
 		return
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 90*time.Second)
 	defer cancel()
-	res, err := s.bridge.Do(ctx, req.Kind, req.URL)
+	var res feishuweb.Result
+	var err error
+	if req.Kind == feishuweb.JobSearch {
+		res, err = s.bridge.Search(ctx, req.Query, req.Host)
+	} else {
+		res, err = s.bridge.Do(ctx, req.Kind, req.URL)
+	}
 	if err != nil {
 		writeErr(w, http.StatusOK, err)
 		return

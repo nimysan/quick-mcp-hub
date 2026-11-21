@@ -731,7 +731,17 @@ async function fwStatus(){
   el.innerHTML = (st.connected
       ? `✅ 扩展已连接（${esc(conn.version||"")}${conn.installType?" · "+esc(conn.installType):""}）`
       : (r.paired ? "扩展还没连上：确认已加载扩展、填了配对码，并且浏览器开着" : "还没配对"))
-    + chk(st.firstCheck, "首次读取自检") + chk(st.lastCheck, "最近一次读取");
+    + chk(st.firstCheck, "首次读取自检") + chk(st.lastCheck, "最近一次读取")
+    + schk(st.firstSearch, "首次检索自检") + schk(st.lastSearch, "最近一次检索");
+}
+
+// 检索自检：只有计数、路径和 class 名（认不出结果结构时用来排查），没有结果内容。
+function schk(c, label){
+  if(!c) return "";
+  return `<div>${label}：${esc(c.host||"")}${esc(c.path||"")} · ${c.login?"跳到了登录页":"已登录"}
+    · 搜索框 ${c.inputFound?"有":"没有"}${c.typed?"（填过关键词）":""} · 策略 ${esc(c.strategy||"-")}
+    · 链接 ${Number(c.anchors)||0} · 结果 ${Number(c.candidates)||0}${c.emptyHint?" · 页面提示无结果":""}
+    · 等了 ${Number(c.waitedMs)||0} ms${(c.classes||[]).length?` · class 样本 <code>${esc(c.classes.join(" | "))}</code>`:""}</div>`;
 }
 
 // ── NapCat 自动配置 ───────────────────────────────────────────

@@ -31,11 +31,12 @@ const ExtensionID = "kncmhpbojegjgckhjahamnnegaddkoge"
 // ExtensionOrigin 是扩展发起 WebSocket 时浏览器带上的 Origin。
 const ExtensionOrigin = "chrome-extension://" + ExtensionID
 
-// 任务种类。search 目前不下发给扩展：检索页的 DOM 结构还没实测，
-// 由 mcp-hub 直接回 not_implemented（见 tools.RegisterFeishuWeb）。
+// 任务种类。
 const (
 	JobReadDoc = "read_doc"
 	JobRecent  = "recent"
+	// JobSearch 见 search.go。
+	JobSearch = "search"
 )
 
 // 结果状态。
@@ -48,6 +49,12 @@ const (
 	StatusUnsupportedType = "unsupported_type"
 	// StatusEngineMissing 表示 docx/wiki 页面上等不到 PageMain：飞书前端可能改版了。
 	StatusEngineMissing = "engine_missing"
+	// StatusLoginRequired：搜索页跳到了登录页，浏览器里的飞书没登录。
+	StatusLoginRequired = "login_required"
+	// StatusStructureUnknown：搜索页打开了，但认不出结果列表。
+	StatusStructureUnknown = "structure_unknown"
+	// StatusNoHost：调用方没给租户域名，扩展也找不到开着或读过的飞书页面。
+	StatusNoHost = "no_host"
 )
 
 // 拒读原因。
@@ -65,6 +72,9 @@ type Job struct {
 	ID   string `json:"id"`
 	Kind string `json:"kind"`
 	URL  string `json:"url,omitempty"`
+	// 检索用：关键词和租户域名（可空，空时由扩展挑）。
+	Query string `json:"query,omitempty"`
+	Host  string `json:"host,omitempty"`
 }
 
 // Flags 是 PageMain.props 上的权限标志原值。指针区分「缺失」和「false」：
@@ -104,13 +114,16 @@ type RawResult struct {
 	Diag   *SelfCheck `json:"diag,omitempty"`
 	Root   *Block     `json:"root,omitempty"`
 	Items  []Item     `json:"items,omitempty"`
+	// SearchDiag 是检索自检，只在检索任务里出现。
+	SearchDiag *SearchCheck `json:"searchDiag,omitempty"`
 }
 
-// Item 是「最近文档」里的一条：只有标题和地址。
+// Item 是「最近文档」或检索结果里的一条：只有标题、地址和类型，没有正文。
 type Item struct {
 	Title  string `json:"title"`
 	URL    string `json:"url"`
-	Source string `json:"source"` // open_tab | read_history
+	Type   string `json:"type,omitempty"` // 检索结果才有：docx | doc | wiki | sheet | bitable | mindnote | slides | file
+	Source string `json:"source"`         // open_tab | read_history | search
 }
 
 // Result 是交给 MCP 调用方的结果。正文已经转好、转义过、截断过。

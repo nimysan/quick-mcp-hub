@@ -37,7 +37,7 @@ func feishuWebDescriptor() Descriptor {
 		ToolInfo: []ToolMeta{
 			{Name: "feishu_web_read_doc", Title: "读取飞书文档", Desc: "按链接读一篇云文档或知识库页面，转成 Markdown"},
 			{Name: "feishu_web_recent", Title: "最近的飞书文档", Desc: "浏览器里开着的和读过的飞书文档"},
-			{Name: "feishu_web_search", Title: "检索飞书文档", Desc: "尚未实现，会返回 not_implemented"},
+			{Name: "feishu_web_search", Title: "检索飞书文档", Desc: "在飞书搜索页按关键词检索，返回标题、链接和类型（不含正文）"},
 		},
 		// 没有写工具，也就没有写开关。
 		Fields: []Field{
