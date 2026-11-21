@@ -102,6 +102,12 @@ jobs:
             echo "version=0.0.0-dev+${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
           fi
 
+      # 发布前先确认 CHANGELOG.md 里有这个版本的一节。放在打包前面：缺了更新
+      # 说明就别白等 4 分钟交叉编译，最后在发布那一步才失败。
+      - name: 检查更新日志
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: ./packaging/changelog.sh "${{ steps.ver.outputs.version }}" > /dev/null
+
       # release.sh 默认用 goproxy.cn —— 那是为开发机准备的（本机到
       # proxy.golang.org 的 DNS 不通）。CI 上走官方的。
       - name: 打发布包
@@ -224,6 +230,14 @@ jobs:
       # 整条流水线唯一要写仓库的权限：建 Release、上传资产。
       contents: write
     steps:
+      # 只取更新日志和取它的脚本：这个 job 其余的输入全是上游产物。
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: |
+            CHANGELOG.md
+            packaging/changelog.sh
+          sparse-checkout-cone-mode: false
+
       - uses: actions/download-artifact@v4
         with:
           pattern: mcp-hub-*
@@ -245,9 +259,8 @@ jobs:
       - name: 建 Release 并上传资产
         env:
           GH_TOKEN: ${{ github.token }}
-          # 这个 job 不 checkout（只要产物），所以没有 .git。gh 默认从 git remote
-          # 推断仓库，没有仓库上下文时直接报 "not a git repository" 退出 1。
-          # GH_REPO 显式给出仓库，省掉一次克隆。
+          # gh 默认从 git remote 推断仓库。这个 job 只稀疏检出了更新日志，
+          # 仍然显式给出 GH_REPO，不依赖 remote 的配置。
           GH_REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
@@ -255,6 +268,12 @@ jobs:
           VER="${TAG#v}"
 
           {
+            echo "## 本版更新"
+            echo
+            ./packaging/changelog.sh "$VER"
+            echo
+            echo "完整的历史见 [CHANGELOG.md](https://github.com/${GITHUB_REPOSITORY}/blob/${TAG}/CHANGELOG.md)。"
+            echo
             echo "## 下载"
             echo
             echo "| 系统 | 文件 |"
@@ -273,11 +292,12 @@ jobs:
           } > notes.md
 
           if gh release view "$TAG" >/dev/null 2>&1; then
-            echo "Release ${TAG} 已存在，覆盖上传资产"
+            echo "Release ${TAG} 已存在，覆盖上传资产并刷新说明"
             gh release upload "$TAG" dist/pkg/*.zip dist/pkg/*.exe dist/pkg/SHA256SUMS*.txt --clobber
+            gh release edit "$TAG" --notes-file notes.md
           else
-            # 不用 --verify-tag：它要在本地 git 里查这个 tag，而这个 job 没有
-            # checkout。tag 存在本来就由 job 的 if 条件（refs/tags/v*）保证。
+            # 不用 --verify-tag：它要在本地 git 里查这个 tag，而这里只是浅的稀疏
+            # 检出，不带 tag。tag 存在本来就由 job 的 if 条件（refs/tags/v*）保证。
             gh release create "$TAG" \
               --title "$TAG" \
               --notes-file notes.md \
