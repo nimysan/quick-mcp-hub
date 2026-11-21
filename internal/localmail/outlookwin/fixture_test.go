@@ -492,7 +492,7 @@ const (
 )
 
 // buildFixture 生成一个夹具文件，返回路径。
-func buildFixture(t *testing.T, lay layout, crypt byte) string {
+func buildFixture(t testing.TB, lay layout, crypt byte) string {
 	t.Helper()
 	f := &fixture{lay: lay, crypt: crypt}
 	st := f.strType()

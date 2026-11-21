@@ -193,6 +193,19 @@ func (p *pstFile) readPage(ib uint64, want byte) (*btPage, error) {
 	if pg.cbEnt == 0 || pg.cEnt*pg.cbEnt > entBytes || pg.level > maxTreeDepth {
 		return nil, formatErr("B 树页头不合理（偏移 %#x）", ib)
 	}
+	// 条目至少要装得下后面会读的字段，否则 entry/readID 越界 panic：
+	// 中间页 BTENTRY = btkey + BREF(bid, ib)；NBT 叶子读到 nidParent；BBT 叶子读到 cb（4K 布局还有 cbInflated）。
+	n := p.idSize()
+	minEnt := 3 * n
+	if pg.level == 0 {
+		minEnt = 2*n + 4
+		if want == ptypeNBT {
+			minEnt = 3*n + 4
+		}
+	}
+	if pg.cbEnt < minEnt {
+		return nil, formatErr("B 树条目太小（%d 字节，偏移 %#x）", pg.cbEnt, ib)
+	}
 	return pg, nil
 }
 
@@ -233,11 +246,20 @@ func (p *pstFile) search(root uint64, ptype byte, key uint64, keyOf func([]byte)
 	return nil, formatErr("B 树层数过多")
 }
 
-// walk 遍历一棵页级 B 树的全部叶子条目。
+// walk 遍历一棵页级 B 树的全部叶子条目。每页只许出现一次：坏文件里子页指回祖先或多个条目指同一页时，
+// 只靠层数上限挡不住（每层几十个条目、16 层就是指数级的读页次数），所以记下读过的页。
 func (p *pstFile) walk(ib uint64, ptype byte, depth int, fn func([]byte) error) error {
+	return p.walkSeen(ib, ptype, depth, map[uint64]bool{}, fn)
+}
+
+func (p *pstFile) walkSeen(ib uint64, ptype byte, depth int, seen map[uint64]bool, fn func([]byte) error) error {
 	if depth > maxTreeDepth {
 		return formatErr("B 树层数过多")
 	}
+	if seen[ib] {
+		return formatErr("B 树页 %#x 被重复引用", ib)
+	}
+	seen[ib] = true
 	pg, err := p.readPage(ib, ptype)
 	if err != nil {
 		return err
@@ -251,7 +273,7 @@ func (p *pstFile) walk(ib uint64, ptype byte, depth int, fn func([]byte) error) 
 			}
 			continue
 		}
-		if err := p.walk(p.readID(e[2*n:]), ptype, depth+1, fn); err != nil {
+		if err := p.walkSeen(p.readID(e[2*n:]), ptype, depth+1, seen, fn); err != nil {
 			return err
 		}
 	}
@@ -388,10 +410,17 @@ func (p *pstFile) readData(bid uint64) ([][]byte, error) {
 	}
 	var out [][]byte
 	total := 0
+	seen := map[uint64]bool{} // 内部块（XBLOCK）只许出现一次，坏文件里互相引用时不至于按扇出指数展开
 	var rec func(bid uint64, depth int) error
 	rec = func(bid uint64, depth int) error {
 		if depth > 2 {
 			return formatErr("数据树层数过多")
+		}
+		if isInternal(bid) {
+			if seen[bid&^1] {
+				return formatErr("XBLOCK %#x 被重复引用", bid)
+			}
+			seen[bid&^1] = true
 		}
 		b, err := p.readBlock(bid)
 		if err != nil {
@@ -447,11 +476,16 @@ func (p *pstFile) readSubnodes(bid uint64) (map[uint32]subEntry, error) {
 	if p.layout == layoutANSI {
 		hdr = 4
 	}
+	seen := map[uint64]bool{} // 同上：SIBLOCK / SLBLOCK 只许出现一次
 	var rec func(bid uint64, depth int) error
 	rec = func(bid uint64, depth int) error {
 		if depth > maxTreeDepth {
 			return formatErr("子节点树层数过多")
 		}
+		if seen[bid&^1] {
+			return formatErr("子节点块 %#x 被重复引用", bid)
+		}
+		seen[bid&^1] = true
 		b, err := p.readBlock(bid)
 		if err != nil {
 			return err

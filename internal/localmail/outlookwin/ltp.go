@@ -153,8 +153,13 @@ func (h *heap) bth(hid uint32) (cbKey, cbEnt int, recs []bthRec, err error) {
 	if cbKey == 0 || levels > maxTreeDepth {
 		return 0, 0, nil, formatErr("BTH 头不合理")
 	}
+	seen := map[uint32]bool{} // 中间节点只许出现一次，自指或共享子节点时不按扇出指数展开
 	var rec func(hid uint32, level int) error
 	rec = func(hid uint32, level int) error {
+		if seen[hid] {
+			return formatErr("BTH 节点 %#x 被重复引用", hid)
+		}
+		seen[hid] = true
 		b, err := h.get(hid)
 		if err != nil {
 			return err
