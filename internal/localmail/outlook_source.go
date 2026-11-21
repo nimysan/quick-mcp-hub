@@ -15,6 +15,7 @@ var outlookInfo = SourceInfo{
 		"Outlook 升级后格式变了时，这个来源会自动停用并提示，不影响其他来源",
 	DirLabel: "新版 Outlook 数据目录",
 	DirHelp:  "留空用 Main Profile；用了别的配置文件时填 …/Outlook 15 Profiles/<配置文件名>，或直接填 HxStore.hxd 的路径",
+	GOOS:     "darwin",
 	Open:     openOutlook,
 }
 

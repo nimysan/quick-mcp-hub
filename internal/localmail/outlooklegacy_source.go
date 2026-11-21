@@ -15,6 +15,7 @@ var outlookLegacyInfo = SourceInfo{
 		"新版 Outlook 用的是另一套存储，这个开关读不到",
 	DirLabel: "旧版 Outlook 数据目录",
 	DirHelp:  "留空用 Main Profile 的 Data 目录；用了别的配置文件时填 …/Outlook 15 Profiles/<配置文件名>/Data",
+	GOOS:     "darwin",
 	Open:     openOutlookLegacy,
 }
 

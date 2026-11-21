@@ -15,6 +15,7 @@ var appleMailInfo = SourceInfo{
 		"加入 Amazon Quick 并打开开关，再完全退出并重新打开 Amazon Quick。没授权时工具会返回这段指引，其他来源照常可用",
 	DirLabel: "Apple Mail 数据目录",
 	DirHelp:  "留空用默认的 ~/Library/Mail，一般不用填",
+	GOOS:     "darwin",
 	Open:     openAppleMail,
 }
 

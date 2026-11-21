@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"runtime"
 	"strings"
 	"syscall"
 	"testing"
@@ -13,6 +14,9 @@ import (
 // L2：普通 Unix 权限不足（EACCES）不能被说成隐私保护，也不能引导去开完全磁盘访问权限；
 // TCC（EPERM）才给授权步骤。
 func TestExplainTellsTCCFromUnixPermission(t *testing.T) {
+	if runtime.GOOS != "darwin" {
+		t.Skip("隐私保护（TCC）只在 macOS 上有")
+	}
 	info := SourceInfo{Name: "测试来源"}
 	tcc := Explain(info, &fs.PathError{Op: "open", Path: "/x", Err: syscall.EPERM})
 	if !errors.Is(tcc, ErrAccess) || !strings.Contains(tcc.Error(), "完全磁盘访问权限") {
@@ -186,5 +190,43 @@ func TestOutlookAdapterMarksGaps(t *testing.T) {
 		if !found {
 			t.Errorf("incomplete 缺 %s：%v", f, s.Incomplete)
 		}
+	}
+}
+
+// 来源按平台过滤：Mac 的三个只在 darwin，经典版 Outlook for Windows 只在 windows，别的平台一个没有。
+func TestSourcesFor(t *testing.T) {
+	ids := func(goos string) string {
+		var out []string
+		for _, s := range SourcesFor(goos) {
+			out = append(out, s.ID)
+		}
+		return strings.Join(out, ",")
+	}
+	if got := ids("darwin"); got != "apple_mail,outlook_legacy,outlook" {
+		t.Errorf("darwin = %s", got)
+	}
+	if got := ids("windows"); got != "outlook_classic_win" {
+		t.Errorf("windows = %s", got)
+	}
+	if got := ids("linux"); got != "" {
+		t.Errorf("linux = %s", got)
+	}
+	if ids(runtime.GOOS) != strings.Join(func() []string {
+		var o []string
+		for _, s := range Sources {
+			o = append(o, s.ID)
+		}
+		return o
+	}(), ",") {
+		t.Error("Sources 和 SourcesFor(runtime.GOOS) 不一致")
+	}
+}
+
+// 文件被占用：说明里要叫用户退出 Outlook，而且不能停用来源（下一次调用要重新打开）。
+func TestExplainLocked(t *testing.T) {
+	got := Explain(outlookWinInfo, errors.Join(ErrLocked, errors.New("a.ost 正被锁住")))
+	if !errors.Is(got, ErrLocked) || errors.Is(got, ErrUnsupported) ||
+		!strings.Contains(got.Error(), "退出") || !strings.Contains(got.Error(), "OUTLOOK.EXE") || !strings.Contains(got.Error(), "a.ost") {
+		t.Errorf("Explain(locked) = %v", got)
 	}
 }

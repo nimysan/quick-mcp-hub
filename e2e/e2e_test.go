@@ -9,6 +9,10 @@
 //	MCPHUB_E2E_LEGACY_DIR     旧版 Outlook 的 Data 目录，默认 Main Profile/Data
 //	MCPHUB_E2E_OUTLOOK_DIR    新版 Outlook 的配置文件目录，默认 Main Profile
 //	MCPHUB_E2E_BASELINE_BIN   旧版（main 分支）二进制；设置后跑 7 个渠道的 tools/list 回归对比
+//	MCPHUB_E2E_PST_DIR        （Windows）放 .pst / .ost 样本的目录；设置后用样本跑经典版 Outlook for Windows 的用例
+//
+// Mac 来源的用例只在 darwin 上跑，经典版 Outlook for Windows 的用例只在 windows 上跑：
+// 服务按平台注册来源，别的平台上的来源本来就不存在。
 //
 // 每个被测进程用独立的临时 HOME 和 TMPDIR，不读写用户真实的 mcp-hub 配置。
 // 没有任何用例往钥匙串写东西：假渠道只写 channels.json，凭据本来就是惰性读取的，
@@ -26,6 +30,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 	"sync"
@@ -42,6 +47,9 @@ func binPath(t *testing.T) string {
 	p := os.Getenv("MCPHUB_E2E_BIN")
 	if p == "" {
 		p = filepath.Join("..", "dist", "mcp-hub")
+		if runtime.GOOS == "windows" {
+			p += ".exe"
+		}
 	}
 	abs, err := filepath.Abs(p)
 	if err != nil {
@@ -65,7 +73,7 @@ type inst struct {
 func newHome(t *testing.T, chans []inst) string {
 	t.Helper()
 	home := t.TempDir()
-	dir := filepath.Join(home, "Library", "Application Support", "mcp-hub")
+	dir := filepath.Join(configBase(home), "mcp-hub")
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		t.Fatal(err)
 	}
@@ -77,6 +85,59 @@ func newHome(t *testing.T, chans []inst) string {
 		t.Fatal(err)
 	}
 	return home
+}
+
+// configBase 是被测进程的 os.UserConfigDir()（由 procEnv 里的变量决定）。
+func configBase(home string) string {
+	switch runtime.GOOS {
+	case "darwin":
+		return filepath.Join(home, "Library", "Application Support")
+	case "windows":
+		return filepath.Join(home, "AppData", "Roaming")
+	}
+	return filepath.Join(home, ".config")
+}
+
+// procEnv 是被测进程的最小环境：不继承 MCPHUB_MAIL_* 之类会额外注册渠道的变量。
+func procEnv(home string) []string {
+	env := []string{
+		"HOME=" + home,
+		"TMPDIR=" + filepath.Join(home, "tmp"),
+		"PATH=" + os.Getenv("PATH"),
+		"USER=" + os.Getenv("USER"),
+		"LANG=en_US.UTF-8",
+	}
+	if runtime.GOOS == "windows" {
+		env = append(env,
+			"USERPROFILE="+home,
+			"APPDATA="+filepath.Join(home, "AppData", "Roaming"),
+			"LOCALAPPDATA="+filepath.Join(home, "AppData", "Local"),
+			"TEMP="+filepath.Join(home, "tmp"),
+			"TMP="+filepath.Join(home, "tmp"),
+			"SystemRoot="+os.Getenv("SystemRoot"),
+			"USERNAME="+os.Getenv("USERNAME"),
+		)
+	} else {
+		env = append(env, "XDG_CONFIG_HOME="+filepath.Join(home, ".config"))
+	}
+	return env
+}
+
+// macOnly 跳过 Mac 来源的用例。
+func macOnly(t *testing.T) {
+	t.Helper()
+	if runtime.GOOS != "darwin" {
+		t.Skip("Mac 来源只在 macOS 上注册")
+	}
+}
+
+// platformOn 是当前平台上全部来源都打开、目录都无效的设置。
+func platformOn() map[string]string {
+	if runtime.GOOS == "windows" {
+		return map[string]string{"outlook_classic_win": "true", "outlook_classic_win_dir": `C:\nonexistent-e2e\x.pst`}
+	}
+	return map[string]string{"apple_mail": "true", "outlook_legacy": "true", "outlook": "true",
+		"apple_mail_dir": "/nonexistent-e2e/a", "outlook_legacy_dir": "/nonexistent-e2e/b", "outlook_dir": "/nonexistent-e2e/c"}
 }
 
 type syncBuf struct {
@@ -107,14 +168,7 @@ type hub struct {
 func start(t *testing.T, bin, home string) (*hub, error) {
 	t.Helper()
 	cmd := exec.Command(bin, "-serve")
-	// 只给最少的环境：不继承 MCPHUB_MAIL_* 之类会额外注册渠道的变量。
-	cmd.Env = []string{
-		"HOME=" + home,
-		"TMPDIR=" + filepath.Join(home, "tmp"),
-		"PATH=" + os.Getenv("PATH"),
-		"USER=" + os.Getenv("USER"),
-		"LANG=en_US.UTF-8",
-	}
+	cmd.Env = procEnv(home)
 	errBuf := &syncBuf{}
 	cmd.Stderr = errBuf
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -220,8 +274,7 @@ func localInst(enabled bool, s map[string]string) inst {
 
 func TestLocalMailRegistration(t *testing.T) {
 	bin := binPath(t)
-	allOn := map[string]string{"apple_mail": "true", "outlook_legacy": "true", "outlook": "true",
-		"apple_mail_dir": "/nonexistent-e2e/a", "outlook_legacy_dir": "/nonexistent-e2e/b", "outlook_dir": "/nonexistent-e2e/c"}
+	allOn := platformOn()
 
 	off := []struct {
 		name  string
@@ -347,6 +400,7 @@ func noPermDir(t *testing.T) string {
 }
 
 func TestLocalMailErrorPaths(t *testing.T) {
+	macOnly(t)
 	bin := binPath(t)
 	junk := filepath.Join(t.TempDir(), "HxStore.hxd")
 	if err := os.WriteFile(junk, bytes.Repeat([]byte("not-a-hxstore-file "), 4096), 0o600); err != nil {
@@ -416,6 +470,7 @@ func TestLocalMailErrorPaths(t *testing.T) {
 
 func realDirs(t *testing.T) map[string]string {
 	t.Helper()
+	macOnly(t)
 	if os.Getenv("MCPHUB_E2E_REAL") != "1" {
 		t.Skip("设 MCPHUB_E2E_REAL=1 才读真实本机邮件")
 	}
@@ -1014,8 +1069,7 @@ func TestRegressionSevenChannels(t *testing.T) {
 			chans := sevenChannels(write)
 			old := toolJSON(mustStart(t, base, chans).tools(t))
 			cur := toolJSON(mustStart(t, bin, chans).tools(t))
-			withLocal := toolJSON(mustStart(t, bin, append(chans, localInst(true, map[string]string{
-				"apple_mail": "true", "apple_mail_dir": "/nonexistent-e2e"}))).tools(t))
+			withLocal := toolJSON(mustStart(t, bin, append(chans, localInst(true, platformOn()))).tools(t))
 
 			perType := map[string]int{}
 			for n := range old {

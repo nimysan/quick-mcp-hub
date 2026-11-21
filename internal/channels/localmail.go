@@ -1,16 +1,18 @@
-// 本机邮件渠道：只读本机邮件客户端（Apple Mail、旧版 Outlook…）的数据文件，
-// 不连任何服务器，也就没有凭据。
+// 本机邮件渠道：只读本机邮件客户端（Mac 上的 Apple Mail、Outlook，Windows 上的
+// 经典版 Outlook）的数据文件，不连任何服务器，也就没有凭据。来源按平台过滤，
+// 见 localmail.Sources。
 //
 // 和其他渠道并列成为第四种类型。它和别的渠道不同的地方只有两点：没有密码类
 // 字段（保存时不碰系统密码管理器），以及「连通性测试」测的是本机文件能不能读，
 // 而且结果取决于**哪个进程**在读 —— 配置页进程和 Amazon Quick 拉起来的
-// MCP 进程各自有各自的 macOS 隐私授权。
+// MCP 进程各自有各自的 macOS 隐私授权（Windows 上没有这一层）。
 package channels
 
 import (
 	"context"
 	"errors"
 	"fmt"
+	"runtime"
 	"strings"
 	"time"
 
@@ -78,14 +80,22 @@ func localMailDescriptor() Descriptor {
 		Kind:         KindLocalMail,
 		Version:      1,
 		Tags:         []string{"email"},
-		Summary:      "直接读这台 Mac 上邮件 App 的本地数据 · 不联网、无需密码",
+		Summary:      localMailSummary(runtime.GOOS),
 		Integration:  "localmail",
 		AccountField: localMailNameField,
-		Available:    true,
+		Available:    len(localmail.Sources) > 0, // 这个平台上一个来源都没有时不可添加
+		Platform:     runtime.GOOS,
 		Tools:        names,
 		ToolInfo:     localMailTools,
 		Fields:       fields,
 	}
+}
+
+func localMailSummary(goos string) string {
+	if goos == "windows" {
+		return "直接读这台电脑上经典版 Outlook 的本地数据文件 · 不联网、无需密码"
+	}
+	return "直接读这台 Mac 上邮件 App 的本地数据 · 不联网、无需密码"
 }
 
 // LocalMailConfig 返回第一条已启用的本机邮件渠道的配置。没有时 ok 为 false。

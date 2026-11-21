@@ -589,14 +589,21 @@ async function openForm(type, account){
     </div>` : "";
   // 本机邮件：没有凭据，但有一件必须在保存前看到的事 —— macOS 的完全磁盘
   // 访问权限要授给 Amazon Quick（真正拉起 MCP 服务的那个程序），而不是这个页面。
-  const localMailHTML = d.kind==="localmail" ? `
+  // Windows 上没有这层隐私授权，要提醒的是经典版 Outlook 运行时会锁住数据文件。
+  const localMailHTML = d.kind!=="localmail" ? "" : d.platform==="windows" ? `
+    <div class="risk">
+      <div class="risk-head">🗂️ 只读这台电脑上的 Outlook 数据文件</div>
+      <div class="help">直接读经典版 Outlook 存在本机的 .ost / .pst，不联网、不需要密码，也不会改动任何一封邮件。只有已经同步到这台电脑的邮件才读得到。</div>
+      <div class="help" style="color:var(--warn)">经典版 Outlook 运行时会锁住数据文件，这时读不到：请先完全退出经典版 Outlook（任务管理器里没有 OUTLOOK.EXE）再用。
+        新版 Outlook（olk）用的是另一套存储，暂不支持。</div>
+    </div>` : `
     <div class="risk">
       <div class="risk-head">🗂️ 只读这台 Mac 上的邮件文件</div>
       <div class="help">直接读邮件 App 存在本机的数据，不联网、不需要密码，也不会改动任何一封邮件。只有已经同步到这台 Mac 的邮件才读得到。</div>
       <div class="help" style="color:var(--warn)">读 Apple Mail 要先给 <b>Amazon Quick</b> 授权：系统设置 → 隐私与安全性 → 完全磁盘访问权限，
         加入 Amazon Quick 并打开开关，然后完全退出 Amazon Quick 再打开。
         这里的「测试」用的是本页面自己的权限，和 Amazon Quick 的不一样，所以这里没权限不会挡住保存。</div>
-    </div>` : "";
+    </div>`;
   // NapCat 自动配置。只对这个渠道出现：它是唯一一个要在本机改**另一个程序**
   // 配置的渠道，而那件事手工做要先找 6099 端口、从 webui.json 翻登录密钥、
   // 进页面新建 HTTP 服务器、自己想一个 token —— 全是实现细节。

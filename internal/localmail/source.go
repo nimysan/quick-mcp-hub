@@ -7,9 +7,11 @@
 //
 // 新增一个来源（例如新版 Outlook 的 hxstore）只需要：
 //  1. 写一个适配器文件，实现 Source；
-//  2. 在 Sources 里加一条 SourceInfo。
+//  2. 在 allSources 里加一条 SourceInfo，GOOS 填它所在的平台。
 //
 // 配置页的开关、工具描述里的来源清单都从 Sources 生成，不需要再改别处。
+// Sources 只含当前平台的来源：Mac 的三个来源只在 darwin 上出现，
+// 经典版 Outlook for Windows 只在 windows 上出现。
 package localmail
 
 import (
@@ -17,6 +19,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"runtime"
 	"strings"
 	"sync"
 	"syscall"
@@ -29,6 +32,8 @@ const (
 	SourceAppleMail     = "apple_mail"
 	SourceOutlookLegacy = "outlook_legacy"
 	SourceOutlook       = "outlook" // 新版 Outlook（HxStore），读取包在 internal/localmail/hxstore
+	// SourceOutlookClassicWin 是经典版 Outlook for Windows 的 .pst / .ost，读取包在 internal/localmail/outlookwin。
+	SourceOutlookClassicWin = "outlook_classic_win"
 )
 
 // 默认值与上限。
@@ -52,6 +57,10 @@ var ErrUnsupported = errors.New("存储格式不支持")
 
 // ErrNotFound 表示数据目录、文件夹或邮件不存在。
 var ErrNotFound = errors.New("未找到")
+
+// ErrLocked 表示数据文件正被邮件客户端占用（经典版 Outlook for Windows 运行时锁住 .pst / .ost）。
+// 这是暂时的：Hub 不停用来源，用户退出客户端后下一次调用就能读。
+var ErrLocked = errors.New("数据文件正被占用")
 
 // Folder 是一个邮件文件夹。
 type Folder struct {
@@ -141,11 +150,27 @@ type SourceInfo struct {
 	Help string
 	// DirLabel / DirHelp 是「自定义数据目录」高级字段的文案。
 	DirLabel, DirHelp string
-	Open              func(opt OpenOptions) (Source, error)
+	// GOOS 是这个来源所在的平台（runtime.GOOS 的取值）。别的平台上不注册、不显示。
+	GOOS string
+	Open func(opt OpenOptions) (Source, error)
 }
 
-// Sources 是本构建认识的全部来源，按配置页上的显示顺序。
-var Sources = []SourceInfo{appleMailInfo, outlookLegacyInfo, outlookInfo}
+// allSources 是本构建认识的全部来源，按配置页上的显示顺序。
+var allSources = []SourceInfo{appleMailInfo, outlookLegacyInfo, outlookInfo, outlookWinInfo}
+
+// Sources 是当前平台上可用的来源。某个平台上一个都没有时为空，本机邮件渠道随之不可添加。
+var Sources = SourcesFor(runtime.GOOS)
+
+// SourcesFor 返回平台 goos 上的来源，按显示顺序。
+func SourcesFor(goos string) []SourceInfo {
+	var out []SourceInfo
+	for _, s := range allSources {
+		if s.GOOS == goos {
+			out = append(out, s)
+		}
+	}
+	return out
+}
 
 // SourceByID 按标识取来源。
 func SourceByID(id string) (SourceInfo, bool) {
@@ -453,13 +478,22 @@ func Explain(info SourceInfo, err error) error {
 	if err == nil {
 		return nil
 	}
-	if errors.Is(err, ErrAccess) || isTCC(err) {
+	if errors.Is(err, ErrLocked) {
+		return fmt.Errorf("%w：%s 的数据文件正被占用（%s）。"+
+			"请完全退出经典版 Outlook（关掉窗口后，任务管理器里也不能再有 OUTLOOK.EXE），然后再试一次。"+
+			"这个来源没有停用，Outlook 退出后直接重试即可；本程序不会强行读取被锁住的文件。", ErrLocked, info.Name, cause(err))
+	}
+	if errors.Is(err, ErrAccess) || (runtime.GOOS == "darwin" && isTCC(err)) {
 		return fmt.Errorf("%w：%s 的数据被 macOS 隐私保护拦下。"+
 			"请打开「系统设置 → 隐私与安全性 → 完全磁盘访问权限」，"+
 			"把启动 mcp-hub 的程序（在 Amazon Quick 里用就是 Amazon Quick）加进去并打开开关，"+
 			"然后完全退出 Amazon Quick 再重新打开。本程序不会尝试绕过这项保护。", ErrAccess, info.Name)
 	}
 	if errors.Is(err, fs.ErrPermission) {
+		if runtime.GOOS != "darwin" {
+			return fmt.Errorf("%w：当前用户没有读取 %s 数据的文件权限（%v）。"+
+				"请检查文件的属主和权限，或者在配置里改填正确的路径。", ErrFilePermission, info.Name, err)
+		}
 		return fmt.Errorf("%w：当前用户没有读取 %s 数据的文件权限（%v）。"+
 			"这是普通的文件权限问题，不是 macOS 隐私保护，开「完全磁盘访问权限」解决不了。"+
 			"请检查数据目录的属主和权限（例如目录属于别的用户，或被改成了不可读），"+
@@ -499,7 +533,7 @@ func cause(err error) string {
 	}
 	var parts []string
 	for _, e := range j.Unwrap() {
-		if e == nil || e == ErrUnsupported || e == ErrNotFound || e == ErrAccess || e == ErrFilePermission {
+		if e == nil || e == ErrUnsupported || e == ErrNotFound || e == ErrAccess || e == ErrFilePermission || e == ErrLocked {
 			continue
 		}
 		parts = append(parts, cause(e))
