@@ -199,6 +199,8 @@ func readSchema(d *ldbDB) idbSchema {
 }
 
 // keepKey 决定合并时保留哪些键：元数据、对象仓库数据（index 1）和 blob 记录（index 3）。索引条目丢掉以省内存。
+// shortcut: 全部对象仓库记录（含正文）都留在内存里，9.5 MB 的库没问题；离线缓存设到 180 天、库到几百 MB 时，
+// 改成只保留 messages/folders 和 messageBodies 的文件位置，Get 时再按需读。
 func keepKey(k []byte) bool {
 	kp, _, ok := decodePrefix(k)
 	if !ok {
