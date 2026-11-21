@@ -360,7 +360,7 @@ func handle(p *[]byte) (uint64, uint64, bool) {
 
 // tableBlock 取出一个块并校验、解压。
 func tableBlock(data []byte, off, size uint64) ([]byte, error) {
-	if off > uint64(len(data)) || size+5 > uint64(len(data))-off {
+	if off > uint64(len(data)) || size > uint64(len(data))-off || uint64(len(data))-off-size < 5 { // 不能写 size+5：size 很大时加法溢出
 		return nil, errCorrupt
 	}
 	b := data[off : off+size]

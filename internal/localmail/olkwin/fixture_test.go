@@ -416,7 +416,7 @@ type fixtureOpt struct {
 }
 
 // writeFixture 在 dir 下建 IndexedDB 目录结构，返回 IndexedDB 根目录。
-func writeFixture(t *testing.T, dir string, opt fixtureOpt) string {
+func writeFixture(t testing.TB, dir string, opt fixtureOpt) string {
 	t.Helper()
 	if opt.comparator == "" {
 		opt.comparator = "idb_cmp1"

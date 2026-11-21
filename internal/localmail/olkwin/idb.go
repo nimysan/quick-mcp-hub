@@ -92,7 +92,7 @@ func idbInt(p []byte) (int64, bool) {
 // idbStringWithLength：varint 字符数 + UTF-16BE。
 func idbStringWithLength(p []byte) (string, []byte, bool) {
 	n, p, ok := idbVarint(p)
-	if !ok || n < 0 || n*2 > int64(len(p)) {
+	if !ok || n < 0 || n > int64(len(p))/2 { // 不能写 n*2 > len：n 很大时乘法溢出成负数
 		return "", nil, false
 	}
 	return utf16be(p[:n*2]), p[n*2:], true
