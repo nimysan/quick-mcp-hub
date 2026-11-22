@@ -44,7 +44,7 @@ func NewClient() *Client {
 }
 
 // ErrHubNotRunning 表示配置页面（托盘程序）没在跑。
-var ErrHubNotRunning = errors.New("mcp-hub 配置页面（托盘程序）没在运行：飞书网页文档要靠它和浏览器扩展通信，先双击打开 mcp-hub")
+var ErrHubNotRunning error = &StatusErr{Status: StatusExtensionDisconnected, Msg: "mcp-hub 配置页面（托盘程序）没在运行：飞书网页文档要靠它和浏览器扩展通信，先双击打开 mcp-hub"}
 
 // Do 交一个任务并等结果。
 func (c *Client) Do(ctx context.Context, kind, docURL string) (Result, error) {
@@ -68,7 +68,7 @@ func (c *Client) post(ctx context.Context, job map[string]string) (Result, error
 		if errors.Is(err, syscall.ECONNREFUSED) {
 			return Result{}, ErrHubNotRunning
 		}
-		return Result{}, fmt.Errorf("连不上本机 mcp-hub 配置页面: %w", err)
+		return Result{}, &StatusErr{Status: StatusExtensionDisconnected, Msg: "连不上本机 mcp-hub 配置页面: " + err.Error()}
 	}
 	defer resp.Body.Close()
 	data, err := io.ReadAll(io.LimitReader(resp.Body, 32<<20))

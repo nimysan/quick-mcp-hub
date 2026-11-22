@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "mcp-hub 飞书文档读取",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "让本机 mcp-hub 读取你在浏览器里本来就能打开的飞书 / Lark 云文档（只读；禁止复制的文档不读）。",
   "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAqrrKmjFCDDWcScawdQEYs3TUEAZuEmeLMZEuxmeG2VLh7xeIuU/Kt8AsbpZLt17GTe4TJ4XGrFcAAiyXMPJoC6fSeoXaIV10I80xw350bQdYdliuspYAbp7CnGkHzxmi8x7ieqPZGFGdofklKKvELOfpfAT+cM0FKlqTjpJCYqprOHM4JZ/TcLRfSI2E0H0z+NX8QlFGevagCgtZYVxeTRyJsUiRu7FPTY+EWUrAnFszUZIUMcXAraoSAbhfxuJrJ2xhglTauSDV8qHtG51uq5xwXoRK/QOjlStxt/SgqD3Zt5OseYQOJ6IoN+U3F9jn63fIo7ugY4/EjgwyYh8J6QIDAQAB",
   "minimum_chrome_version": "116",

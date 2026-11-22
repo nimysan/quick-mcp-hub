@@ -1,7 +1,6 @@
 package feishuweb
 
 import (
-	"fmt"
 	"net/url"
 	"strings"
 )
@@ -58,25 +57,25 @@ var allowedSuffixes = []string{".feishu.cn", ".larksuite.com", ".larkoffice.com"
 func ValidateDocURL(raw string) (string, error) {
 	u, err := url.Parse(strings.TrimSpace(raw))
 	if err != nil || u.Scheme != "https" || u.User != nil || u.Port() != "" {
-		return "", fmt.Errorf("只接受 https 的飞书文档地址")
+		return "", argErr("只接受 https 的飞书文档地址")
 	}
 	host := strings.ToLower(u.Hostname())
 	if !AllowedHost(host) {
-		return "", fmt.Errorf("%s 不是飞书或 Lark 的域名", host)
+		return "", argErr("%s 不是飞书或 Lark 的域名", host)
 	}
 	parts := strings.Split(strings.Trim(u.Path, "/"), "/")
 	if len(parts) < 2 || parts[1] == "" {
-		return "", fmt.Errorf("地址里没有文档 token")
+		return "", argErr("地址里没有文档 token")
 	}
 	switch parts[0] {
 	case "docx", "wiki":
 	case "sheets", "base", "slides", "mindnotes", "file", "drive":
-		return "", fmt.Errorf("%s 类型的页面暂不支持，只支持云文档（docx）和知识库（wiki）", parts[0])
+		return "", &StatusErr{Status: StatusUnsupportedType, Msg: parts[0] + " 类型的页面暂不支持，只支持云文档（docx）和知识库（wiki）"}
 	default:
-		return "", fmt.Errorf("不认识的飞书页面类型 %q，只支持 docx 和 wiki", parts[0])
+		return "", argErr("不认识的飞书页面类型 %q，只支持 docx 和 wiki", parts[0])
 	}
 	if !validToken(parts[1]) {
-		return "", fmt.Errorf("文档 token 格式不对")
+		return "", argErr("文档 token 格式不对")
 	}
 	// 只留 scheme、主机和前两段路径：查询串里可能有分享来源之类的追踪参数，
 	// 也不该由调用方往页面里塞别的东西。

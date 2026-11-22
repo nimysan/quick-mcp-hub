@@ -88,3 +88,69 @@ func TestFeishuWebTools(t *testing.T) {
 		t.Errorf("检索结果不对：%s", text)
 	}
 }
+
+type scriptedRunner struct {
+	res feishuweb.Result
+	err error
+}
+
+func (s scriptedRunner) Do(context.Context, string, string) (feishuweb.Result, error) {
+	return s.res, s.err
+}
+func (s scriptedRunner) Search(context.Context, string, string) (feishuweb.Result, error) {
+	return s.res, s.err
+}
+
+// 统一返回形态（BUG-04）：每条结果都带 structuredContent 和 status；参数 / 环境错误
+// isError=true，业务状态 isError=false；recent 和 search 的 items 总是在（BUG-07）。
+func TestFeishuWebUniformResults(t *testing.T) {
+	ctx := context.Background()
+	call := func(run FeishuWebRunner, name string, args map[string]any) (*mcp.CallToolResult, map[string]any) {
+		t.Helper()
+		server := mcp.NewServer(&mcp.Implementation{Name: "t", Version: "0"}, nil)
+		RegisterFeishuWeb(server, run)
+		res, err := connect(t, server).CallTool(ctx, &mcp.CallToolParams{Name: name, Arguments: args})
+		if err != nil {
+			t.Fatal(err)
+		}
+		sc, ok := res.StructuredContent.(map[string]any)
+		if !ok {
+			t.Fatalf("%s %v 没有 structuredContent：%+v", name, args, res)
+		}
+		return res, sc
+	}
+	doc := map[string]any{"url": "https://x.feishu.cn/docx/AbCdEf123456"}
+	for _, c := range []struct {
+		name    string
+		run     FeishuWebRunner
+		tool    string
+		args    map[string]any
+		status  string
+		isError bool
+	}{
+		{"假 token", scriptedRunner{res: feishuweb.Result{Status: feishuweb.StatusNotFound, Message: "不存在"}}, "feishu_web_read_doc", doc, "not_found", false},
+		{"没权限", scriptedRunner{res: feishuweb.Result{Status: feishuweb.StatusNoPermission, Message: "没权限"}}, "feishu_web_read_doc", doc, "no_permission", false},
+		{"拒读", scriptedRunner{res: feishuweb.Result{Status: feishuweb.StatusRefused, Reason: "copy_restricted"}}, "feishu_web_read_doc", doc, "refused", false},
+		{"扩展没连", scriptedRunner{err: feishuweb.ErrNotConnected}, "feishu_web_read_doc", doc, "extension_disconnected", true},
+		{"配置页面回的失败", scriptedRunner{res: feishuweb.Result{Status: feishuweb.StatusExtensionDisconnected, Message: "没连"}}, "feishu_web_recent", nil, "extension_disconnected", true},
+		{"外站地址", scriptedRunner{}, "feishu_web_read_doc", map[string]any{"url": "https://evil.example/docx/AbCdEf123456"}, "invalid_argument", true},
+		{"电子表格", scriptedRunner{}, "feishu_web_read_doc", map[string]any{"url": "https://x.feishu.cn/sheets/AbCdEf123456"}, "unsupported_type", false},
+		{"recent 空", scriptedRunner{res: feishuweb.Result{Status: feishuweb.StatusOK}}, "feishu_web_recent", nil, "ok", false},
+		{"检索认不出结构", scriptedRunner{res: feishuweb.Result{Status: feishuweb.StatusStructureUnknown, Message: "认不出"}}, "feishu_web_search", map[string]any{"query": "周报"}, "structure_unknown", false},
+		{"检索 host 不对", scriptedRunner{}, "feishu_web_search", map[string]any{"query": "周报", "host": "www.feishu.cn"}, "invalid_argument", true},
+		{"检索关键词空", scriptedRunner{}, "feishu_web_search", map[string]any{"query": " "}, "invalid_argument", true},
+	} {
+		res, sc := call(c.run, c.tool, c.args)
+		if sc["status"] != c.status || res.IsError != c.isError {
+			t.Errorf("%s：status=%v isError=%v，期望 %s %v", c.name, sc["status"], res.IsError, c.status, c.isError)
+		}
+		if c.status != "ok" && c.status != "refused" && sc["message"] == "" {
+			t.Errorf("%s：没有 message：%v", c.name, sc)
+		}
+		if c.tool != "feishu_web_read_doc" {
+			if items, ok := sc["items"].([]any); !ok || len(items) != 0 {
+				t.Errorf("%s：items 应当是 []：%v", c.name, sc)
+			}
+		}
+	}
+}

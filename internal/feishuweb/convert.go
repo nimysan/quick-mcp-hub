@@ -116,24 +116,36 @@ func Convert(root *Block, lim Limits) Converted {
 	return out
 }
 
-// CleanTitle 规整标题：去掉控制字符和零宽字符，限制长度。标题是不可信的，
-// 它会原样出现在工具结果里。
+// CleanTitle 规整标题：去掉控制字符、零宽和方向控制字符（飞书页面标题里的水印，
+// 用户实测 recent 的标题开头有 30 多个）、浏览器标签页标题的「 - Feishu Docs」后缀，
+// 限制长度。read_doc、recent、search 共用。标题是不可信的，它会原样出现在工具结果里。
 func CleanTitle(s string) string {
 	s = strings.Map(func(r rune) rune {
 		if r == '\n' || r == '\t' {
 			return ' '
 		}
-		if unicode.IsControl(r) || r == '\u200b' || r == '\ufeff' || r == '\u2060' || r == '\u200e' || r == '\u200f' {
+		if unicode.IsControl(r) || invisibleRune(r) {
 			return -1
 		}
 		return r
 	}, s)
-	s = strings.TrimSpace(s)
+	s = strings.Join(strings.Fields(s), " ")
+	s = titleSuffix.ReplaceAllString(s, "")
 	if r := []rune(s); len(r) > 200 {
 		s = string(r[:200]) + "…"
 	}
 	return s
 }
+
+// invisibleRune 是标题里要去掉的不可见字符：U+200B-200F（零宽、方向标记）、
+// U+202A-202E（方向嵌入）、U+2060-2064（字连接符、不可见运算符）、U+2066-2069（方向隔离）、U+FEFF。
+func invisibleRune(r rune) bool {
+	return r >= 0x200b && r <= 0x200f || r >= 0x202a && r <= 0x202e ||
+		r >= 0x2060 && r <= 0x2064 || r >= 0x2066 && r <= 0x2069 || r == 0xfeff
+}
+
+// titleSuffix 是浏览器标签页标题上飞书加的产品名后缀。
+var titleSuffix = regexp.MustCompile(`\s*[-–—|]\s*(Feishu Docs|Lark Docs|飞书云文档|飞书文档)$`)
 
 // ── 中间树 ─────────────────────────────────────────────────────
 

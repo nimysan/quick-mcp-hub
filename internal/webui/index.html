@@ -739,7 +739,9 @@ async function fwStatus(){
 function schk(c, label){
   if(!c) return "";
   return `<div>${label}：${esc(c.host||"")}${esc(c.path||"")} · ${c.login?"跳到了登录页":"已登录"}
-    · 搜索框 ${c.inputFound?"有":"没有"}${c.typed?"（填过关键词）":""} · 策略 ${esc(c.strategy||"-")}
+    · 选择器 ${esc(c.selectors||"default")} · 入口 ${esc(c.trigger||"没找到")}
+    · 弹层输入框 ${c.inputFound?`有（${esc(c.input||"")}）`:"没有"} · 弹层 ${esc(c.panel||"-")}${c.typed?" · 填过关键词":""}${c.enter?" · 按过回车":""}
+    · 填词前 ${Number(c.baseline)||0} 条 · 结果行 ${Number(c.rows)||0} · 策略 ${esc(c.strategy||"-")}
     · 链接 ${Number(c.anchors)||0} · 结果 ${Number(c.candidates)||0}${c.emptyHint?" · 页面提示无结果":""}
     · 等了 ${Number(c.waitedMs)||0} ms${(c.classes||[]).length?` · class 样本 <code>${esc(c.classes.join(" | "))}</code>`:""}</div>`;
 }

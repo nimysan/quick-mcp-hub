@@ -3,6 +3,7 @@ package feishuweb
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"strings"
 	"testing"
@@ -11,7 +12,7 @@ import (
 	"github.com/coder/websocket"
 )
 
-// testdata/search.json 是 extension/search.js 在造的搜索页（testdata/search-page.html）上
+// testdata/search.json 是 extension/search.js 在造的首页 + 搜索弹层（testdata/search-page.html）上
 // 跑出来的原始候选（testdata/search-regress.mjs 生成并比对）。这里验 mcp-hub 侧的再处理。
 func TestParseSearchItemsFixture(t *testing.T) {
 	data, err := os.ReadFile("testdata/search.json")
@@ -90,33 +91,47 @@ func TestCleanQueryAndHost(t *testing.T) {
 		"X.Feishu.cn":                        "x.feishu.cn",
 		"https://abc.larksuite.com/docx/xyz": "abc.larksuite.com",
 		"a-b.larkoffice.com":                 "a-b.larkoffice.com",
+		// 用户 TC05：带 scheme 的租户地址要归一化，而不是原样拼进地址。
+		"https://amzn-chn.feishu.cn":           "amzn-chn.feishu.cn",
+		"https://amzn-chn.feishu.cn/":          "amzn-chn.feishu.cn",
+		"amzn-chn.feishu.cn/":                  "amzn-chn.feishu.cn",
+		"amzn-chn.feishu.cn/drive/home/?x=1#y": "amzn-chn.feishu.cn",
+		"HTTP://X.Feishu.CN/":                  "x.feishu.cn",
+		" x.feishu.cn. ":                       "x.feishu.cn",
 	} {
 		if got, err := CleanSearchHost(in); err != nil || got != want {
 			t.Errorf("CleanSearchHost(%q) = %q %v", in, got, err)
 		}
 	}
-	for _, bad := range []string{"evil.example", "feishu.cn", "accounts.feishu.cn", "www.feishu.cn", "x.feishu.cn.evil.example", "-x.feishu.cn", "x_y.feishu.cn", "x .feishu.cn"} {
-		if got, err := CleanSearchHost(bad); err == nil {
-			t.Errorf("CleanSearchHost(%q) 应当报错，得到 %q", bad, got)
+	for _, bad := range []string{"evil.example", "feishu.cn", "accounts.feishu.cn", "www.feishu.cn", "https://www.feishu.cn/404",
+		"x.feishu.cn.evil.example", "-x.feishu.cn", "x_y.feishu.cn", "x .feishu.cn", "x.feishu.cn:8443", "https://u@x.feishu.cn",
+		"ftp://x.feishu.cn", "https://", "javascript:alert(1)"} {
+		got, err := CleanSearchHost(bad)
+		var se *StatusErr
+		if !errors.As(err, &se) || se.Status != StatusInvalidArgument {
+			t.Errorf("CleanSearchHost(%q) 应当回 invalid_argument，得到 %q %v", bad, got, err)
 		}
+	}
+	if _, err := CleanQuery(""); ErrorResult(err).Status != StatusInvalidArgument {
+		t.Errorf("空关键词应当是 invalid_argument：%v", err)
 	}
 }
 
 func TestFinishSearchStatuses(t *testing.T) {
 	b := &Bridge{}
-	res := b.finishSearch(RawResult{Status: StatusOK, URL: "https://x.feishu.cn/drive/search?query=secret",
+	res := b.finishSearch(RawResult{Status: StatusOK, URL: "https://x.feishu.cn/drive/home/?query=secret",
 		SearchDiag: &SearchCheck{Strategy: "result_box", Candidates: 0, EmptyHint: true}})
-	if res.Status != StatusOK || len(res.Items) != 0 || res.Items == nil || res.Message == "" || res.URL != "https://x.feishu.cn/drive/search" {
+	if res.Status != StatusOK || len(res.Items) != 0 || res.Items == nil || res.Message == "" || res.URL != "https://x.feishu.cn/drive/home/" {
 		t.Errorf("空结果不对：%+v", res)
 	}
 	for st, want := range map[string]string{
 		StatusLoginRequired:    StatusLoginRequired,
 		StatusStructureUnknown: StatusStructureUnknown,
-		StatusNoHost:           StatusNoHost,
+		StatusNoHost:           StatusInvalidArgument,
 		"weird":                StatusError,
 	} {
 		r := b.finishSearch(RawResult{Status: st, Items: []Item{{Title: "不该出现", URL: "https://x.feishu.cn/docx/AbCdEf1234567890"}}})
-		if r.Status != want || r.Message == "" || len(r.Items) != 0 {
+		if r.Status != want || r.Message == "" || len(r.Items) != 0 || r.Items == nil {
 			t.Errorf("%s: %+v", st, r)
 		}
 	}
@@ -153,7 +168,7 @@ func TestBridgeSearchRoundTrip(t *testing.T) {
 				continue
 			}
 			jobs <- *m.Job
-			res := RawResult{Status: StatusOK, URL: "https://x.feishu.cn/drive/search",
+			res := RawResult{Status: StatusOK, URL: "https://x.feishu.cn/drive/home/",
 				Items: []Item{
 					{Title: "周报 *加粗*", URL: "https://x.feishu.cn/docx/AbCdEf1234567890?from=search"},
 					{Title: "坏的", URL: "javascript:alert(1)"},
@@ -184,5 +199,18 @@ func TestBridgeSearchRoundTrip(t *testing.T) {
 	}
 	if st := b.Status(); st.LastSearch == nil || st.LastSearch.Strategy != "doc_links" {
 		t.Errorf("检索自检没记下来：%+v", st)
+	}
+}
+
+// 没给 host 时用最近读过的文档的租户域名，不是 www.feishu.cn（用户 BUG-05）。
+func TestRecentHost(t *testing.T) {
+	b := &Bridge{}
+	if h := b.recentHost(); h != "" {
+		t.Errorf("没读过文档时应当回空串，得到 %q", h)
+	}
+	b.remember(Item{URL: "https://www.feishu.cn/docx/AbCdEf1234567890"})
+	b.remember(Item{URL: "https://amzn-chn.feishu.cn/docx/AbCdEf1234567890"})
+	if h := b.recentHost(); h != "amzn-chn.feishu.cn" {
+		t.Errorf("recentHost = %q", h)
 	}
 }

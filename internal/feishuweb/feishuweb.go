@@ -18,7 +18,11 @@
 // 「强制读取」开关。
 package feishuweb
 
-import "time"
+import (
+	"errors"
+	"fmt"
+	"time"
+)
 
 // ExtensionID 是随程序嵌入的浏览器扩展的固定 ID。
 //
@@ -39,23 +43,69 @@ const (
 	JobSearch = "search"
 )
 
-// 结果状态。
+// 结果状态。所有工具都回 {status, message, url?}，status 只取下面这些值。
+//
+// 参数错误和环境错误（invalid_argument / extension_disconnected / error）在 MCP 层
+// 标 isError=true；其余是业务状态，isError=false。两种都带 structuredContent。
 const (
-	StatusOK             = "ok"
-	StatusRefused        = "refused"
-	StatusError          = "error"
-	StatusNotImplemented = "not_implemented"
+	StatusOK      = "ok"
+	StatusRefused = "refused"
+	// StatusError 是兜底：超时、扩展脚本异常这类说不出更具体原因的失败。
+	StatusError = "error"
 	// StatusUnsupportedType 是幻灯片、电子表格、多维表格这类没有 PageMain 块树的页面。
 	StatusUnsupportedType = "unsupported_type"
-	// StatusEngineMissing 表示 docx/wiki 页面上等不到 PageMain：飞书前端可能改版了。
-	StatusEngineMissing = "engine_missing"
-	// StatusLoginRequired：搜索页跳到了登录页，浏览器里的飞书没登录。
+	// StatusNotFound：链接指向的文档不存在（飞书显示 404 / 已删除，或跳到了 404 页）。
+	StatusNotFound = "not_found"
+	// StatusNoPermission：文档存在，但当前登录的账号没有权限打开。
+	StatusNoPermission = "no_permission"
+	// StatusLoginRequired：页面跳到了登录页，浏览器里的飞书没登录。
 	StatusLoginRequired = "login_required"
-	// StatusStructureUnknown：搜索页打开了，但认不出结果列表。
+	// StatusStructureUnknown：页面打开了，但认不出结构（检索弹层、文档引擎）：
+	// 飞书前端可能改版了。
 	StatusStructureUnknown = "structure_unknown"
-	// StatusNoHost：调用方没给租户域名，扩展也找不到开着或读过的飞书页面。
-	StatusNoHost = "no_host"
+	// StatusExtensionDisconnected：浏览器扩展没连上，或配置页面（托盘程序）没在跑。
+	StatusExtensionDisconnected = "extension_disconnected"
+	// StatusInvalidArgument：调用参数不对（地址、关键词、租户域名）。
+	StatusInvalidArgument = "invalid_argument"
+
+	// 下面两个只在扩展和 mcp-hub 之间出现，不会交给调用方：
+	// StatusEngineMissing 归成 structure_unknown，StatusNoHost 归成 invalid_argument。
+	StatusEngineMissing = "engine_missing"
+	StatusNoHost        = "no_host"
+	// StatusNotImplemented 是扩展版本太旧、不认识任务种类。
+	StatusNotImplemented = "not_implemented"
 )
+
+// IsErrorStatus 报告这个状态在 MCP 层是不是要标 isError=true：参数错误和环境错误是，
+// 业务状态（没找到、没权限、拒读……）不是。
+func IsErrorStatus(st string) bool {
+	switch st {
+	case StatusInvalidArgument, StatusExtensionDisconnected, StatusError:
+		return true
+	}
+	return false
+}
+
+// StatusErr 是带状态的错误：校验函数和桥接用它把「为什么失败」带到 MCP 层。
+type StatusErr struct {
+	Status string
+	Msg    string
+}
+
+func (e *StatusErr) Error() string { return e.Msg }
+
+func argErr(format string, a ...any) error {
+	return &StatusErr{Status: StatusInvalidArgument, Msg: fmt.Sprintf(format, a...)}
+}
+
+// ErrorResult 把一个错误变成统一形态的结果。认不出状态的错误归成 error。
+func ErrorResult(err error) Result {
+	var se *StatusErr
+	if errors.As(err, &se) {
+		return Result{Status: se.Status, Message: se.Msg}
+	}
+	return Result{Status: StatusError, Message: clip(err.Error(), 300)}
+}
 
 // 拒读原因。
 const (
@@ -122,8 +172,10 @@ type RawResult struct {
 type Item struct {
 	Title  string `json:"title"`
 	URL    string `json:"url"`
-	Type   string `json:"type,omitempty"` // 检索结果才有：docx | doc | wiki | sheet | bitable | mindnote | slides | file
+	Type   string `json:"type,omitempty"` // docx | doc | wiki | sheet | bitable | mindnote | slides | file
 	Source string `json:"source"`         // open_tab | read_history | search
+	// ReadBefore：最近文档里一个开着的标签页，之前也被读过（两条合并成了一条）。
+	ReadBefore bool `json:"readBefore,omitempty"`
 }
 
 // Result 是交给 MCP 调用方的结果。正文已经转好、转义过、截断过。

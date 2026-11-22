@@ -133,6 +133,19 @@ func TestCleanTitle(t *testing.T) {
 	if got := CleanTitle("\u200b标题\n第二行\x07"); got != "标题 第二行" {
 		t.Errorf("CleanTitle = %q", got)
 	}
+	// 用户实测 recent 的标签页标题：开头 30 多个水印字符，结尾带产品名后缀。
+	mark := strings.Repeat("\u200b\u200c\u200d\u2062\u2063\u2064\u202c\ufeff", 4)
+	for in, want := range map[string]string{
+		mark + "Quick 上手指南 - Feishu Docs": "Quick 上手指南",
+		"周报\u2060模板 - 飞书云文档":              "周报模板",
+		"\u202a设计稿\u202e – Lark Docs":     "设计稿",
+		"减号 - 不是后缀":                       "减号 - 不是后缀",
+		"Feishu Docs":                     "Feishu Docs",
+	} {
+		if got := CleanTitle(in); got != want {
+			t.Errorf("CleanTitle(%q) = %q, want %q", in, got, want)
+		}
+	}
 	if got := []rune(CleanTitle(strings.Repeat("长", 500))); len(got) != 201 {
 		t.Errorf("标题没截断：%d", len(got))
 	}

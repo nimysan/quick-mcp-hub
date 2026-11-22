@@ -6,7 +6,6 @@ import (
 	"crypto/subtle"
 	"encoding/hex"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"log"
 	"net"
@@ -19,7 +18,7 @@ import (
 )
 
 // ErrNotConnected 表示扩展没连上来。
-var ErrNotConnected = errors.New("浏览器扩展没有连上 mcp-hub：确认扩展已安装、已配对，并且浏览器开着")
+var ErrNotConnected error = &StatusErr{Status: StatusExtensionDisconnected, Msg: "浏览器扩展没有连上 mcp-hub：确认扩展已安装、已配对，并且浏览器开着"}
 
 // Bridge 是配置页面进程里那一端：扩展经 WebSocket 连进来，MCP 进程经
 // HTTP 把任务交给它，它转给扩展、等结果、再做拒读复核和转换。
@@ -224,7 +223,7 @@ func (b *Bridge) Do(ctx context.Context, kind, docURL string) (Result, error) {
 		job.URL = u
 	case JobRecent:
 	default:
-		return Result{}, fmt.Errorf("不认识的任务 %q", kind)
+		return Result{}, argErr("不认识的任务 %q", kind)
 	}
 	raw, err := b.send(ctx, job)
 	if err != nil {
@@ -262,7 +261,7 @@ func (b *Bridge) send(ctx context.Context, job Job) (RawResult, error) {
 	}()
 
 	if err := writeJSON(ctx, c, wireMsg{Type: "job", ID: job.ID, Job: &job}); err != nil {
-		return RawResult{}, fmt.Errorf("任务发不到扩展: %w", err)
+		return RawResult{}, &StatusErr{Status: StatusExtensionDisconnected, Msg: "任务发不到扩展: " + err.Error()}
 	}
 	select {
 	case res := <-ch:
@@ -301,7 +300,8 @@ func (b *Bridge) finishRead(docURL string, raw RawResult) Result {
 		res.Markdown, res.Truncated = conv.Markdown, conv.Truncated
 		res.Stats = &conv.Counts
 		res.Notice = UntrustedNotice
-		b.remember(Item{Title: res.Title, URL: docURL, Source: "read_history"})
+		_, typ, _ := ResultURL(docURL)
+		b.remember(Item{Title: res.Title, URL: docURL, Type: typ, Source: "read_history"})
 	case StatusRefused:
 		reason := raw.Reason
 		if reason == "" {
@@ -309,14 +309,31 @@ func (b *Bridge) finishRead(docURL string, raw RawResult) Result {
 		}
 		res.Reason, res.Message = reason, ReasonText(reason)
 	case StatusUnsupportedType:
-		res.Message = "这个页面不是云文档或知识库页面（幻灯片、电子表格、多维表格暂不支持）"
-	case StatusEngineMissing:
+		res.Message = "这个页面不是云文档或知识库正文（幻灯片、电子表格、多维表格暂不支持）"
+	case StatusNotFound:
+		res.Message = "文档不存在、已被删除，或链接写错了" + detail(raw.Error)
+	case StatusNoPermission:
+		res.Message = "当前在浏览器里登录的飞书账号没有权限打开这篇文档"
+	case StatusLoginRequired:
+		res.Message = "浏览器里的飞书没有登录（文档页跳到了登录页）：请先在浏览器里登录飞书"
+	case StatusEngineMissing, StatusStructureUnknown:
+		res.Status = StatusStructureUnknown
 		res.Message = "页面上找不到飞书文档引擎（PageMain）：飞书前端可能改版了，请升级 mcp-hub 和扩展"
+	case StatusInvalidArgument:
+		res.Message = clip(firstNonEmpty(raw.Error, "地址不对"), 300)
 	default:
 		res.Status = StatusError
 		res.Message = clip(firstNonEmpty(raw.Error, raw.Reason, "扩展没有说明原因"), 300)
 	}
 	return res
+}
+
+// detail 把扩展给的补充说明（只有页面地址，不含内容）挂在消息后面。
+func detail(s string) string {
+	if s = clip(s, 120); s != "" {
+		return "（" + s + "）"
+	}
+	return ""
 }
 
 func (b *Bridge) remember(it Item) {
@@ -332,20 +349,31 @@ func (b *Bridge) remember(it Item) {
 }
 
 func (b *Bridge) finishRecent(raw RawResult) Result {
-	res := Result{Status: raw.Status}
+	// items 总是在：空结果也是 []，不省略字段。
+	res := Result{Status: raw.Status, Items: []Item{}}
 	if raw.Status != StatusOK {
 		res.Status = StatusError
 		res.Message = clip(firstNonEmpty(raw.Error, "扩展没有说明原因"), 300)
 		return res
 	}
-	seen := map[string]bool{}
+	idx := map[string]int{}
 	add := func(it Item) {
-		u, err := ValidateDocURL(it.URL)
-		if err != nil || seen[u] {
+		u, typ, ok := ResultURL(it.URL)
+		if !ok {
 			return
 		}
-		seen[u] = true
-		res.Items = append(res.Items, Item{Title: CleanTitle(it.Title), URL: u, Source: it.Source})
+		// 同一篇文档既开着又读过：合成一条，标上 readBefore（用户报告 recent 只见 open_tab）。
+		if i, seen := idx[u]; seen {
+			if it.Source == "read_history" {
+				res.Items[i].ReadBefore = true
+			}
+			if res.Items[i].Title == "" {
+				res.Items[i].Title = CleanTitle(it.Title)
+			}
+			return
+		}
+		idx[u] = len(res.Items)
+		res.Items = append(res.Items, Item{Title: CleanTitle(it.Title), URL: u, Type: typ, Source: it.Source})
 	}
 	for _, it := range raw.Items {
 		if it.Source != "open_tab" {
@@ -357,6 +385,7 @@ func (b *Bridge) finishRecent(raw RawResult) Result {
 	hist := append([]Item(nil), b.history...)
 	b.mu.Unlock()
 	for _, it := range hist {
+		it.Source = "read_history"
 		add(it)
 	}
 	if len(res.Items) > 50 {

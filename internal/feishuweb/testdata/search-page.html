@@ -1,49 +1,75 @@
 <!doctype html>
-<!-- 造的飞书云空间搜索页。真实结构登录后才看得到，这里只模拟几类形态：
-     侧栏里的「最近访问」链接（应当跳过）、结果列表、高亮标签、只有 title 属性的链接、
-     链接文字为空的行、危险链接、外站链接、重复条目、带零宽字符和 Markdown 记号的标题。
-     离线回归：scripts 里的无头 Chrome 打开本文件，跑 extension/search.js，
-     输出应当和 search.json 的 items 一致。 -->
-<html><head><meta charset="utf-8"><title>搜索 - 飞书云文档</title></head>
+<!-- 造的飞书云空间首页 + 「Search ⌘+J」搜索弹层（单页应用）。真实弹层登录后才看得到，
+     这里按用户截图（左侧栏顶部的 Search 框）和常见组件库的形态模拟：
+     - 侧栏入口只是一个带「Search ⌘+J」文字的 div，没有 search 字样的 class；
+     - 点它（或按 ⌘/Ctrl+J）后，body 下挂出 role=dialog 的弹层，焦点落在弹层输入框；
+     - 填词前弹层里是「最近访问」（应当被当作基线、不算结果）；
+     - 输入 400ms 后结果替换掉列表：高亮标签、相对地址、只有 title 属性的链接、
+       链接文字为空的行、危险链接、外站链接、重复条目、带零宽字符和 Markdown 记号的标题。
+     页面变体由 location.hostname 的第一段决定（见 search-regress.mjs 的用例）。
+     离线回归：search-regress.mjs 用隔离无头 Chrome 打开它，跑 extension/search.js，
+     x 变体的输出应当和 search.json 的 items 一致。 -->
+<html><head><meta charset="utf-8"><title>Home - Feishu Docs</title>
+<style>.hidden{display:none}</style></head>
 <body>
 <aside class="drive-sidebar">
-  <a href="https://x.feishu.cn/docx/RecentDoc0000001">侧栏最近访问</a>
+  <div class="sb-entry" id="entry"><span>Search</span> <kbd>⌘+J</kbd></div>
+  <a href="/docx/RecentDoc0000001">侧栏最近访问</a>
 </aside>
-<main>
-  <input class="search-input" placeholder="搜索" value="周报">
-  <div class="search-result-list">
-    <div class="result-item" role="listitem">
-      <a href="https://x.feishu.cn/docx/AbCdEf1234567890?from=search">2026 <em>周报</em> 第 47 周</a>
-      <span>张三 · 3 天前</span>
-    </div>
-    <div class="result-item" role="listitem">
-      <a href="/wiki/WikiTok12345678#h1">知识库：<em>周报</em>模板</a>
-    </div>
-    <div class="result-item" role="listitem">
-      <a href="https://x.feishu.cn/sheets/SheetTok1234567"><span title="ignored"></span></a>
-      <div>周报统计表</div>
-    </div>
-    <div class="result-item" role="listitem">
-      <a href="https://x.feishu.cn/base/BaseTok12345678" title="周报看板"></a>
-    </div>
-    <div class="result-item" role="listitem">
-      <a href="javascript:alert(1)">恶意链接</a>
-    </div>
-    <div class="result-item" role="listitem">
-      <a href="http://x.feishu.cn/docx/Plain0000000001">明文 http</a>
-    </div>
-    <div class="result-item" role="listitem">
-      <a href="https://evil.example/docx/Evil00000000001">外站</a>
-    </div>
-    <div class="result-item" role="listitem">
-      <a href="https://x.feishu.cn/docx/AbCdEf1234567890">重复条目</a>
-    </div>
-    <div class="result-item" role="listitem">
-      <a href="https://x.feishu.cn/docx/Hostile000000001">[点我](javascript:alert(1))&#8203;<b>&lt;img src=x onerror=alert(1)&gt;</b></a>
-    </div>
-    <div class="result-item" role="listitem">
-      <a href="https://x.feishu.cn/drive/folder/FolderTok123456">文件夹</a>
-    </div>
-  </div>
-</main>
+<main><h1>Home</h1><a href="/docx/HomeDoc00000001">首页上的文档</a></main>
+<script>
+(() => {
+  const v = location.hostname.split('.')[0];
+  const H = 'https://' + location.hostname;
+  const RESULTS = {
+    x: `
+      <div class="result-item" role="listitem"><a href="${H}/docx/AbCdEf1234567890?from=search">2026 <em>周报</em> 第 47 周</a><span>张三 · 3 天前</span></div>
+      <div class="result-item" role="listitem"><a href="/wiki/WikiTok12345678#h1">知识库：<em>周报</em>模板</a></div>
+      <div class="result-item" role="listitem"><a href="${H}/sheets/SheetTok1234567"><span title="ignored"></span></a><div>周报统计表</div></div>
+      <div class="result-item" role="listitem"><a href="${H}/base/BaseTok12345678" title="周报看板"></a></div>
+      <div class="result-item" role="listitem"><a href="javascript:alert(1)">恶意链接</a></div>
+      <div class="result-item" role="listitem"><a href="http://x.feishu.cn/docx/Plain0000000001">明文 http</a></div>
+      <div class="result-item" role="listitem"><a href="https://evil.example/docx/Evil00000000001">外站</a></div>
+      <div class="result-item" role="listitem"><a href="${H}/docx/AbCdEf1234567890">重复条目</a></div>
+      <div class="result-item" role="listitem"><a href="${H}/docx/Hostile000000001">[点我](javascript:alert(1))&#8203;<b>&lt;img src=x onerror=alert(1)&gt;</b></a></div>
+      <div class="result-item" role="listitem"><a href="${H}/drive/folder/FolderTok123456">文件夹</a></div>`,
+    // 结果行没有 <a>，地址在 data-url 里；标题前带水印字符。
+    hotkey: `
+      <div role="option" data-url="${H}/docx/AttrTok123456789" tabindex="0"><div>&#8203;&#8291;周报 第一篇</div><div>李四</div></div>
+      <div role="option" data-link="/wiki/AttrWiki12345678" tabindex="0"><div>周报 知识库</div></div>`,
+    enter: `<div role="option"><a href="${H}/docx/EnterTok12345678">按回车才出来的结果</a></div>`,
+    empty: `<div class="search-empty">No results found</div>`,
+    unknown: `<div role="option">周报</div><div role="option">周报汇总</div>`,
+    same: null,
+  };
+  const RECENT = `<div class="recent">最近访问
+      <div role="option"><a href="${H}/docx/Recent0000000001">最近 1</a></div>
+      <div role="option"><a href="${H}/docx/Recent0000000002">最近 2</a></div></div>`;
+  let modal = null;
+  const open = () => {
+    if (modal) return;
+    modal = document.createElement('div');
+    modal.className = 'ud-modal-root';
+    modal.innerHTML = `<div class="ud-modal" role="dialog"><input class="q" placeholder="Search docs, wikis"><div class="list">${RECENT}</div></div>`;
+    document.body.appendChild(modal);
+    const input = modal.querySelector('input');
+    const list = modal.querySelector('.list');
+    input.focus();
+    let timer = 0;
+    input.addEventListener('input', () => {
+      clearTimeout(timer);
+      if (v === 'enter' || RESULTS[v] === null) return;
+      timer = setTimeout(() => { list.innerHTML = input.value ? RESULTS[v] : RECENT; }, 400);
+    });
+    input.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' && v === 'enter') list.innerHTML = RESULTS.enter;
+    });
+  };
+  const entry = document.getElementById('entry');
+  if (v === 'hotkey') entry.remove(); else entry.addEventListener('click', open);
+  document.addEventListener('keydown', (e) => {
+    if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'j') open();
+  });
+})();
+</script>
 </body></html>

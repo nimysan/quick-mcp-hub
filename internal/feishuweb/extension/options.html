@@ -7,7 +7,7 @@
   body { font: 14px/1.6 -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif; margin: 16px; min-width: 340px; color: #1f2329; }
   h1 { font-size: 16px; margin: 0 0 8px; }
   label { display: block; margin-top: 10px; font-weight: 600; }
-  input { width: 100%; box-sizing: border-box; padding: 6px 8px; margin-top: 4px; font: inherit; }
+  input, textarea { width: 100%; box-sizing: border-box; padding: 6px 8px; margin-top: 4px; font: inherit; }
   button { margin-top: 12px; padding: 6px 14px; font: inherit; cursor: pointer; }
   .help { color: #646a73; font-size: 12px; }
   .st { margin-top: 12px; padding: 8px; border-radius: 6px; background: #f5f6f7; }
@@ -25,6 +25,14 @@
   <div class="help">没改过就留空。</div>
   <button id="save">保存并连接</button>
   <div class="st" id="st">读取状态中…</div>
+  <details>
+    <summary class="help">高级：检索选择器（飞书改版、检索认不出结构时才需要）</summary>
+    <div class="help">JSON，四组 CSS 选择器，各组按顺序尝试：trigger（唤起搜索弹层的入口）、input（弹层输入框）、
+      panel（弹层容器）、item（结果行）。只填要换的那几组；留空用内置候选。</div>
+    <textarea id="selectors" rows="6" spellcheck="false" placeholder='{"trigger":["[class*=search-entry]"],"input":["[role=dialog] input"]}'></textarea>
+    <button id="saveSel">保存选择器</button>
+    <div class="help" id="selst"></div>
+  </details>
   <script src="options.js"></script>
 </body>
 </html>

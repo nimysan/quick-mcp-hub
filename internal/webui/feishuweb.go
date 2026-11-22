@@ -77,8 +77,8 @@ func (s *Server) handleFeishuJob(w http.ResponseWriter, r *http.Request) {
 		res, err = s.bridge.Do(ctx, req.Kind, req.URL)
 	}
 	if err != nil {
-		writeErr(w, http.StatusOK, err)
-		return
+		// 失败也回统一形态 {status, message}：MCP 进程据 status 决定 isError。
+		res = feishuweb.ErrorResult(err)
 	}
 	writeJSON(w, http.StatusOK, res)
 }

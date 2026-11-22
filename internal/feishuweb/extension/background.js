@@ -2,7 +2,7 @@
 //
 // 扩展主动连到本机 mcp-hub 配置页面（ws://127.0.0.1:<端口>/ext/ws），第一条消息
 // 带配对 token；之后 mcp-hub 推任务过来，扩展在后台标签页里打开文档、注入
-// extract.js 读块树（检索则打开云空间搜索页、注入 search.js 读结果条目）、
+// extract.js 读块树（检索则打开云空间首页、注入 search.js 唤起搜索弹层读结果条目）、
 // 把结果回传、关掉标签页。
 //
 // 这里没有任何写路径：不改文档、不发消息、不调飞书接口、不读 cookie。
@@ -10,8 +10,10 @@ importScripts('extract.js', 'search.js');
 
 const DEFAULT_PORT = 7801;
 const DOC_URL = /^https:\/\/[a-z0-9-]+(\.[a-z0-9-]+)*\.(feishu\.cn|larksuite\.com|larkoffice\.com)\/(docx|wiki)\/[A-Za-z0-9]{8,64}$/;
+// 最近文档列出所有类型的标签页（带 type），只有 docx / wiki 能用 read_doc 读。
+const DOC_KINDS = ['docx', 'docs', 'wiki', 'sheets', 'base', 'mindnotes', 'slides', 'file'];
 const DOC_PATTERNS = ['feishu.cn', 'larksuite.com', 'larkoffice.com'].flatMap((d) =>
-  ['docx', 'wiki'].map((k) => `https://*.${d}/${k}/*`));
+  DOC_KINDS.map((k) => `https://*.${d}/${k}/*`));
 const TENANT_HOST = /^(?!(accounts|passport|open|www)\.)[a-z0-9-]+(\.[a-z0-9-]+)*\.(feishu\.cn|larksuite\.com|larkoffice\.com)$/;
 const FEISHU_PATTERNS = ['feishu.cn', 'larksuite.com', 'larkoffice.com'].map((d) => `https://*.${d}/*`);
 
@@ -86,9 +88,17 @@ async function readDoc(url) {
   const tab = await chrome.tabs.create({ url, active: false });
   try {
     await waitComplete(tab.id, 45000);
-    const [res] = await chrome.scripting.executeScript({
-      target: { tabId: tab.id }, world: 'MAIN', func: feishuExtract, args: [{}],
-    });
+    let res;
+    try {
+      [res] = await chrome.scripting.executeScript({
+        target: { tabId: tab.id }, world: 'MAIN', func: feishuExtract, args: [{}],
+      });
+    } catch (err) {
+      // 页面加载完后又自己跳走了（比如假 token 跳到 www.feishu.cn/404），注入的脚本随之作废。
+      const gone = await whereTab(tab.id);
+      if (gone) return gone;
+      throw err;
+    }
     const out = res && res.result;
     if (!out) return { status: 'error', error: '提取脚本没有返回结果' };
     if (out.status === 'ok') await remember({ title: out.title, url });
@@ -96,6 +106,15 @@ async function readDoc(url) {
   } finally {
     chrome.tabs.remove(tab.id).catch(() => {});
   }
+}
+
+// 标签页最后落在哪：登录页、404 页给出对应状态，其余回 null。
+async function whereTab(tabId) {
+  let u;
+  try { u = new URL((await chrome.tabs.get(tabId)).url || ''); } catch { return null; }
+  if (/^(accounts|passport)\./.test(u.hostname) || /\/login/.test(u.pathname)) return { status: 'login_required' };
+  if (/^www\./.test(u.hostname) || /^\/404/.test(u.pathname)) return { status: 'not_found', error: '页面跳到了 ' + u.hostname + u.pathname.slice(0, 40) };
+  return null;
 }
 
 function waitComplete(tabId, ms) {
@@ -112,20 +131,23 @@ function waitComplete(tabId, ms) {
   });
 }
 
-// 检索：后台标签页打开飞书云空间自己的搜索页（页面路由，不是接口）-> 等加载完 ->
-// MAIN world 执行 feishuSearchExtract 读结果条目 -> 关标签页。不打开结果里的文档。
+// 检索：后台标签页打开飞书云空间首页（任一已登录页面都有「Search ⌘+J」入口）-> 等加载完 ->
+// MAIN world 执行 feishuSearchExtract：唤起搜索弹层、填关键词、读结果条目 -> 关标签页。
+// 飞书没有能直接打开的搜索页地址（/drive/search 跳 404）。不打开结果里的文档，不调任何接口。
+const SEARCH_START = '/drive/home/';
+
 async function search(query, host) {
   const q = String(query || '').trim().slice(0, 100);
-  if (!q) return { status: 'error', error: '检索关键词为空' };
+  if (!q) return { status: 'invalid_argument', error: '检索关键词为空' };
   const h = host ? String(host).toLowerCase() : await pickHost();
   if (!h) return { status: 'no_host' };
-  if (!TENANT_HOST.test(h)) return { status: 'error', error: '租户域名不对：' + h.slice(0, 80) };
-  const url = `https://${h}/drive/search?query=${encodeURIComponent(q)}`;
-  const tab = await chrome.tabs.create({ url, active: false });
+  if (!TENANT_HOST.test(h)) return { status: 'invalid_argument', error: '租户域名不对：' + h.slice(0, 80) };
+  const selectors = await searchSelectors();
+  const tab = await chrome.tabs.create({ url: `https://${h}${SEARCH_START}`, active: false });
   try {
     await waitComplete(tab.id, 45000);
     const [res] = await chrome.scripting.executeScript({
-      target: { tabId: tab.id }, world: 'MAIN', func: feishuSearchExtract, args: [{ query: q }],
+      target: { tabId: tab.id }, world: 'MAIN', func: feishuSearchExtract, args: [{ query: q, selectors }],
     });
     const out = res && res.result;
     if (!out) return { status: 'error', error: '检索脚本没有返回结果' };
@@ -135,9 +157,22 @@ async function search(query, host) {
   }
 }
 
-// 没给租户域名时：先看开着的飞书标签页，再看读过的文档。
+// 配置页里「高级：检索选择器」存的覆盖值（JSON：{trigger,input,panel,item} 各一组选择器）。
+// 不合法就用 search.js 里的默认候选。
+async function searchSelectors() {
+  const { searchSelectors: raw = '' } = await chrome.storage.local.get('searchSelectors');
+  if (!raw) return null;
+  try {
+    const v = JSON.parse(raw);
+    return v && typeof v === 'object' && !Array.isArray(v) ? v : null;
+  } catch { return null; }
+}
+
+// 没给租户域名时（mcp-hub 也没有读过的文档可参考）：先看最近用过的飞书标签页
+// （按最后访问时间），再看读过的文档。www / accounts 这类不是租户域名，跳过。
 async function pickHost() {
-  const tabs = await chrome.tabs.query({ url: FEISHU_PATTERNS });
+  const tabs = (await chrome.tabs.query({ url: FEISHU_PATTERNS }))
+    .sort((a, b) => (b.lastAccessed || 0) - (a.lastAccessed || 0));
   const { history = [] } = await chrome.storage.local.get('history');
   for (const u of tabs.map((t) => t.url).concat(history.map((x) => x.url))) {
     try {
@@ -151,7 +186,12 @@ async function pickHost() {
 // 最近文档：当前开着的飞书文档标签页 + 扩展读过的文档。只有标题和地址。
 async function recent() {
   const tabs = await chrome.tabs.query({ url: DOC_PATTERNS });
-  const items = tabs.map((t) => ({ title: t.title || '', url: (t.url || '').split(/[?#]/)[0], source: 'open_tab' }));
+  const items = tabs.map((t) => {
+    const url = (t.url || '').split(/[?#]/)[0];
+    let type = '';
+    try { type = new URL(url).pathname.split('/')[1] || ''; } catch { /* 跳过 */ }
+    return { title: t.title || '', url, type, source: 'open_tab' };
+  });
   const { history = [] } = await chrome.storage.local.get('history');
   return { status: 'ok', items: items.concat(history.map((h) => ({ ...h, source: 'read_history' }))) };
 }

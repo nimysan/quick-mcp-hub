@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"io/fs"
 	"reflect"
 	"sort"
@@ -169,4 +170,83 @@ func TestExtensionHasNoForbiddenCalls(t *testing.T) {
 		}
 		return nil
 	})
+}
+
+// 统一错误形态（BUG-04）：参数错误、环境错误、业务状态各归其位。
+func TestErrorResultStatuses(t *testing.T) {
+	for _, c := range []struct {
+		err  error
+		want string
+	}{
+		{ErrNotConnected, StatusExtensionDisconnected},
+		{ErrHubNotRunning, StatusExtensionDisconnected},
+		{argErr("x"), StatusInvalidArgument},
+		{errors.New("超时"), StatusError},
+	} {
+		if got := ErrorResult(c.err); got.Status != c.want || got.Message == "" {
+			t.Errorf("ErrorResult(%v) = %+v, want %s", c.err, got, c.want)
+		}
+	}
+	if _, err := ValidateDocURL("https://abc.feishu.cn/sheets/AbCdEf123456"); ErrorResult(err).Status != StatusUnsupportedType {
+		t.Errorf("电子表格应当是 unsupported_type：%v", err)
+	}
+	if _, err := ValidateDocURL("https://evil.example/docx/AbCdEf123456"); ErrorResult(err).Status != StatusInvalidArgument {
+		t.Errorf("外站应当是 invalid_argument：%v", err)
+	}
+	for st, want := range map[string]bool{
+		StatusInvalidArgument: true, StatusExtensionDisconnected: true, StatusError: true,
+		StatusOK: false, StatusNotFound: false, StatusNoPermission: false, StatusRefused: false,
+		StatusLoginRequired: false, StatusStructureUnknown: false, StatusUnsupportedType: false,
+	} {
+		if IsErrorStatus(st) != want {
+			t.Errorf("IsErrorStatus(%s) != %v", st, want)
+		}
+	}
+}
+
+// 假 token（BUG-02）：扩展回 not_found / no_permission 时原样交出，不再说成 unsupported_type；
+// engine_missing 归成 structure_unknown；认不出的状态归成 error。
+func TestFinishReadStatuses(t *testing.T) {
+	b := &Bridge{}
+	for st, want := range map[string]string{
+		StatusNotFound:        StatusNotFound,
+		StatusNoPermission:    StatusNoPermission,
+		StatusLoginRequired:   StatusLoginRequired,
+		StatusEngineMissing:   StatusStructureUnknown,
+		StatusUnsupportedType: StatusUnsupportedType,
+		"weird":               StatusError,
+	} {
+		r := b.finishRead("https://x.feishu.cn/docx/AbCdEf1234567890", RawResult{Status: st, Root: &Block{Type: "page"}})
+		if r.Status != want || r.Message == "" || r.Markdown != "" || r.URL == "" {
+			t.Errorf("%s: %+v", st, r)
+		}
+	}
+	if len(b.history) != 0 {
+		t.Error("没读成的文档不该进最近列表")
+	}
+}
+
+// recent（BUG-03/06/07、NOTE-02）：空结果 items 是 []；标题去水印和后缀；
+// 开着又读过的合成一条并标 readBefore；每条带 type；非文档地址丢掉。
+func TestFinishRecent(t *testing.T) {
+	b := &Bridge{}
+	if r := b.finishRecent(RawResult{Status: StatusOK}); r.Status != StatusOK || r.Items == nil || len(r.Items) != 0 {
+		t.Errorf("空结果不对：%+v", r)
+	}
+	if data, _ := json.Marshal(b.finishRecent(RawResult{Status: StatusOK})); !strings.Contains(string(data), `"status":"ok"`) {
+		t.Errorf("序列化不对：%s", data)
+	}
+	b.remember(Item{Title: "读过的", URL: "https://x.feishu.cn/docx/AbCdEf1234567890", Source: "read_history"})
+	r := b.finishRecent(RawResult{Status: StatusOK, Items: []Item{
+		{Title: "\u200b\u2063\ufeff读过的 - Feishu Docs", URL: "https://x.feishu.cn/docx/AbCdEf1234567890", Source: "open_tab"},
+		{Title: "说明书.pdf", URL: "https://x.feishu.cn/file/FileTok12345678", Source: "open_tab"},
+		{Title: "坏的", URL: "javascript:alert(1)", Source: "open_tab"},
+	}})
+	want := []Item{
+		{Title: "读过的", URL: "https://x.feishu.cn/docx/AbCdEf1234567890", Type: "docx", Source: "open_tab", ReadBefore: true},
+		{Title: "说明书.pdf", URL: "https://x.feishu.cn/file/FileTok12345678", Type: "file", Source: "open_tab"},
+	}
+	if !reflect.DeepEqual(r.Items, want) {
+		t.Errorf("得到 %+v\n期望 %+v", r.Items, want)
+	}
 }
