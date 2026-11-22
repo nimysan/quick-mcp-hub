@@ -20,6 +20,16 @@ mcp-hub 是单个静态可执行文件，下列组件被编译进程序本体，
 | golang.org/x/text | v0.43.0 | BSD-3-Clause | 字符编码 |
 | github.com/godbus/dbus/v5 | v5.2.2 | BSD-2-Clause | Linux Secret Service 后端 |
 | github.com/coder/websocket | v1.8.14 | ISC | 飞书网页文档：本机浏览器扩展桥接 |
+| modernc.org/sqlite | v1.62.0 | BSD-3-Clause（内含 SQLite 源码为 public domain） | 本机邮件：只读读取 Apple Mail、旧版 Outlook 的 SQLite |
+| modernc.org/libc | v1.80.1 | BSD-3-Clause（随附 musl 等上游声明，见其 LICENSE-3RD-PARTY.md） | sqlite 的运行时 |
+| modernc.org/mathutil | v1.7.1 | BSD-3-Clause | sqlite 间接依赖 |
+| modernc.org/memory | v1.12.1 | BSD-3-Clause | sqlite 间接依赖 |
+| github.com/pierrec/lz4/v4 | v4.1.33 | BSD-3-Clause | 本机邮件：新版 Outlook for Mac 数据块解压 |
+| github.com/dustin/go-humanize | v1.1.0 | MIT | sqlite 间接依赖 |
+| github.com/google/uuid | v1.6.0 | BSD-3-Clause | sqlite 间接依赖 |
+| github.com/mattn/go-isatty | v0.0.24 | MIT | sqlite 间接依赖 |
+| github.com/ncruces/go-strftime | v1.1.0 | MIT | sqlite 间接依赖 |
+| github.com/remyoudompheng/bigfft | v0.0.0-20230129092748-24d4a6f8daec | BSD-3-Clause | sqlite 间接依赖 |
 
 上述许可证**全部为宽松型**，均不含传染性（copyleft）条款。
 
