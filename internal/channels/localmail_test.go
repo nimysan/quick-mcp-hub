@@ -75,6 +75,7 @@ func TestLocalMailSaveWithoutSecret(t *testing.T) {
 }
 
 func TestLocalMailDefaultsOff(t *testing.T) {
+	platformSource(t) // 没有来源的平台（Linux）上渠道不可添加，Save 本来就会拒绝
 	m := newLocalTestManager(t)
 	if _, err := m.Save(localMailType, map[string]string{}); err != nil {
 		t.Fatal(err)
