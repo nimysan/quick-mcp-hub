@@ -3,6 +3,8 @@ package localmail
 import (
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
 
 	"github.com/nimysan/mcp-hub/internal/localmail/hxstore"
 )
@@ -17,6 +19,20 @@ var outlookInfo = SourceInfo{
 	DirHelp:  "留空用 Main Profile；用了别的配置文件时填 …/Outlook 15 Profiles/<配置文件名>，或直接填 HxStore.hxd 的路径",
 	GOOS:     "darwin",
 	Open:     openOutlook,
+	Fingerprint: func(opt OpenOptions) string {
+		p := opt.Dir
+		if p == "" {
+			d, err := hxstore.DefaultDataDir()
+			if err != nil {
+				return "-"
+			}
+			p = d
+		}
+		if fi, err := os.Stat(p); err == nil && fi.IsDir() {
+			p = filepath.Join(p, hxstore.FileName)
+		}
+		return statSig(p)
+	},
 }
 
 // hxstore 始终读不出的字段（见 hxstore.UnsupportedFields），每封信都要标出来。

@@ -86,3 +86,68 @@ func TestParseLocalDateUsesLocalZone(t *testing.T) {
 		t.Error("格式不对应报错")
 	}
 }
+
+// panickySource 的 Search 越界 panic。
+type panickySource struct{}
+
+func (panickySource) Folders(context.Context) ([]localmail.Folder, error) { return nil, nil }
+func (panickySource) Search(context.Context, localmail.Query) (localmail.Page, error) {
+	var b []byte
+	_ = b[7]
+	return localmail.Page{}, nil
+}
+func (panickySource) Get(context.Context, int64) (*localmail.Message, error) { return nil, nil }
+func (panickySource) Close() error                                           { return nil }
+
+type okSource struct{}
+
+func (okSource) Folders(context.Context) ([]localmail.Folder, error) { return nil, nil }
+func (okSource) Search(context.Context, localmail.Query) (localmail.Page, error) {
+	return localmail.Page{Messages: []localmail.Summary{{ID: 1, Subject: "hi"}}}, nil
+}
+func (okSource) Get(context.Context, int64) (*localmail.Message, error) {
+	return &localmail.Message{Body: "x"}, nil
+}
+func (okSource) Close() error { return nil }
+
+// M1：一个来源的解析器 panic，经 MCP 工具调用返回的是工具错误；会话不断，
+// 其他来源和 ping 照常。
+func TestLocalMailToolSurvivesSourcePanic(t *testing.T) {
+	old := localmail.Sources
+	localmail.Sources = append(append([]localmail.SourceInfo{}, old...),
+		localmail.SourceInfo{ID: "boom", Name: "会崩的来源", Open: func(localmail.OpenOptions) (localmail.Source, error) { return panickySource{}, nil }},
+		localmail.SourceInfo{ID: "fine", Name: "正常来源", Open: func(localmail.OpenOptions) (localmail.Source, error) { return okSource{}, nil }},
+	)
+	defer func() { localmail.Sources = old }()
+
+	ctx := context.Background()
+	srv := mcp.NewServer(&mcp.Implementation{Name: "t", Version: "0"}, nil)
+	hub := localmail.NewHub(localmail.Config{Sources: []localmail.SourceConfig{{ID: "boom"}, {ID: "fine"}}})
+	defer hub.Close()
+	RegisterLocalMail(srv, hub)
+	ct, st := mcp.NewInMemoryTransports()
+	ss, err := srv.Connect(ctx, st, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ss.Close()
+	cs, err := mcp.NewClient(&mcp.Implementation{Name: "c", Version: "0"}, nil).Connect(ctx, ct, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cs.Close()
+
+	for i := 0; i < 2; i++ {
+		r, err := cs.CallTool(ctx, &mcp.CallToolParams{Name: "localmail_search", Arguments: map[string]any{"source": "boom"}})
+		if err != nil || !r.IsError {
+			t.Fatalf("panic 应是工具错误：%v %+v", err, r)
+		}
+	}
+	r, err := cs.CallTool(ctx, &mcp.CallToolParams{Name: "localmail_search", Arguments: map[string]any{"source": "fine"}})
+	if err != nil || r.IsError {
+		t.Fatalf("其他来源应照常：%v %+v", err, r)
+	}
+	if err := cs.Ping(ctx, nil); err != nil {
+		t.Fatalf("会话应还在：%v", err)
+	}
+}

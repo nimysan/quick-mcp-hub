@@ -209,6 +209,20 @@ func signature(root string) (string, []string, error) {
 	return b.String(), dirs, nil
 }
 
+// Signature 返回 root（留空用 DefaultDir）下 LevelDB 文件的名字、大小、修改时间签名，
+// 和 Stale 比较的是同一个值。只列目录、不读文件。
+func Signature(root string) (string, error) {
+	if root == "" {
+		d, err := DefaultDir()
+		if err != nil {
+			return "", err
+		}
+		root = d
+	}
+	sig, _, err := signature(root)
+	return sig, err
+}
+
 // Stale 报告快照之后数据有没有变（olk 同步时会写 .log，新邮件到了也会变）。
 func (s *Store) Stale() bool {
 	sig, _, err := signature(s.root)

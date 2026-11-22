@@ -3,6 +3,7 @@ package localmail
 import (
 	"context"
 	"errors"
+	"path/filepath"
 
 	"github.com/nimysan/mcp-hub/internal/localmail/applemail"
 )
@@ -17,6 +18,18 @@ var appleMailInfo = SourceInfo{
 	DirHelp:  "留空用默认的 ~/Library/Mail，一般不用填",
 	GOOS:     "darwin",
 	Open:     openAppleMail,
+	Fingerprint: func(opt OpenOptions) string {
+		root := opt.Dir
+		if root == "" {
+			root = applemail.DefaultRoot()
+		}
+		ver, err := applemail.DetectVersion(root)
+		if err != nil {
+			return statSig(root)
+		}
+		db := filepath.Join(root, ver, "MailData", "Envelope Index")
+		return statSig(db, db+"-wal")
+	},
 }
 
 type appleSource struct {

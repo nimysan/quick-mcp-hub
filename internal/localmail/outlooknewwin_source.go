@@ -20,7 +20,17 @@ var outlookNewWinInfo = SourceInfo{
 		"更早的或没缓存的文件夹里的信读不到；它的 folders 里 server_total 是服务器上的总数，total 是本地缓存的封数。",
 	GOOS: "windows",
 	Open: openOutlookNewWin,
+	Fingerprint: func(opt OpenOptions) string {
+		sig, err := olkSignature(strings.Trim(strings.TrimSpace(opt.Dir), `"`))
+		if err != nil {
+			return "-"
+		}
+		return sig
+	},
 }
+
+// olkSignature 是 olkwin.Signature，测试里换成假的。
+var olkSignature = olkwin.Signature
 
 // olkStore 是 olkwin.Store 用到的方法，测试里换成假的。
 type olkStore interface {

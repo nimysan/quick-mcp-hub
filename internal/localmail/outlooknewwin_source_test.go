@@ -160,8 +160,8 @@ func TestOutlookNewWinErrors(t *testing.T) {
 			t.Errorf("第 %d 次：%v", i+1, err)
 		}
 	}
-	if opens.Load() != 1 {
-		t.Errorf("格式不支持后应停用，不再打开；打开了 %d 次", opens.Load())
+	if opens.Load() != 2 {
+		t.Errorf("格式不支持时应重试一次后停用，不再打开；打开了 %d 次", opens.Load())
 	}
 
 	// 被锁：提示不提「退出经典版 Outlook」

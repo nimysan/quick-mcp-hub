@@ -26,6 +26,13 @@ var outlookWinInfo = SourceInfo{
 		"也可以填 .pst / .ost 文件或所在目录的完整路径，多个用英文分号 ; 隔开",
 	GOOS: "windows",
 	Open: openOutlookWin,
+	Fingerprint: func(opt OpenOptions) string {
+		paths, err := winPaths(opt.Dir)
+		if err != nil {
+			return "-"
+		}
+		return statSig(paths...)
+	},
 }
 
 // winStore 是 outlookwin.Store 用到的方法，测试里换成假的。

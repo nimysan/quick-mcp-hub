@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"path/filepath"
 
 	"github.com/nimysan/mcp-hub/internal/localmail/outlooklegacy"
 )
@@ -17,6 +18,18 @@ var outlookLegacyInfo = SourceInfo{
 	DirHelp:  "留空用 Main Profile 的 Data 目录；用了别的配置文件时填 …/Outlook 15 Profiles/<配置文件名>/Data",
 	GOOS:     "darwin",
 	Open:     openOutlookLegacy,
+	Fingerprint: func(opt OpenOptions) string {
+		dir := opt.Dir
+		if dir == "" {
+			d, err := outlooklegacy.DefaultDataDir()
+			if err != nil {
+				return "-"
+			}
+			dir = d
+		}
+		db := filepath.Join(dir, "Outlook.sqlite")
+		return statSig(db, db+"-wal")
+	},
 }
 
 type outlookLegacySource struct{ s *outlooklegacy.Store }

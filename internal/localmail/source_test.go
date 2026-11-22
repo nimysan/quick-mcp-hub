@@ -161,7 +161,7 @@ func TestExplainUnsupportedIsOneLine(t *testing.T) {
 	}
 }
 
-// 格式不支持：停用该来源、不再重试，也不影响其他来源。
+// 格式不支持：重试一次后停用该来源、不再重试，也不影响其他来源。
 func TestHubDisablesUnsupportedSource(t *testing.T) {
 	openErr := error(errors.Join(ErrUnsupported, errors.New("自检不达标")))
 	opens := withFake(t, &openErr, &fakeSource{})
@@ -172,8 +172,8 @@ func TestHubDisablesUnsupportedSource(t *testing.T) {
 			t.Fatalf("应返回格式不支持并说明已停用，得到 %v", err)
 		}
 	}
-	if *opens != 1 {
-		t.Errorf("格式不支持后不应重试，打开了 %d 次", *opens)
+	if *opens != 2 {
+		t.Errorf("格式不支持时应只重试一次，打开了 %d 次", *opens)
 	}
 }
 

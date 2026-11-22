@@ -19,6 +19,9 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"log"
+	"os"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"sync"
@@ -53,8 +56,9 @@ var ErrAccess = errors.New("无权读取本机邮件数据")
 // ErrFilePermission 表示普通的文件权限不足（EACCES），和隐私保护无关。
 var ErrFilePermission = errors.New("文件权限不足")
 
-// ErrUnsupported 表示来源的存储格式本构建不认识（例如邮件客户端升级后格式变了）。
-// 这种错误重试没有用，Hub 会停用该来源，直到服务重启。
+// ErrUnsupported 表示来源的存储格式本构建不认识（例如邮件客户端升级后格式变了），
+// 读取包 panic 时 Hub 也把它记成这个错误。Hub 先重开重试一次，仍然失败才停用该来源；
+// 停用后数据文件的大小或修改时间变了（SourceInfo.Fingerprint 变了）会自动再试。
 var ErrUnsupported = errors.New("存储格式不支持")
 
 // ErrNotFound 表示数据目录、文件夹或邮件不存在。
@@ -157,6 +161,9 @@ type SourceInfo struct {
 	// ToolNote 非空时，启用了这个来源就附在工具说明后面（例如覆盖范围的限制）。
 	ToolNote string
 	Open     func(opt OpenOptions) (Source, error)
+	// Fingerprint 返回数据文件的大小和修改时间签名，只 stat、不读内容。
+	// 来源因格式不支持停用后，签名变了就解除停用；为 nil 时停用到服务重启。
+	Fingerprint func(opt OpenOptions) string
 }
 
 // allSources 是本构建认识的全部来源，按配置页上的显示顺序。
@@ -209,9 +216,17 @@ type SourceConfig struct {
 type Hub struct {
 	cfg    Config
 	mu     sync.Mutex
-	open   map[string]*entry // 已打开或正在打开的来源
-	dead   map[string]error  // 格式不支持而停用的来源，不再重试
+	open   map[string]*entry    // 已打开或正在打开的来源
+	dead   map[string]*disabled // 格式不支持而停用的来源
 	closed bool
+}
+
+// disabled 是一个停用的来源。数据文件签名和 fp 不同时解除停用。
+type disabled struct {
+	err  error
+	info SourceInfo
+	opt  OpenOptions
+	fp   string // 空串表示来源没有签名，停用到服务重启
 }
 
 // entry 是一个来源的打开结果。ready 关闭之后 src / err 不再改变。
@@ -243,7 +258,7 @@ func NewHub(cfg Config) *Hub {
 	if cfg.MaxResults > HardMaxResults {
 		cfg.MaxResults = HardMaxResults
 	}
-	return &Hub{cfg: cfg, open: map[string]*entry{}, dead: map[string]error{}}
+	return &Hub{cfg: cfg, open: map[string]*entry{}, dead: map[string]*disabled{}}
 }
 
 // Config 返回规范化后的配置。
@@ -304,18 +319,36 @@ func (h *Hub) acquire(ctx context.Context, id string) (*entry, error) {
 // entryFor 取 id 的打开条目，没有就开始打开；缓存的连接过期了就停用它、重新打开。
 func (h *Hub) entryFor(id string) (*entry, error) {
 	h.mu.Lock()
+	d := h.dead[id]
+	closed := h.closed
+	h.mu.Unlock()
+	if closed {
+		return nil, errHubClosed
+	}
+	if d != nil { // 签名在锁外算：要 stat 文件
+		if d.fp == "" || fingerprint(d.info, d.opt) == d.fp {
+			return nil, d.err
+		}
+		h.mu.Lock()
+		if h.dead[id] == d {
+			delete(h.dead, id)
+			log.Printf("本机邮件：来源 %s 的数据文件变了，解除停用，重新打开", id)
+		}
+		h.mu.Unlock()
+	}
+	h.mu.Lock()
 	defer h.mu.Unlock()
 	if h.closed {
 		return nil, errHubClosed
 	}
-	if err, ok := h.dead[id]; ok {
-		return nil, err
+	if d := h.dead[id]; d != nil {
+		return nil, d.err
 	}
 	e := h.open[id]
 	if e != nil && e.done && e.err == nil {
-		if st, ok := e.src.(staler); ok && st.Stale() {
+		if st, ok := e.src.(staler); ok && safeStale(id, st) {
 			if s := h.retireLocked(id, e); s != nil {
-				go s.Close() // 没有调用在用它，锁外关闭
+				go safeClose(id, s) // 没有调用在用它，锁外关闭
 			}
 			e = nil
 		}
@@ -346,7 +379,7 @@ func (h *Hub) release(e *entry) {
 	last := e.retired && e.refs == 0
 	h.mu.Unlock()
 	if last {
-		e.src.Close()
+		safeClose("", e.src)
 	}
 }
 
@@ -367,11 +400,19 @@ func (h *Hub) retireLocked(id string, e *entry) Source {
 	return nil
 }
 
-// doOpen 在后台打开一个来源，结果写进 e。
+// doOpen 在后台打开一个来源，结果写进 e。格式不支持时重试一次（可能碰巧读到客户端写了一半的数据），
+// 仍然不支持才停用。
 func (h *Hub) doOpen(id string, info SourceInfo, opt OpenOptions, e *entry) {
-	s, err := info.Open(opt)
+	s, err := safeOpen(id, info, opt)
+	if err != nil && errors.Is(err, ErrUnsupported) {
+		s, err = safeOpen(id, info, opt)
+	}
+	var d *disabled
 	if err != nil {
 		err = Explain(info, err)
+		if errors.Is(err, ErrUnsupported) {
+			d = &disabled{err: err, info: info, opt: opt, fp: fingerprint(info, opt)}
+		}
 	}
 	h.mu.Lock()
 	var orphan Source
@@ -383,31 +424,56 @@ func (h *Hub) doOpen(id string, info SourceInfo, opt OpenOptions, e *entry) {
 		if h.open[id] == e {
 			delete(h.open, id) // 失败不缓存
 		}
-		if errors.Is(err, ErrUnsupported) {
-			h.dead[id] = err
+		if d != nil {
+			h.dead[id] = d
 		}
 	}
 	h.mu.Unlock()
 	close(e.ready)
 	if orphan != nil {
-		orphan.Close()
+		safeClose(id, orphan)
+	}
+}
+
+// call 在来源上做一次操作。读取包 panic 时转成格式不支持的错误；格式不支持时
+// 停掉这个连接、重开再试一次，仍然不支持才停用来源。
+func (h *Hub) call(ctx context.Context, id, op string, fn func(Source) error) error {
+	for attempt := 0; ; attempt++ {
+		e, err := h.acquire(ctx, id)
+		if err != nil {
+			return err
+		}
+		err = guard(id, op, func() error { return fn(e.src) })
+		if err != nil && attempt == 0 && errors.Is(err, ErrUnsupported) && ctx.Err() == nil {
+			h.mu.Lock()
+			s := h.retireLocked(id, e) // 本次调用还持有引用，一般是 nil，由 release 关闭
+			h.mu.Unlock()
+			if s != nil {
+				safeClose(id, s)
+			}
+			h.release(e)
+			continue
+		}
+		if err != nil {
+			err = h.fail(id, e, err)
+		}
+		h.release(e)
+		return err
 	}
 }
 
 // Search 在一个来源里列邮件，限制条数并截短摘要。
 func (h *Hub) Search(ctx context.Context, id string, q Query) (Page, error) {
-	e, err := h.acquire(ctx, id)
-	if err != nil {
-		return Page{}, err
-	}
-	defer h.release(e)
 	q.Limit = ClampLimit(q.Limit, h.cfg.MaxResults)
 	if q.Offset < 0 {
 		q.Offset = 0
 	}
-	p, err := e.src.Search(ctx, q)
-	if err != nil {
-		return Page{}, h.fail(id, e, err)
+	var p Page
+	if err := h.call(ctx, id, "search", func(s Source) (err error) {
+		p, err = s.Search(ctx, q)
+		return err
+	}); err != nil {
+		return Page{}, err
 	}
 	if len(p.Messages) > q.Limit { // 适配器理应已经限好，这里再兜一次
 		p.Messages, p.HasMore, p.NextOffset = p.Messages[:q.Limit], true, q.Offset+q.Limit
@@ -423,14 +489,15 @@ func (h *Hub) Search(ctx context.Context, id string, q Query) (Page, error) {
 
 // Get 取一封邮件，正文不超过 MaxBodyBytes。
 func (h *Hub) Get(ctx context.Context, id string, msgID int64) (*Message, error) {
-	e, err := h.acquire(ctx, id)
-	if err != nil {
+	var m *Message
+	if err := h.call(ctx, id, "get", func(s Source) (err error) {
+		m, err = s.Get(ctx, msgID)
+		return err
+	}); err != nil {
 		return nil, err
 	}
-	defer h.release(e)
-	m, err := e.src.Get(ctx, msgID)
-	if err != nil {
-		return nil, h.fail(id, e, err)
+	if m == nil {
+		return nil, explainID(id, errors.Join(ErrNotFound, fmt.Errorf("邮件 %d", msgID)))
 	}
 	if b, cut := TruncateUTF8(m.Body, h.cfg.MaxBodyBytes); cut {
 		m.Body, m.BodyTruncated = b, true
@@ -440,14 +507,12 @@ func (h *Hub) Get(ctx context.Context, id string, msgID int64) (*Message, error)
 
 // Folders 列一个来源的文件夹。
 func (h *Hub) Folders(ctx context.Context, id string) ([]Folder, error) {
-	e, err := h.acquire(ctx, id)
-	if err != nil {
+	var f []Folder
+	if err := h.call(ctx, id, "folders", func(s Source) (err error) {
+		f, err = s.Folders(ctx)
+		return err
+	}); err != nil {
 		return nil, err
-	}
-	defer h.release(e)
-	f, err := e.src.Folders(ctx)
-	if err != nil {
-		return nil, h.fail(id, e, err)
 	}
 	if f == nil {
 		f = []Folder{}
@@ -460,16 +525,16 @@ func (h *Hub) Folders(ctx context.Context, id string) ([]Folder, error) {
 func (h *Hub) Close() error {
 	h.mu.Lock()
 	h.closed = true
-	var srcs []Source
+	var srcs = map[string]Source{}
 	for id, e := range h.open {
 		if s := h.retireLocked(id, e); s != nil {
-			srcs = append(srcs, s)
+			srcs[id] = s
 		}
 	}
 	h.mu.Unlock()
 	var first error
-	for _, s := range srcs {
-		if err := s.Close(); err != nil && first == nil {
+	for id, s := range srcs {
+		if err := safeClose(id, s); err != nil && first == nil {
 			first = err
 		}
 	}
@@ -508,9 +573,16 @@ func Explain(info SourceInfo, err error) error {
 			"请检查数据目录的属主和权限（例如目录属于别的用户，或被改成了不可读），"+
 			"或者在配置里改填正确的数据目录。", ErrFilePermission, info.Name, err)
 	}
+	if errors.Is(err, errPanic) {
+		return fmt.Errorf("%w：读取 %s 的数据时 mcp-hub 内部出错（%w）。重开重试后仍然失败，这个来源已停用，其他来源不受影响；"+
+			"「%s」改写数据文件后（例如同步了新邮件）会自动再试。日志里只有出错位置，不含邮件内容，可以发给维护者。",
+			ErrUnsupported, info.Name, errPanic, info.Name)
+	}
 	if errors.Is(err, ErrUnsupported) {
 		return fmt.Errorf("%w：%s 的本地存储格式这个版本的 mcp-hub 读不了（多半是「%s」升级了）。"+
-			"这个来源已停用，其他来源不受影响；请等 mcp-hub 更新。详情：%s", ErrUnsupported, info.Name, info.Name, cause(err))
+			"重开重试后仍然失败，这个来源已停用，其他来源不受影响；"+
+			"「%s」改写数据文件后（例如同步了新邮件）会自动再试，否则请等 mcp-hub 更新。详情：%s",
+			ErrUnsupported, info.Name, info.Name, info.Name, cause(err))
 	}
 	if errors.Is(err, ErrNotFound) || errors.Is(err, fs.ErrNotExist) {
 		return fmt.Errorf("%w：%s %s", ErrNotFound, info.Name, cause(err))
@@ -519,18 +591,129 @@ func Explain(info SourceInfo, err error) error {
 }
 
 // fail 解释一次调用的错误；格式不支持时停用这个来源，等正在进行的调用都结束再关闭。
+// 调用方（call）已经重开重试过一次。
 func (h *Hub) fail(id string, e *entry, err error) error {
 	err = explainID(id, err)
 	if errors.Is(err, ErrUnsupported) {
+		d := &disabled{err: err}
+		if info, ok := SourceByID(id); ok {
+			d.info, d.opt = info, h.openOptions(id)
+			d.fp = fingerprint(info, d.opt) // 锁外 stat
+		}
 		h.mu.Lock()
-		h.dead[id] = err
+		first := h.dead[id] == nil
+		h.dead[id] = d
 		s := h.retireLocked(id, e) // 本次调用还持有引用，这里一般是 nil，由 release 关闭
 		h.mu.Unlock()
 		if s != nil {
-			s.Close()
+			safeClose(id, s)
+		}
+		if first {
+			log.Printf("本机邮件：来源 %s 格式不支持，重试后仍失败，已停用（数据文件变了会自动再试）", id)
 		}
 	}
 	return err
+}
+
+func (h *Hub) openOptions(id string) OpenOptions {
+	opt := OpenOptions{MaxBodyBytes: h.cfg.MaxBodyBytes}
+	for _, sc := range h.cfg.Sources {
+		if sc.ID == id {
+			opt.Dir = sc.Dir
+		}
+	}
+	return opt
+}
+
+// errPanic 是读取包 panic 后返回给调用方的原因。panic 值本身可能带数据，不放进错误。
+var errPanic = errors.New("读取这个来源时程序内部出错（已写入 mcp-hub 日志）")
+
+// guard 执行 fn，把 panic 转成格式不支持的错误：解析器遇到没见过的数据越界时，
+// 只让这一次调用失败，不让整个 mcp-hub 进程退出、带断其他渠道。
+func guard(id, op string, fn func() error) (err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			logPanic(id, op, r)
+			err = errors.Join(ErrUnsupported, errPanic)
+		}
+	}()
+	return fn()
+}
+
+// logPanic 记一条日志：来源、操作、panic 类型和发生位置（函数、文件、行号）。
+// 不记 panic 值本身（自定义 panic 可能带上邮件数据），只有运行时错误（越界、空指针等）记其说明。
+func logPanic(id, op string, r any) {
+	kind := fmt.Sprintf("%T", r)
+	if re, ok := r.(runtime.Error); ok {
+		kind = re.Error()
+	}
+	pcs := make([]uintptr, 32)
+	n := runtime.Callers(3, pcs) // 跳过 Callers、logPanic 和 defer 的函数
+	frames := runtime.CallersFrames(pcs[:n])
+	var where []string
+	for len(where) < 8 {
+		f, more := frames.Next()
+		if !strings.HasPrefix(f.Function, "runtime.") {
+			where = append(where, fmt.Sprintf("%s (%s:%d)", f.Function, filepath.Base(f.File), f.Line))
+		}
+		if !more {
+			break
+		}
+	}
+	if id == "" {
+		id = "?"
+	}
+	log.Printf("本机邮件：来源 %s 在 %s 时 panic（%s），已转成工具错误。位置：%s", id, op, kind, strings.Join(where, " <- "))
+}
+
+func safeOpen(id string, info SourceInfo, opt OpenOptions) (s Source, err error) {
+	err = guard(id, "open", func() (err error) {
+		s, err = info.Open(opt)
+		return err
+	})
+	if err != nil {
+		s = nil
+	}
+	return s, err
+}
+
+func safeClose(id string, s Source) error {
+	return guard(id, "close", s.Close)
+}
+
+// safeStale 在 Stale panic 时返回 true：重开一次。
+func safeStale(id string, st staler) (stale bool) {
+	if err := guard(id, "stale", func() error { stale = st.Stale(); return nil }); err != nil {
+		return true
+	}
+	return stale
+}
+
+// fingerprint 取来源数据文件的签名；来源没有签名或签名函数 panic 时返回空串（不自动恢复）。
+func fingerprint(info SourceInfo, opt OpenOptions) (fp string) {
+	if info.Fingerprint == nil {
+		return ""
+	}
+	if err := guard(info.ID, "fingerprint", func() error { fp = info.Fingerprint(opt); return nil }); err != nil {
+		return ""
+	}
+	return fp
+}
+
+// statSig 是一组文件的大小和修改时间签名；不存在或读不到的文件也记一笔，出现了签名就会变。
+func statSig(paths ...string) string {
+	var b strings.Builder
+	for _, p := range paths {
+		if fi, err := os.Stat(p); err == nil {
+			fmt.Fprintf(&b, "%s:%d:%d;", p, fi.Size(), fi.ModTime().UnixNano())
+		} else {
+			fmt.Fprintf(&b, "%s:-;", p)
+		}
+	}
+	if b.Len() == 0 {
+		return "-" // 非空：签名函数存在，只是暂时没有文件
+	}
+	return b.String()
 }
 
 // cause 取读取包给出的原因，放进「详情」。适配器用 errors.Join(本包哨兵, 原错误) 包装，

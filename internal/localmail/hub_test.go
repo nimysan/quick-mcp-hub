@@ -103,6 +103,7 @@ type closeCounter struct {
 	hold   time.Duration
 	// failFolders 为真时 Folders 返回格式不支持（模拟运行中途发现格式变了）。
 	failFolders atomic.Bool
+	failAll     *atomic.Bool // 非 nil 且为真时同上，多个实例共用
 }
 
 func (c *closeCounter) use() {
@@ -118,7 +119,7 @@ func (c *closeCounter) use() {
 }
 func (c *closeCounter) Folders(context.Context) ([]Folder, error) {
 	c.use()
-	if c.failFolders.Load() {
+	if c.failFolders.Load() || (c.failAll != nil && c.failAll.Load()) {
 		return nil, errors.Join(ErrUnsupported, errors.New("中途发现格式变了"))
 	}
 	return nil, nil
@@ -195,10 +196,18 @@ func TestHubUnsupportedWaitsForInFlightCalls(t *testing.T) {
 	}
 }
 
-// 真实调用路径：来源自己的方法返回 ErrUnsupported，并发调用照样不会用到已关闭的来源。
+// 真实调用路径：来源自己的方法返回 ErrUnsupported（重开后仍然如此），并发调用照样不会用到已关闭的来源。
 func TestHubUnsupportedFromSourceUnderLoad(t *testing.T) {
-	src := &closeCounter{hold: 5 * time.Millisecond}
-	register(t, SourceInfo{ID: "x", Name: "来源X", Open: func(OpenOptions) (Source, error) { return src, nil }})
+	var fail atomic.Bool
+	var mu sync.Mutex
+	var srcs []*closeCounter
+	register(t, SourceInfo{ID: "x", Name: "来源X", Open: func(OpenOptions) (Source, error) {
+		c := &closeCounter{hold: 5 * time.Millisecond, failAll: &fail}
+		mu.Lock()
+		srcs = append(srcs, c)
+		mu.Unlock()
+		return c, nil
+	}})
 	h := NewHub(Config{Sources: []SourceConfig{{ID: "x"}}})
 	defer h.Close()
 	ctx := context.Background()
@@ -218,16 +227,23 @@ func TestHubUnsupportedFromSourceUnderLoad(t *testing.T) {
 			}
 		}(i)
 	}
-	src.failFolders.Store(true) // Folders 从现在起报格式不支持
+	fail.Store(true) // Folders 从现在起报格式不支持
 	wg.Wait()
 	if _, err := h.Folders(ctx, "x"); !errors.Is(err, ErrUnsupported) {
 		t.Fatalf("应已停用，得到 %v", err)
 	}
-	if n := src.misuse.Load(); n != 0 {
-		t.Errorf("关闭时还有调用在用，或关闭后又被使用：%d 次", n)
+	mu.Lock()
+	defer mu.Unlock()
+	if len(srcs) < 2 {
+		t.Errorf("格式不支持后应先重开重试一次，只打开了 %d 次", len(srcs))
 	}
-	if n := src.closes.Load(); n != 1 {
-		t.Errorf("应只关闭一次，实际 %d 次", n)
+	for i, src := range srcs {
+		if n := src.misuse.Load(); n != 0 {
+			t.Errorf("第 %d 个连接关闭时还有调用在用，或关闭后又被使用：%d 次", i, n)
+		}
+		if n := src.closes.Load(); n != 1 {
+			t.Errorf("第 %d 个连接应只关闭一次，实际 %d 次", i, n)
+		}
 	}
 }
 
