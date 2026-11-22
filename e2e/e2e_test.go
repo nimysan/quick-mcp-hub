@@ -1049,6 +1049,9 @@ func sevenChannels(write bool) []inst {
 	}
 }
 
+// feishuWebInst 是飞书网页文档渠道的配置（没有凭据，列工具不需要扩展连着）。
+var feishuWebInst = inst{Type: "feishu-web", Account: "本机浏览器", Enabled: true, Settings: map[string]string{}}
+
 func toolJSON(ts []*mcp.Tool) map[string]string {
 	out := map[string]string{}
 	for _, x := range ts {
@@ -1102,6 +1105,22 @@ func TestRegressionSevenChannels(t *testing.T) {
 			if strings.Join(extra, ",") != "localmail_get,localmail_list_folders,localmail_search" || len(withLocal) != len(old)+3 {
 				t.Errorf("加本机邮件后多出 %v，应正好是 3 个 localmail_*", extra)
 			}
+
+			// 再加上飞书网页文档：预期内的新增只有 3 个 feishu_web_*，其余工具一个不变。
+			all := toolJSON(mustStart(t, bin, append(chans, localInst(true, platformOn()), feishuWebInst)).tools(t))
+			extra = extra[:0]
+			for n, j := range all {
+				if o, ok := withLocal[n]; !ok {
+					extra = append(extra, n)
+				} else if o != j {
+					t.Errorf("加了飞书网页文档后 %s 变了", n)
+				}
+			}
+			sort.Strings(extra)
+			if strings.Join(extra, ",") != "feishu_web_read_doc,feishu_web_recent,feishu_web_search" || len(all) != len(withLocal)+3 {
+				t.Errorf("加飞书网页文档后多出 %v，应正好是 3 个 feishu_web_*", extra)
+			}
+			t.Logf("7 渠道 + 本机邮件 + 飞书网页文档：%d 个工具", len(all))
 		})
 	}
 }
