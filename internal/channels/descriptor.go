@@ -404,7 +404,8 @@ var planned = []Descriptor{}
 func All() []Descriptor {
 	specs := specs()
 	mans := pluginManifests()
-	out := make([]Descriptor, 0, len(mailprovider.All)+1+len(specs)+len(mans)+len(planned))
+	// +2：本机邮件、飞书网页文档各一张卡片。
+	out := make([]Descriptor, 0, len(mailprovider.All)+len(specs)+len(mans)+len(planned)+2)
 	for _, p := range mailprovider.All {
 		out = append(out, mailDescriptor(p))
 	}
@@ -417,6 +418,7 @@ func All() []Descriptor {
 	for _, m := range mans {
 		out = append(out, pluginDescriptor(m))
 	}
+	out = append(out, feishuWebDescriptor())
 	return append(out, planned...)
 }
 

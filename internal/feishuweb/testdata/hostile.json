@@ -1,0 +1,15 @@
+{
+  "type": "page",
+  "children": [
+    {"type": "text", "ops": [{"insert": "<script>alert(1)</script><img src=x onerror=alert(1)>"}]},
+    {"type": "text", "ops": [{"insert": "[点我](javascript:alert(1))"}]},
+    {"type": "text", "ops": [{"insert": "坏链接", "attributes": {"link": "javascript%3Aalert(1)"}}]},
+    {"type": "text", "ops": [{"insert": "数据链接", "attributes": {"link": "data:text/html,<script>alert(1)</script>"}}]},
+    {"type": "text", "ops": [{"insert": "括号链接", "attributes": {"link": "https://example.com/a)(b"}}]},
+    {"type": "text", "ops": [{"insert": "# 伪装成标题"}]},
+    {"type": "text", "ops": [{"insert": "提到文档", "attributes": {"inline-component": "{\"type\":\"mention_doc\",\"data\":{\"raw_url\":\"javascript:alert(2)\",\"title\":\"恶意\"}}"}}]},
+    {"type": "iframe", "url": "javascript:alert(3)"},
+    {"type": "iframe", "url": "https://example.com/embed\" onload=\"alert(4)"},
+    {"type": "code", "language": "js\"><script>", "text": "alert(5)"}
+  ]
+}

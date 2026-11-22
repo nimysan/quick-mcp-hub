@@ -628,6 +628,19 @@ async function openForm(type, account){
       <button id="ncbtn" style="margin-top:8px">检测</button>
       <div id="ncpanel"></div>
     </div>` : "";
+  // 飞书网页文档：要先装浏览器扩展并配对。三步都在这里做完，用户不必去找目录。
+  const fwHTML = (d.type==='feishu-web') ? `
+    <div class="risk">
+      <div class="risk-head">🧩 要先装一个浏览器扩展</div>
+      <div class="help">登录态在你自己的 Chrome / Edge 里，本程序不碰密码和 cookie。扩展只能访问飞书 / Lark 的域名和本机 127.0.0.1，
+        没有任何写操作；文档所有者禁止了复制或导出的，一律不读，也没有开关能强制读。</div>
+      <div class="help">① <button id="fwextract">释放扩展到本机目录</button> <span id="fwdir"></span></div>
+      <div class="help">② 在浏览器地址栏打开 <code>chrome://extensions</code>（Edge 是 <code>edge://extensions</code>），
+        打开「开发者模式」，点「加载已解压的扩展程序」，选上面那个目录</div>
+      <div class="help">③ <button id="fwpair">生成配对码</button> <code id="fwcode"></code>
+        复制后点浏览器工具栏里的扩展图标，粘进去保存。重新生成会让旧的配对码失效</div>
+      <div class="help" id="fwstatus"></div>
+    </div>` : "";
   $("#modal").innerHTML = `
     <h3>${d.icon} ${esc(d.name)}</h3>
     ${(oauthFirst||!d.secretField)?"":`<div class="tiny">密码类字段只存进系统密码管理器，不写配置文件、不进日志</div>`}
@@ -635,6 +648,7 @@ async function openForm(type, account){
     ${localHTML}
     ${localMailHTML}
     ${setupHTML}
+    ${fwHTML}
     ${oauthFirst?oauthHTML:""}
     ${formFields.map(fieldHTML).join("")}
     ${adv.length?`<div class="adv-toggle" id="advtoggle">▸ 高级设置（主机 / 端口）</div>
@@ -665,6 +679,7 @@ async function openForm(type, account){
   if(ob) ob.onclick = () => startOAuth(type, null, account || "");
   const ncb = $("#ncbtn");
   if(ncb) ncb.onclick = () => ncDetect();
+  if(d.type==='feishu-web') fwInit();
   const scopeToggle = $("#scopetoggle");
   if(scopeToggle) scopeToggle.onclick = () => $("#scopebox").classList.toggle("show");
   const appToggle = $("#apptoggle");
@@ -702,6 +717,54 @@ function collect(type){
     values[f.name] = f.kind==="bool" ? (el.checked?"true":"false") : el.value;
   });
   return {d,values};
+}
+
+// ── 飞书网页文档（浏览器扩展） ───────────────────────────────
+// 释放扩展、生成配对码、看连接状态和首次读取自检。自检里的几个标志是原值：
+// 用户随便打开一篇禁止复制的文档，就能在这里看到 copyable=false，复核拒读信号。
+const fwPost = (path) => api(path, {method:"POST", headers:{"Content-Type":"application/json"}, body:"{}"});
+let FW_TIMER = null;
+
+function fwInit(){
+  $("#fwextract").onclick = async () => {
+    const r = await fwPost("/api/feishu-web/extract");
+    $("#fwdir").innerHTML = r.error ? esc(r.error) : `已释放到 <code>${esc(r.dir)}</code>`;
+  };
+  $("#fwpair").onclick = async () => {
+    const r = await fwPost("/api/feishu-web/pair");
+    $("#fwcode").textContent = r.error || r.code;
+  };
+  clearInterval(FW_TIMER);
+  fwStatus();
+  FW_TIMER = setInterval(() => { if(!$("#fwstatus")){ clearInterval(FW_TIMER); return; } fwStatus(); }, 3000);
+}
+
+async function fwStatus(){
+  const r = await api("/api/feishu-web/status");
+  const el = $("#fwstatus"); if(!el) return;
+  const st = r.status || {};
+  const flag = v => v===true ? "true" : v===false ? "false" : "缺失";
+  const chk = (c, label) => !c ? "" : `<div>${label}：${esc(c.host||"")} · PageMain ${c.pageMain?"有":"没有"}
+    · copyable=${flag(c.flags&&c.flags.copyable)} · exportable=${flag(c.flags&&c.flags.exportable)}
+    · isForceSetSecurity=${flag(c.flags&&c.flags.isForceSetSecurity)} · 顶层块 ${Number(c.topChildren)||0}
+    · 未加载块 ${Number(c.pendingBefore)||0}→${Number(c.pendingAfter)||0} · 滚动 ${Number(c.scrollRounds)||0} 轮</div>`;
+  const conn = st.conn || {};
+  el.innerHTML = (st.connected
+      ? `✅ 扩展已连接（${esc(conn.version||"")}${conn.installType?" · "+esc(conn.installType):""}）`
+      : (r.paired ? "扩展还没连上：确认已加载扩展、填了配对码，并且浏览器开着" : "还没配对"))
+    + chk(st.firstCheck, "首次读取自检") + chk(st.lastCheck, "最近一次读取")
+    + schk(st.firstSearch, "首次检索自检") + schk(st.lastSearch, "最近一次检索");
+}
+
+// 检索自检：只有计数、路径和 class 名（认不出结果结构时用来排查），没有结果内容。
+function schk(c, label){
+  if(!c) return "";
+  return `<div>${label}：${esc(c.host||"")}${esc(c.path||"")} · ${c.login?"跳到了登录页":"已登录"}
+    · 选择器 ${esc(c.selectors||"default")} · 入口 ${esc(c.trigger||"没找到")}
+    · 弹层输入框 ${c.inputFound?`有（${esc(c.input||"")}）`:"没有"} · 弹层 ${esc(c.panel||"-")}${c.typed?" · 填过关键词":""}${c.enter?" · 按过回车":""}
+    · 填词前 ${Number(c.baseline)||0} 条 · 结果行 ${Number(c.rows)||0} · 策略 ${esc(c.strategy||"-")}
+    · 链接 ${Number(c.anchors)||0} · 结果 ${Number(c.candidates)||0}${c.emptyHint?" · 页面提示无结果":""}
+    · 等了 ${Number(c.waitedMs)||0} ms${(c.classes||[]).length?` · class 样本 <code>${esc(c.classes.join(" | "))}</code>`:""}</div>`;
 }
 
 // ── NapCat 自动配置 ───────────────────────────────────────────

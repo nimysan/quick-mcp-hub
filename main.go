@@ -39,6 +39,7 @@ import (
 	"github.com/nimysan/mcp-hub/internal/clientstat"
 	"github.com/nimysan/mcp-hub/internal/config"
 	"github.com/nimysan/mcp-hub/internal/credstore"
+	"github.com/nimysan/mcp-hub/internal/feishuweb"
 	"github.com/nimysan/mcp-hub/internal/httpchan"
 	"github.com/nimysan/mcp-hub/internal/localmail"
 	"github.com/nimysan/mcp-hub/internal/mailbox"
@@ -316,6 +317,15 @@ func main() {
 		} else {
 			log.Printf("本机邮件渠道已添加，但一个来源都没打开，未注册工具")
 		}
+	}
+
+	// 飞书网页文档：工具调用经本机配置页面进程转给浏览器扩展。全部只读。
+	if on, err := mgr.BrowserEnabled(); err != nil {
+		log.Printf("读取飞书网页文档渠道配置失败: %v", err)
+	} else if on {
+		n := tools.RegisterFeishuWeb(server, feishuweb.NewClient())
+		registered += n
+		log.Printf("飞书网页文档渠道：注册 %d 个只读工具（经本机配置页面和浏览器扩展通信）", n)
 	}
 
 	if registered == 0 {

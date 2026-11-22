@@ -4,6 +4,7 @@ go 1.26.4
 
 require (
 	fyne.io/systray v1.12.2
+	github.com/coder/websocket v1.8.14
 	github.com/emersion/go-imap/v2 v2.0.0-beta.8
 	github.com/emersion/go-message v0.18.2
 	github.com/modelcontextprotocol/go-sdk v1.8.0

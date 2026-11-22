@@ -29,6 +29,10 @@ type Manager struct {
 	// （例如只跑配置页面时也要装上它，否则「测试并保存」用不了）。
 	Plugins *wasmplug.Registry
 
+	// BrowserCheck 由配置页面装上：检查浏览器扩展是否连着（飞书网页文档渠道的
+	// 「测试」）。MCP 进程里为空 —— 那边没有扩展连接。
+	BrowserCheck func(ctx context.Context) (any, error)
+
 	connMu sync.Mutex
 	conns  map[string]*ConnectSession
 }
@@ -126,7 +130,7 @@ func (m *Manager) Save(typ string, values map[string]string) (Instance, error) {
 		return Instance{}, err
 	}
 	if d.SecretField == "" {
-		// 没有凭据的渠道（本机邮件）：只写配置文件，不碰密码管理器。
+		// 没有凭据的渠道（本机邮件、飞书网页文档）：只写配置文件，不碰密码管理器。
 		in := Instance{Type: typ, Account: account, Settings: settings, Enabled: true}
 		if err := m.store.Upsert(in); err != nil {
 			return Instance{}, err
@@ -247,6 +251,9 @@ func (m *Manager) Test(ctx context.Context, typ, account string, values map[stri
 	case KindLocalMail:
 		_, err := m.localMailTest(ctx, d, account, values)
 		return err
+	case KindBrowser:
+		_, err := m.testBrowser(ctx)
+		return err
 	case KindMail:
 		cfg, err := m.mailConfig(d, account, values)
 		if err != nil {
@@ -283,6 +290,9 @@ func (m *Manager) Identify(ctx context.Context, typ, account string, values map[
 			return nil, err
 		}
 		return s, nil
+	}
+	if d.Kind == KindBrowser {
+		return m.testBrowser(ctx)
 	}
 	if d.Kind != KindHTTP {
 		return nil, m.Test(ctx, typ, account, values)
