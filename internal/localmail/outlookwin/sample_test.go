@@ -15,7 +15,7 @@ import (
 
 // TestSamples 读公开样本做统计。样本不进 git，用 OUTLOOKWIN_SAMPLES 指向放样本的目录：
 //
-//	OUTLOOKWIN_SAMPLES=$KIROCREW_SCRATCH/pst go test -run TestSamples -v ./internal/localmail/outlookwin/
+//	OUTLOOKWIN_SAMPLES=/path/to/pst-samples go test -run TestSamples -v ./internal/localmail/outlookwin/
 //
 // 目录里的每个 .pst / .ost 都会被打开、列全部文件夹、翻完全部邮件、逐封 Get，
 // 并输出各字段的抽取率。测试前后对比文件的大小、修改时间和 SHA-256，确认没被改动。

@@ -7,7 +7,7 @@ package outlookwin
 //   - ANSI（wVer 14/15）：4 字节 BID/IB，512 字节页；
 //   - Unicode（wVer 23）：8 字节 BID/IB，512 字节页；
 //   - Unicode 4K（wVer 36，Outlook 2013 起的 OST）：4096 字节页，BBT 叶子多一个解压后长度，
-//     块可能是 zlib 压缩的。这种布局不在 [MS-PST] 里，按公开样本实测（见报告）。
+//     块可能是 zlib 压缩的。这种布局不在 [MS-PST] 里，按公开样本实测。
 
 import (
 	"bytes"

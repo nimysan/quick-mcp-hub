@@ -10,7 +10,7 @@
 // 用法：
 //   node e2e/webui-save.mjs <mcp-hub 二进制> <chromium 可执行文件> [--expect-bug]
 // 环境变量：
-//   E2E_TMP          临时目录的父目录（默认 $KIROCREW_SCRATCH 或 os.tmpdir()）
+//   E2E_TMP          临时目录的父目录（默认 os.tmpdir()）
 //   E2E_APPLE_DIR    本机邮件夹具用的 Apple Mail 目录（测试并保存要求能找到数据）
 //   E2E_LEGACY_DIR   旧版 Outlook 的 Data 目录
 // --expect-bug：对旧版（main）二进制跑，只跑企业邮箱那段，期望复现「另一页设置丢失」。
@@ -27,7 +27,7 @@ if (!bin || !chrome) {
   console.error("用法: node e2e/webui-save.mjs <mcp-hub> <chromium> [--expect-bug]");
   process.exit(2);
 }
-const base = process.env.E2E_TMP || process.env.KIROCREW_SCRATCH || os.tmpdir();
+const base = process.env.E2E_TMP || os.tmpdir();
 const work = fs.mkdtempSync(path.join(base, "webui-e2e-"));
 const home = path.join(work, "home");
 const cfgDir = path.join(home, "Library", "Application Support", "mcp-hub");

@@ -11,7 +11,7 @@ import (
 )
 
 // TestReal 在装了新版 Outlook 的 Windows 上读真实数据：OLKWIN_REAL=1，
-// OLKWIN_DIR 指定 IndexedDB 目录（留空用当前用户的默认目录；SSM 以 SYSTEM 运行时必须指定）。
+// OLKWIN_DIR 指定 IndexedDB 目录（留空用当前用户的默认目录；以 SYSTEM 等其他账户运行时必须指定）。
 // 断言测试邮箱里的已知邮件（用户自造的测试数据），并打印字段抽取率。不打印正文和邮箱地址。
 func TestReal(t *testing.T) {
 	if os.Getenv("OLKWIN_REAL") == "" {

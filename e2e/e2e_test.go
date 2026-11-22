@@ -891,7 +891,7 @@ func TestLocalMailRealSources(t *testing.T) {
 				}
 				if msg.BodyTruncated {
 					truncated++
-					// HTML 正文先按 4 倍上限读、再转文本，转完可能远短于上限（见报告）。
+					// HTML 正文先按 4 倍上限读、再转文本，转完可能远短于上限。
 					if len(msg.Body) < realMaxBody-4 {
 						shortCut++
 					}

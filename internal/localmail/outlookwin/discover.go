@@ -15,7 +15,7 @@ type DataFile struct {
 	From    string `json:"from"`              // registry / default_dir
 }
 
-// defaultDirs 是经典版 Outlook 放数据文件的默认目录（[MS 支持文档]，见报告）：
+// defaultDirs 是经典版 Outlook 放数据文件的默认目录（见微软支持文档）：
 // Outlook 2013 起新建的 .pst 在「文档\Outlook 文件」，.ost 和更早版本的 .pst 在
 // %LOCALAPPDATA%\Microsoft\Outlook。
 func defaultDirs(home, localAppData string) []string {

@@ -9,7 +9,7 @@ import (
 )
 
 // 新版 Outlook for Windows（source=outlook_new_win）和经典版同时启用的 stdio 冒烟，只在 Windows 上跑。
-// MCPHUB_E2E_OLK_DIR=<olk 的 IndexedDB 目录>（SSM 以 SYSTEM 运行时必须显式给），
+// MCPHUB_E2E_OLK_DIR=<olk 的 IndexedDB 目录>（以 SYSTEM 等其他账户运行时必须显式给），
 // MCPHUB_E2E_PST_DIR=<放 .pst/.ost 样本的目录>。断言测试邮箱里用户自造的两封 mcp-hub-test 信；
 // 只打印数量、时间和标记，不打印正文和地址。
 const olkSource = "outlook_new_win"
