@@ -64,7 +64,9 @@ func refreshLock(key string) *sync.Mutex {
 func (r Runtime) bearer(ctx context.Context, hc *http.Client, secret string) (string, error) {
 	tok, ok := oauthdev.Parse(secret)
 	if !ok {
-		return secret, nil // 手填的长期令牌
+		// 手填的长期令牌。用户也可能把授权后的整个地址粘了进来（百度网盘
+		// 的手动路径就是这么教的），那就取出里面的 access_token。
+		return oauthdev.TokenFromPasted(secret), nil
 	}
 	if !tok.Stale(time.Now()) {
 		return tok.AccessToken, nil
@@ -489,6 +491,15 @@ func (c *Client) buildRequest(ctx context.Context, rt Runtime, t Tool, args map[
 
 	path := t.Path
 	query := url.Values{}
+	if p, raw, ok := strings.Cut(path, "?"); ok {
+		// 声明里写死的查询串（method=list 这类）。校验时已保证它不和参数、
+		// 凭据参数同名，所以这里先放进去、参数后放，不会互相覆盖。
+		fixed, err := url.ParseQuery(raw)
+		if err != nil {
+			return nil, "", fmt.Errorf("path 的查询串解析失败: %w", err)
+		}
+		path, query = p, fixed
+	}
 	body := deepCopyMap(t.BodyConst)
 	fillNow(body, time.Now())
 
@@ -560,7 +571,16 @@ func (c *Client) buildRequest(ctx context.Context, rt Runtime, t Tool, args map[
 		return nil, "", err
 	}
 	if rt.Spec.Auth.Kind == AuthQuery {
-		query.Set(rt.Spec.Auth.Name, secret)
+		// 和 bearer 一样先解析：凭据槽里可能是「连接」拿到的令牌组（JSON），
+		// 也可能是用户粘来的授权后地址。原样塞进 URL 的话，前者会把整段
+		// 令牌组发给对方，后者对方不认。
+		token, err := rt.bearer(ctx, c.httpClient(), secret)
+		if err != nil {
+			return nil, "", err
+		}
+		query.Set(rt.Spec.Auth.Name, token)
+		// 返回值只用来从报错里抹掉凭据，而出现在 URL 里的是 token 本身。
+		secret = token
 	}
 
 	full := base + path
@@ -569,9 +589,16 @@ func (c *Client) buildRequest(ctx context.Context, rt Runtime, t Tool, args map[
 	}
 
 	var reader io.Reader
+	contentType := "application/json"
 	if len(body) > 0 {
-		b, err := json.Marshal(body)
-		if err != nil {
+		var b []byte
+		if t.BodyEncoding == BodyForm {
+			form, err := formBody(body)
+			if err != nil {
+				return nil, "", err
+			}
+			b, contentType = []byte(form.Encode()), "application/x-www-form-urlencoded"
+		} else if b, err = json.Marshal(body); err != nil {
 			return nil, "", err
 		}
 		reader = bytes.NewReader(b)
@@ -587,7 +614,7 @@ func (c *Client) buildRequest(ctx context.Context, rt Runtime, t Tool, args map[
 		req.Header.Set(k, v)
 	}
 	if reader != nil {
-		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Content-Type", contentType)
 	}
 	switch rt.Spec.Auth.Kind {
 	case AuthBearer:
@@ -910,7 +937,18 @@ func formatTime(p Param, s string) (any, error) {
 }
 
 // asArray 接受字符串数组或逗号分隔的字符串；有 itemObject 时把每一项套进模板。
+// 有 itemFields 时每一项是一个对象（见 asObjectArray）。
 func asArray(p Param, v any) (any, error) {
+	if len(p.ItemFields) > 0 {
+		return asObjectArray(p, v)
+	}
+	if s, ok := v.(string); ok && p.ArrayOnly {
+		var parsed []any
+		if err := json.Unmarshal([]byte(strings.TrimSpace(s)), &parsed); err != nil {
+			return nil, fmt.Errorf("参数 %s 要一个数组（例如 [\"/a.txt\"]），不接受逗号分隔的字符串", p.Name)
+		}
+		v = parsed
+	}
 	var items []string
 	switch t := v.(type) {
 	case []any:
@@ -951,6 +989,54 @@ func asArray(p Param, v any) (any, error) {
 	return out, nil
 }
 
+// asObjectArray 校验「对象数组」参数：每项只能有 itemFields 里的键，值都是
+// 字符串，itemRequired 里的键必须有。模型偶尔会把数组整个写成一段 JSON 文本，
+// 也认。
+func asObjectArray(p Param, v any) (any, error) {
+	if s, ok := v.(string); ok {
+		var parsed any
+		if err := json.Unmarshal([]byte(s), &parsed); err != nil {
+			return nil, fmt.Errorf("参数 %s 要一个对象数组，每项的键是 %s", p.Name, strings.Join(p.ItemFields, " / "))
+		}
+		v = parsed
+	}
+	arr, ok := v.([]any)
+	if !ok || len(arr) == 0 {
+		return nil, fmt.Errorf("参数 %s 要一个非空的对象数组，每项的键是 %s", p.Name, strings.Join(p.ItemFields, " / "))
+	}
+	allowed := map[string]bool{}
+	for _, f := range p.ItemFields {
+		allowed[f] = true
+	}
+	out := make([]any, 0, len(arr))
+	for i, it := range arr {
+		m, ok := it.(map[string]any)
+		if !ok {
+			return nil, fmt.Errorf("参数 %s 的第 %d 项不是对象", p.Name, i+1)
+		}
+		obj := make(map[string]any, len(m))
+		for k, val := range m {
+			if !allowed[k] {
+				return nil, fmt.Errorf("参数 %s 的第 %d 项多了键 %s（只能有 %s）", p.Name, i+1, k, strings.Join(p.ItemFields, " / "))
+			}
+			s, ok := val.(string)
+			if !ok {
+				return nil, fmt.Errorf("参数 %s 的第 %d 项的 %s 要字符串", p.Name, i+1, k)
+			}
+			if s = strings.TrimSpace(s); s != "" {
+				obj[k] = s
+			}
+		}
+		for _, f := range p.ItemRequired {
+			if _, ok := obj[f]; !ok {
+				return nil, fmt.Errorf("参数 %s 的第 %d 项缺少 %s", p.Name, i+1, f)
+			}
+		}
+		out = append(out, obj)
+	}
+	return out, nil
+}
+
 // stringifyPath 把 body 里某个路径上的值换成它的 JSON 文本（见 Tool.BodyJSONString）。
 // 路径上没有值时什么也不做：那一块全由可选参数构成、而这次一个都没给。
 func stringifyPath(body map[string]any, path string) error {
@@ -977,6 +1063,34 @@ func stringifyPath(body map[string]any, path string) error {
 	}
 	m[last] = string(b)
 	return nil
+}
+
+// formBody 把请求体变成表单。表单是扁平的：标量照原样写成文本，数组和对象
+// 整体序列化成一段 JSON 放进那一项（百度网盘的 filelist 要的正是这个）。
+func formBody(body map[string]any) (url.Values, error) {
+	form := url.Values{}
+	for k, v := range body {
+		switch x := v.(type) {
+		case nil:
+		case string:
+			form.Set(k, x)
+		case bool:
+			form.Set(k, strconv.FormatBool(x))
+		case float64:
+			form.Set(k, strconv.FormatFloat(x, 'f', -1, 64))
+		case int:
+			form.Set(k, strconv.Itoa(x))
+		case int64:
+			form.Set(k, strconv.FormatInt(x, 10))
+		default:
+			b, err := json.Marshal(x)
+			if err != nil {
+				return nil, fmt.Errorf("表单项 %s 序列化失败: %w", k, err)
+			}
+			form.Set(k, string(b))
+		}
+	}
+	return form, nil
 }
 
 // deepCopyMap 复制一份 bodyConst：声明是全进程共享的，直接往里写参数
