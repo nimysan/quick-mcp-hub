@@ -40,6 +40,8 @@ const (
 const (
 	PhaseRegister  = "register"
 	PhaseAuthorize = "authorize"
+	// PhasePaste 是隐式授权：用户在浏览器里授权完，把跳转后的地址粘回来。
+	PhasePaste = "paste"
 )
 
 // ConnectSession 是一次「点连接」的全过程。
@@ -65,6 +67,10 @@ type ConnectSession struct {
 	// fill 是要回填到表单上的值（一键建好的 App ID）。授权中途失败时用户
 	// 再点一次连接，带着它就会接着授权，而不是又建一个应用。
 	fill map[string]string
+	// onToken 和 pasteState 只有隐式授权的会话有：用户把授权后的地址粘回来、
+	// 解析出令牌后调用 onToken；pasteState 是授权页上带出去的 state。
+	onToken    func(ctx context.Context, tok oauthdev.TokenSet) (string, any, error)
+	pasteState string
 }
 
 // ConnectStatus 是前端轮询时拿到的东西。
@@ -166,6 +172,9 @@ func (m *Manager) StartConnect(typ string, values map[string]string) (*ConnectSe
 	if reg, ok := registration(spec, settings); ok {
 		return m.startWithRegistration(d, spec, settings, snapshot, reg)
 	}
+	if spec.OAuth.Flow == httpchan.FlowImplicit {
+		return m.startImplicit(d, spec, snapshot)
+	}
 
 	cfg, err := spec.OAuthConfig(settings)
 	if err != nil {
@@ -197,6 +206,68 @@ func (m *Manager) StartConnect(typ string, values map[string]string) (*ConnectSe
 		sess.finish(account, identity, err)
 	}()
 	return sess, nil
+}
+
+// startImplicit 开始一次隐式授权：拼好授权页地址交给前端，然后等用户把
+// 授权后的地址粘回来（CompleteConnect）。这里没有后台轮询 —— 令牌在浏览器
+// 地址栏里，本程序拿不到，只能等用户送回来。
+func (m *Manager) startImplicit(d Descriptor, spec httpchan.Spec, snapshot map[string]string) (*ConnectSession, error) {
+	imp, err := spec.Implicit()
+	if err != nil {
+		return nil, err
+	}
+	state := oauthdev.NewState()
+	link, err := imp.URL(state)
+	if err != nil {
+		return nil, err
+	}
+	pending := oauthdev.Pending{
+		VerificationURI:         spec.OAuth.AuthorizeURL,
+		VerificationURIComplete: link,
+		ExpiresAt:               time.Now().Add(connectTTL),
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), connectTTL)
+	sess := m.newSession(pending, PhasePaste, cancel)
+	sess.pasteState = state
+	sess.onToken = func(_ context.Context, tok oauthdev.TokenSet) (string, any, error) {
+		return m.adoptToken(ctx, d, spec, snapshot, tok)
+	}
+	return sess, nil
+}
+
+// CompleteConnect 收下隐式授权粘回来的地址：解析出令牌、问出身份、保存。
+//
+// 粘错了（没授权就复制、复制了别的页面、state 对不上）只报错、不结束会话，
+// 让用户改了再交一次；拿着令牌访问对方失败才算这次连接失败。
+func (m *Manager) CompleteConnect(id, pasted string) (ConnectStatus, error) {
+	m.connMu.Lock()
+	sess, ok := m.conns[id]
+	m.connMu.Unlock()
+	if !ok {
+		return ConnectStatus{}, fmt.Errorf("连接会话不存在或已过期，请重新点连接")
+	}
+	sess.mu.Lock()
+	want := sess.pasteState
+	hasPaste := sess.onToken != nil || sess.pasteState != ""
+	sess.mu.Unlock()
+	if !hasPaste {
+		return ConnectStatus{}, fmt.Errorf("这次连接不需要粘贴地址")
+	}
+	tok, err := oauthdev.ParsePasted(pasted, want, time.Now())
+	if err != nil {
+		return ConnectStatus{}, err
+	}
+	// 认领：同一个会话被连点两次「完成」时，只能有一次去保存。
+	sess.mu.Lock()
+	onToken := sess.onToken
+	sess.onToken = nil
+	sess.mu.Unlock()
+	if onToken == nil {
+		return sess.status(), nil
+	}
+	account, identity, err := onToken(context.Background(), tok)
+	sess.finish(account, identity, err)
+	return sess.status(), nil
 }
 
 // newSession 登记一个连接会话。

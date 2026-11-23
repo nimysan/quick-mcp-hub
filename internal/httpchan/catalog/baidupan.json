@@ -1,0 +1,225 @@
+{
+  "id": "baidupan",
+  "name": "百度网盘",
+  "version": 1,
+  "icon": "🗂️",
+  "summary": "以你本人的身份查找、浏览、整理百度网盘里的文件 · 浏览器里授权一次，不用注册开发者应用",
+  "tags": ["storage"],
+  "integration": "baidupan",
+  "helpUrl": "https://pan.baidu.com/union/doc/",
+  "baseUrl": "https://pan.baidu.com",
+  "headers": { "User-Agent": "pan.baidu.com" },
+  "account": {
+    "name": "baidu_name",
+    "label": "百度账号名",
+    "help": "连接后自动填好，不用自己打"
+  },
+  "secret": {
+    "name": "token",
+    "label": "访问令牌",
+    "help": "连接后自动填好。手动填的话，把授权后跳转页面地址栏里的整个地址粘进来也行"
+  },
+  "auth": { "kind": "query", "name": "access_token" },
+  "oauth": {
+    "flow": "implicit",
+    "clientId": "QHOuRXiepJBMjtk0esLhrPoNlQyYd0mF",
+    "authorizeUrl": "https://openapi.baidu.com/oauth/2.0/authorize",
+    "redirectUri": "oob",
+    "scopes": ["basic", "netdisk"],
+    "help": "不用注册开发者应用。授权页上的应用是百度网盘官方 MCP 服务的公开应用——本程序借用了它的身份，这也是百度在官方 MCP 文档里给个人用户的接入方式。授权约 30 天有效，到期后点这条连接的「重新授权」"
+  },
+  "failWhen": { "path": "errno", "notEquals": 0, "messagePath": "errmsg" },
+  "writeHelp": "打开后模型可以在你的网盘里新建文件夹、重命名、移动、复制和删除文件。删除按不可撤销对待，默认关闭",
+  "test": {
+    "method": "GET",
+    "path": "/rest/2.0/xpan/nas?method=uinfo",
+    "result": { "fields": ["baidu_name", "netdisk_name", "uk", "vip_type"] }
+  },
+  "tools": [
+    {
+      "name": "baidupan_whoami",
+      "title": "当前百度网盘身份",
+      "description": "确认现在以哪个百度网盘账号读写：返回百度账号名、网盘昵称、uk 和会员类型（vip_type：0 普通用户、1 普通会员、2 超级会员）。用户问「我是谁」「连的是哪个网盘」时用它，也是最轻的一次探活。",
+      "readOnly": true,
+      "method": "GET",
+      "path": "/rest/2.0/xpan/nas?method=uinfo",
+      "result": { "fields": ["baidu_name", "netdisk_name", "uk", "vip_type"] }
+    },
+    {
+      "name": "baidupan_quota",
+      "title": "网盘容量",
+      "description": "查网盘的总容量、已用和剩余空间。数字单位都是字节，回答时换算成 GB（除以 1073741824），不要把字节数直接念给用户。",
+      "readOnly": true,
+      "method": "GET",
+      "path": "/api/quota?checkfree=1&checkexpire=1",
+      "result": { "fields": ["total", "used", "free", "expire"] }
+    },
+    {
+      "name": "baidupan_list_files",
+      "title": "列出文件夹内容",
+      "description": "列出某个文件夹下的文件和子文件夹（只列这一层，不往下钻）。dir 是以 / 开头的完整路径，根目录是 /。每条带 fs_id、完整路径 path、文件名 server_filename、大小 size（字节）、isdir（1 是文件夹）、修改时间 server_mtime（秒级时间戳）。一次最多 limit 条：返回的条数等于 limit 就说明可能还有，把 start 加上 limit 再调一次。找某个文件优先用 baidupan_search，不要一层层翻。",
+      "readOnly": true,
+      "method": "GET",
+      "path": "/rest/2.0/xpan/file?method=list",
+      "params": [
+        { "name": "dir", "in": "query", "default": "/", "description": "文件夹的完整路径，以 / 开头，例如 /我的资源/合同。根目录是 /" },
+        { "name": "order", "in": "query", "default": "time", "enum": ["time", "name", "size"], "description": "排序字段：time 修改时间、name 文件名、size 大小" },
+        { "name": "desc", "in": "query", "default": "1", "enum": ["0", "1"], "description": "1 倒序（最新、最大的在前），0 正序" },
+        { "name": "start", "in": "query", "type": "number", "default": "0", "description": "从第几条开始，翻页用，第一页是 0" },
+        { "name": "limit", "in": "query", "type": "number", "default": "100", "description": "这次最多返回几条，最大 1000" },
+        { "name": "folder", "in": "query", "default": "0", "enum": ["0", "1"], "description": "1 只列文件夹，0 文件和文件夹都列" }
+      ],
+      "result": {
+        "path": "list",
+        "limit": 1000,
+        "fields": ["fs_id", "path", "server_filename", "size", "isdir", "server_mtime", "category"]
+      }
+    },
+    {
+      "name": "baidupan_search",
+      "title": "按文件名搜索",
+      "description": "按文件名里的关键词搜文件，默认从根目录往下搜所有子文件夹。只匹配文件名，不搜文件内容。每条带 fs_id、完整路径 path、文件名、大小（字节）、isdir 和修改时间（秒级时间戳）。has_more 为 1 说明还有，把 page 加一继续。用户说「找一下那份 XX 合同」时先用它，拿到 path 或 fs_id 再做别的。",
+      "readOnly": true,
+      "method": "GET",
+      "path": "/rest/2.0/xpan/file?method=search",
+      "params": [
+        { "name": "key", "in": "query", "required": true, "description": "文件名里的关键词，例如 合同、2026 发票" },
+        { "name": "dir", "in": "query", "default": "/", "description": "在哪个文件夹下搜，以 / 开头的完整路径，默认整个网盘" },
+        { "name": "recursion", "in": "query", "default": "1", "enum": ["0", "1"], "description": "1 连子文件夹一起搜，0 只搜这一层" },
+        { "name": "page", "in": "query", "type": "number", "default": "1", "description": "第几页，从 1 开始。has_more 为 1 时加一继续" },
+        { "name": "num", "in": "query", "type": "number", "default": "100", "description": "每页条数，最大 1000" }
+      ],
+      "result": {
+        "path": "list",
+        "limit": 1000,
+        "fields": ["fs_id", "path", "server_filename", "size", "isdir", "server_mtime", "category"],
+        "meta": ["has_more"]
+      }
+    },
+    {
+      "name": "baidupan_file_info",
+      "title": "文件详情",
+      "description": "按 fs_id 查文件的详细信息：文件名、完整路径、大小（字节）、MD5、创建和修改时间（秒级时间戳）。fs_id 必须来自 baidupan_list_files 或 baidupan_search 的结果，一次最多 100 个，写成 JSON 数组，例如 [123456789,987654321]。",
+      "readOnly": true,
+      "method": "GET",
+      "path": "/rest/2.0/xpan/multimedia?method=filemetas",
+      "params": [
+        { "name": "fsids", "in": "query", "required": true, "description": "要查的 fs_id，写成 JSON 数组，例如 [123456789]" }
+      ],
+      "result": {
+        "path": "list",
+        "fields": ["fs_id", "filename", "path", "size", "isdir", "category", "md5", "server_ctime", "server_mtime"]
+      }
+    },
+    {
+      "name": "baidupan_mkdir",
+      "title": "新建文件夹",
+      "description": "在网盘里新建一个文件夹。path 是新文件夹的完整路径（以 / 开头），中间缺的上级文件夹会一并建出来。同名文件夹已经存在时会失败（errno -8），不会覆盖也不会改名。建之前把完整路径复述给用户确认。",
+      "method": "POST",
+      "path": "/rest/2.0/xpan/file?method=create",
+      "bodyEncoding": "form",
+      "bodyConst": { "isdir": "1", "rtype": "0" },
+      "params": [
+        { "name": "path", "in": "body", "required": true, "description": "新文件夹的完整路径，以 / 开头，例如 /工作/2026 报销" }
+      ],
+      "result": { "fields": ["fs_id", "path", "isdir", "ctime"] }
+    },
+    {
+      "name": "baidupan_rename",
+      "title": "重命名",
+      "description": "给文件或文件夹改名（不移动位置）。filelist 每一项是 {\"path\": 现在的完整路径, \"newname\": 新名字}，newname 只是名字、不带路径。path 必须来自 baidupan_list_files 或 baidupan_search 的结果，不要自己拼。新名字已被占用时那一项会失败。改之前把「原名 → 新名」逐条复述给用户确认。",
+      "method": "POST",
+      "path": "/rest/2.0/xpan/file?method=filemanager&opera=rename",
+      "bodyEncoding": "form",
+      "bodyConst": { "async": "1", "ondup": "fail" },
+      "params": [
+        {
+          "name": "filelist",
+          "in": "body",
+          "type": "array",
+          "required": true,
+          "itemFields": ["path", "newname"],
+          "itemRequired": ["path", "newname"],
+          "description": "要改名的文件，例如 [{\"path\":\"/工作/草稿.docx\",\"newname\":\"终稿.docx\"}]"
+        }
+      ],
+      "result": { "fields": ["info", "taskid"] }
+    },
+    {
+      "name": "baidupan_move",
+      "title": "移动",
+      "description": "把文件或文件夹移到另一个文件夹。filelist 每一项是 {\"path\": 现在的完整路径, \"dest\": 目标文件夹, \"newname\": 移过去后的名字（可选，不填就用原名）}。path 必须来自 baidupan_list_files 或 baidupan_search 的结果。目标位置有同名文件时按 ondup 处理，默认 fail（那一项失败，什么都不动）。移动之前把「从哪 → 到哪」逐条复述给用户确认。",
+      "method": "POST",
+      "path": "/rest/2.0/xpan/file?method=filemanager&opera=move",
+      "bodyEncoding": "form",
+      "bodyConst": { "async": "1" },
+      "params": [
+        {
+          "name": "filelist",
+          "in": "body",
+          "type": "array",
+          "required": true,
+          "itemFields": ["path", "dest", "newname"],
+          "itemRequired": ["path", "dest"],
+          "description": "要移动的文件，例如 [{\"path\":\"/下载/发票.pdf\",\"dest\":\"/工作/2026 报销\"}]"
+        },
+        {
+          "name": "ondup",
+          "in": "body",
+          "default": "fail",
+          "enum": ["fail", "newcopy", "skip", "overwrite"],
+          "description": "目标有同名文件时怎么办：fail 失败（默认）、newcopy 改名保留两份、skip 跳过、overwrite 覆盖（会丢掉目标处原来那份，用之前必须问用户）"
+        }
+      ],
+      "result": { "fields": ["info", "taskid"] }
+    },
+    {
+      "name": "baidupan_copy",
+      "title": "复制",
+      "description": "把文件或文件夹复制一份到另一个文件夹，原件不动。filelist 每一项是 {\"path\": 原件完整路径, \"dest\": 目标文件夹, \"newname\": 副本名字（可选）}。path 必须来自 baidupan_list_files 或 baidupan_search 的结果。目标位置有同名文件时按 ondup 处理，默认 fail。复制之前向用户确认。",
+      "method": "POST",
+      "path": "/rest/2.0/xpan/file?method=filemanager&opera=copy",
+      "bodyEncoding": "form",
+      "bodyConst": { "async": "1" },
+      "params": [
+        {
+          "name": "filelist",
+          "in": "body",
+          "type": "array",
+          "required": true,
+          "itemFields": ["path", "dest", "newname"],
+          "itemRequired": ["path", "dest"],
+          "description": "要复制的文件，例如 [{\"path\":\"/工作/模板.xlsx\",\"dest\":\"/工作/2026 报销\"}]"
+        },
+        {
+          "name": "ondup",
+          "in": "body",
+          "default": "fail",
+          "enum": ["fail", "newcopy", "skip", "overwrite"],
+          "description": "目标有同名文件时怎么办：fail 失败（默认）、newcopy 改名保留两份、skip 跳过、overwrite 覆盖（用之前必须问用户）"
+        }
+      ],
+      "result": { "fields": ["info", "taskid"] }
+    },
+    {
+      "name": "baidupan_delete",
+      "title": "删除",
+      "description": "删除文件或文件夹（文件夹连同里面的所有东西）。按不可撤销对待：删除之前必须把要删的完整路径逐条列给用户，得到明确同意后才调用，一次只删用户确认过的那几条。paths 必须来自 baidupan_list_files 或 baidupan_search 的结果，不要自己拼，也不要用通配。",
+      "method": "POST",
+      "path": "/rest/2.0/xpan/file?method=filemanager&opera=delete",
+      "bodyEncoding": "form",
+      "bodyConst": { "async": "1" },
+      "params": [
+        {
+          "name": "filelist",
+          "in": "body",
+          "type": "array",
+          "required": true,
+          "arrayOnly": true,
+          "description": "要删除的完整路径列表，例如 [\"/下载/旧安装包.exe\"]"
+        }
+      ],
+      "result": { "fields": ["info", "taskid"] }
+    }
+  ]
+}
