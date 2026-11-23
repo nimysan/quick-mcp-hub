@@ -21,13 +21,13 @@ func TestParseLink(t *testing.T) {
 	}{
 		// 开头那个 "1" 必须被去掉：接口参数要的是去掉之后的部分，
 		// 整条实现里这是最容易写错的一处。
-		{in: "https://pan.baidu.com/s/1RU2huy0nkpJ1_fMxDMIM3g?pwd=mccz", surl: "RU2huy0nkpJ1_fMxDMIM3g", pwd: "mccz"},
-		{in: "https://pan.baidu.com/s/1RU2huy0nkpJ1_fMxDMIM3g", surl: "RU2huy0nkpJ1_fMxDMIM3g"},
+		{in: "https://pan.baidu.com/s/1QwErTyUiOpAsDfGhJkLzX?pwd=abcd", surl: "QwErTyUiOpAsDfGhJkLzX", pwd: "abcd"},
+		{in: "https://pan.baidu.com/s/1QwErTyUiOpAsDfGhJkLzX", surl: "QwErTyUiOpAsDfGhJkLzX"},
 		{in: "pan.baidu.com/s/1AbCdEfGh", surl: "AbCdEfGh"},
 		{in: "1AbCdEfGh", surl: "AbCdEfGh"},
 		// 用户常把整段话粘进来。
-		{in: "介质下载链接：https://pan.baidu.com/s/1RU2huy0nkpJ1_fMxDMIM3g?pwd=mccz 提取码: mccz",
-			surl: "RU2huy0nkpJ1_fMxDMIM3g", pwd: "mccz"},
+		{in: "介质下载链接：https://pan.baidu.com/s/1QwErTyUiOpAsDfGhJkLzX?pwd=abcd 提取码: abcd",
+			surl: "QwErTyUiOpAsDfGhJkLzX", pwd: "abcd"},
 		{in: "链接 https://pan.baidu.com/s/1AbCdEfGh 提取码：9k2m", surl: "AbCdEfGh", pwd: "9k2m"},
 		{in: "", wantFail: true},
 		{in: "https://example.com/s/1abc", surl: "abc"}, // 只认 /s/1 这个形状，域名不限
@@ -145,7 +145,7 @@ func TestOpenAndListRoot(t *testing.T) {
 	f := &fake{pages: []int{3}}
 	f.server(t)
 
-	s, err := Open(context.Background(), "https://pan.baidu.com/s/1AbCdEfGh?pwd=mccz", "")
+	s, err := Open(context.Background(), "https://pan.baidu.com/s/1AbCdEfGh?pwd=abcd", "")
 	if err != nil {
 		t.Fatalf("Open 失败：%v", err)
 	}
@@ -191,7 +191,7 @@ func TestOpenAndListRoot(t *testing.T) {
 func TestListSubdirUsesDirParam(t *testing.T) {
 	f := &fake{pages: []int{2}}
 	f.server(t)
-	s, err := Open(context.Background(), "1AbCdEfGh", "mccz")
+	s, err := Open(context.Background(), "1AbCdEfGh", "abcd")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -212,7 +212,7 @@ func TestListPaginates(t *testing.T) {
 	// 第一页满 100 条就必须继续翻 —— 不翻会静悄悄只看到前 100 个。
 	f := &fake{pages: []int{pageSize, pageSize, 7}}
 	f.server(t)
-	s, err := Open(context.Background(), "1AbCdEfGh", "mccz")
+	s, err := Open(context.Background(), "1AbCdEfGh", "abcd")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -239,7 +239,7 @@ func TestListTruncatesAtCap(t *testing.T) {
 	}
 	f := &fake{pages: pages}
 	f.server(t)
-	s, _ := Open(context.Background(), "1AbCdEfGh", "mccz")
+	s, _ := Open(context.Background(), "1AbCdEfGh", "abcd")
 	got, err := s.List(context.Background(), "/d")
 	if err != nil {
 		t.Fatal(err)
@@ -267,7 +267,7 @@ func TestErrnoMapping(t *testing.T) {
 	for _, c := range cases {
 		f := &fake{verifyErrno: c.verify, listErrno: c.list, pages: []int{1}}
 		f.server(t)
-		s, err := Open(context.Background(), "1AbCdEfGh", "mccz")
+		s, err := Open(context.Background(), "1AbCdEfGh", "abcd")
 		if err == nil && c.list != 0 {
 			_, err = s.List(context.Background(), "")
 		}
@@ -281,7 +281,7 @@ func TestErrno2SaysWhatToDo(t *testing.T) {
 	// errno 2 最常见的原因就是拿 dir=/ 去列根目录。光报 "errno 2" 没人看得懂。
 	f := &fake{listErrno: 2, pages: []int{1}}
 	f.server(t)
-	s, _ := Open(context.Background(), "1AbCdEfGh", "mccz")
+	s, _ := Open(context.Background(), "1AbCdEfGh", "abcd")
 	_, err := s.List(context.Background(), "/d")
 	if err == nil || !strings.Contains(err.Error(), "根目录") {
 		t.Errorf("errno 2 的说明要指出根目录该怎么传，得到：%v", err)
@@ -295,7 +295,7 @@ func TestRateLimitRetriesThenSucceeds(t *testing.T) {
 
 	f := &fake{pages: []int{2}, rateLimitFirst: 2}
 	f.server(t)
-	s, err := Open(context.Background(), "1AbCdEfGh", "mccz")
+	s, err := Open(context.Background(), "1AbCdEfGh", "abcd")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -315,7 +315,7 @@ func TestRateLimitGivesUpWithClearError(t *testing.T) {
 
 	f := &fake{pages: []int{2}, rateLimitFirst: 100}
 	f.server(t)
-	s, err := Open(context.Background(), "1AbCdEfGh", "mccz")
+	s, err := Open(context.Background(), "1AbCdEfGh", "abcd")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -327,7 +327,7 @@ func TestRateLimitGivesUpWithClearError(t *testing.T) {
 func TestDeadShareLink(t *testing.T) {
 	f := &fake{noIDs: true}
 	f.server(t)
-	if _, err := Open(context.Background(), "1AbCdEfGh", "mccz"); !errors.Is(err, ErrShareGone) {
+	if _, err := Open(context.Background(), "1AbCdEfGh", "abcd"); !errors.Is(err, ErrShareGone) {
 		t.Errorf("页面里没有 id 时应报 ErrShareGone，得到 %v", err)
 	}
 }

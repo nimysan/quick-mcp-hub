@@ -68,7 +68,7 @@ func TestBaiduPanShareToolListsEntries(t *testing.T) {
 
 	res, err := cs.CallTool(ctx, &mcp.CallToolParams{
 		Name:      "baidupan_share_list",
-		Arguments: map[string]any{"link": "https://pan.baidu.com/s/1AbCdEfGh?pwd=mccz"},
+		Arguments: map[string]any{"link": "https://pan.baidu.com/s/1AbCdEfGh?pwd=abcd"},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -105,7 +105,7 @@ func TestBaiduPanShareToolReusesSession(t *testing.T) {
 
 	// 逐级进目录会连着调好几次。每次都重验提取码等于多两个请求，也更容易撞限频。
 	for i := 0; i < 3; i++ {
-		args := map[string]any{"link": "https://pan.baidu.com/s/1AbCdEfGh?pwd=mccz"}
+		args := map[string]any{"link": "https://pan.baidu.com/s/1AbCdEfGh?pwd=abcd"}
 		if i > 0 {
 			args["dir"] = "/a/介质"
 		}
