@@ -14,11 +14,17 @@
 - 发版时把「未发布」改成 `## [x.y.z] - YYYY-MM-DD`，再打 `vx.y.z` 的 tag。
   CI 找不到这个版本的一节就不会发布。
 
-## [未发布]
+## [0.1.13] - 2026-11-23
 
 ### 新增
 - 百度网盘渠道：在浏览器里授权一次，就能让 Quick 按文件名找文件、浏览文件夹、查剩余空间。
   新建文件夹、重命名、移动、复制、删除要单独打开写开关。授权约 30 天有效，到期后点「重新授权」。
+- 百度网盘分享链接：粘贴分享链接和提取码即可逐级浏览文件和目录；只读、不下载、不转存，
+  不需要百度账号或授权。
+- 本机邮件：只读 Apple Mail 和 Outlook 已同步到电脑上的邮件，可列文件夹、搜索和读取正文；
+  不连接邮件服务器，不需要邮箱密码、IMAP 或 OAuth 授权。
+- 飞书文档浏览器扩展：读取当前账号有权访问的云文档和知识库页面，并支持最近文档和站内检索；
+  只读且遵守文档的复制、导出限制，不需要创建飞书应用或开放平台授权。
 
 ## [0.1.12] - 2026-11-20
 
@@ -118,7 +124,8 @@
 - 密码只存进系统的密码管理器（Windows 凭据管理器、macOS 钥匙串），不写进任何文件。
 - 会改动外部系统的操作默认关闭，要在页面上逐个渠道打开。
 
-[未发布]: https://github.com/nimysan/quick-mcp-hub/compare/v0.1.12...HEAD
+[未发布]: https://github.com/nimysan/quick-mcp-hub/compare/v0.1.13...HEAD
+[0.1.13]: https://github.com/nimysan/quick-mcp-hub/compare/v0.1.12...v0.1.13
 [0.1.12]: https://github.com/nimysan/quick-mcp-hub/compare/v0.1.11...v0.1.12
 [0.1.11]: https://github.com/nimysan/quick-mcp-hub/compare/v0.1.10...v0.1.11
 [0.1.10]: https://github.com/nimysan/quick-mcp-hub/compare/v0.1.9...v0.1.10
