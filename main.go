@@ -328,6 +328,15 @@ func main() {
 		log.Printf("飞书网页文档渠道：注册 %d 个只读工具（经本机配置页面和浏览器扩展通信）", n)
 	}
 
+	// 百度网盘分享链接：匿名读公开分享，链接和提取码是调用参数，没有凭据。只读。
+	if on, err := mgr.ShareLinkEnabled(); err != nil {
+		log.Printf("读取分享链接渠道配置失败: %v", err)
+	} else if on {
+		n := tools.RegisterBaiduPanShare(server)
+		registered += n
+		log.Printf("百度网盘分享链接渠道：注册 %d 个只读工具", n)
+	}
+
 	if registered == 0 {
 		log.Fatalf("没有任何可用渠道。用 %s -ui 打开配置页面添加一个", os.Args[0])
 	}

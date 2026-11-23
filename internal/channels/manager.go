@@ -254,6 +254,9 @@ func (m *Manager) Test(ctx context.Context, typ, account string, values map[stri
 	case KindBrowser:
 		_, err := m.testBrowser(ctx)
 		return err
+	case KindShareLink:
+		_, err := m.testShareLink(ctx)
+		return err
 	case KindMail:
 		cfg, err := m.mailConfig(d, account, values)
 		if err != nil {
