@@ -97,6 +97,11 @@ func (m *Manager) List() ([]View, error) {
 		if !ok {
 			continue // 配置里有，但这个版本已不认识的类型，跳过
 		}
+		if d.SecretField == "" {
+			// 本机邮件这类渠道没有凭据，不去问密码管理器。
+			out = append(out, View{Descriptor: d, Instance: in})
+			continue
+		}
 		sec := m.creds.Secret(credstore.Ref{Integration: d.Integration, Account: in.Account})
 		raw, secErr := sec.Value()
 		v := View{Descriptor: d, Instance: in, HasSecret: secErr == nil}
@@ -124,6 +129,14 @@ func (m *Manager) Save(typ string, values map[string]string) (Instance, error) {
 	if err != nil {
 		return Instance{}, err
 	}
+	if d.SecretField == "" {
+		// 没有凭据的渠道（本机邮件、飞书网页文档）：只写配置文件，不碰密码管理器。
+		in := Instance{Type: typ, Account: account, Settings: settings, Enabled: true}
+		if err := m.store.Upsert(in); err != nil {
+			return Instance{}, err
+		}
+		return in, nil
+	}
 	m.keepAppID(d, account, settings)
 	if err := m.checkAppID(d, account, secret, settings); err != nil {
 		return Instance{}, err
@@ -131,17 +144,11 @@ func (m *Manager) Save(typ string, values map[string]string) (Instance, error) {
 
 	ref := credstore.Ref{Integration: d.Integration, Account: account}
 	// 编辑时密码留空表示「不改」，此时必须钥匙串里本来就有。
-	// 没有凭据字段的渠道（浏览器扩展类）没有东西要存，跳过这一步。
-	switch {
-	case d.SecretField == "":
-	case secret != "":
+	if secret != "" {
 		if err := m.creds.Put(ref, secret); err != nil {
 			return Instance{}, err
 		}
-	default:
-		if _, err := m.creds.Secret(ref).Value(); err == nil {
-			break
-		}
+	} else if _, err := m.creds.Secret(ref).Value(); err != nil {
 		label := d.SecretField
 		if f, ok := d.Field(d.SecretField); ok {
 			label = f.Label
@@ -211,6 +218,9 @@ func (m *Manager) Delete(typ, account string) error {
 	if err := m.store.Delete(typ, account); err != nil {
 		return err
 	}
+	if d.SecretField == "" {
+		return nil // 没有凭据可删
+	}
 	return m.creds.Delete(credstore.Ref{Integration: d.Integration, Account: account})
 }
 
@@ -238,6 +248,9 @@ func (m *Manager) Test(ctx context.Context, typ, account string, values map[stri
 			return err
 		}
 		return nil
+	case KindLocalMail:
+		_, err := m.localMailTest(ctx, d, account, values)
+		return err
 	case KindBrowser:
 		_, err := m.testBrowser(ctx)
 		return err
@@ -270,6 +283,13 @@ func (m *Manager) Identify(ctx context.Context, typ, account string, values map[
 	}
 	if d.Kind == KindPlugin {
 		return m.testPlugin(ctx, d, account, values)
+	}
+	if d.Kind == KindLocalMail {
+		s, err := m.localMailTest(ctx, d, account, values)
+		if err != nil {
+			return nil, err
+		}
+		return s, nil
 	}
 	if d.Kind == KindBrowser {
 		return m.testBrowser(ctx)
@@ -304,6 +324,10 @@ func (m *Manager) CheckSteps(ctx context.Context, typ, account string, values ma
 			return nil, err
 		}
 		return mailbox.Check(ctx, cfg), nil
+	}
+	if d.Kind == KindLocalMail {
+		// 每个来源一条：Apple Mail 没授权和 Outlook 能读是两件分开的事。
+		return m.localMailProbe(ctx, d, account, values)
 	}
 	// 其余渠道：跑原来那条单步检查，包装成一条 —— 与其编出三条假的分步，
 	// 不如如实说「这一种只能整体检查」。

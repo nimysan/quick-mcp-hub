@@ -1,9 +1,10 @@
 VERSION ?= 0.1.0
 LDFLAGS := -s -w -X main.version=$(VERSION)
-GOFLAGS_ENV := GOPROXY=$(GOPROXY_URL) GOSUMDB=sum.golang.google.cn CGO_ENABLED=0
 
 # proxy.golang.org 在本机不可达（DNS 超时），用国内镜像。
+# 必须定义在 GOFLAGS_ENV 之前：GOFLAGS_ENV 用 := 立即展开。
 GOPROXY_URL ?= https://goproxy.cn,direct
+GOFLAGS_ENV := GOPROXY=$(GOPROXY_URL) GOSUMDB=sum.golang.google.cn CGO_ENABLED=0
 
 .PHONY: build all package test vet selftest clean
 
