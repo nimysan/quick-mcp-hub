@@ -1,8 +1,8 @@
-# 本机邮件（只读）[不求管理员版]
+# 本机邮件（只读）
 
 > 只读：没有任何写工具。默认关闭，要在配置页添加并勾选来源后才注册工具。
 
-**不用管理员开通，也不用 IMAP 或 OAuth 授权。** 邮件客户端（Apple Mail、Outlook）已经把邮件同步到了这台电脑上，mcp-hub 只离线读这份本地缓存，不联网、不改动邮件。
+邮件客户端（Apple Mail、Outlook）已经把邮件同步到了这台电脑上，mcp-hub 只离线读这份本地缓存，不联网、不改动邮件。**因此不用 IMAP 或 OAuth 授权，也不需要管理员开通。**
 mcp-hub 直接打开邮件客户端已经保存在这台电脑上的数据文件，把文件夹、邮件列表和正文交给 Amazon Quick。
 不连邮件服务器，不需要密码，也不会往钥匙串或凭据管理器里写任何东西。
 
@@ -48,7 +48,7 @@ Outlook 升级后格式可能变化：
 
 1. 系统设置 → 隐私与安全性 → **完全磁盘访问权限** → 加入 **Amazon Quick** 并打开开关。读 Apple Mail 必须授权；两个 Outlook 来源的数据在 Group Containers 下，系统也可能要求授权。
    授权对象是真正拉起 MCP 服务的程序（Amazon Quick），不是配置页面。
-2. 运行 `mcp-hub -ui`（或双击 mcp-hub）打开配置页 → 内置渠道 →「本机邮件（只读）[不求管理员版]」→ 勾选要用的来源 →「测试并保存」。
+2. 运行 `mcp-hub -ui`（或双击 mcp-hub）打开配置页 → 内置渠道 →「本机邮件（只读）」→ 勾选要用的来源 →「测试并保存」。
    - 提示「被 macOS 隐私保护拦下」：这是配置页这个进程自己的权限，不影响保存。
    - 提示「文件权限不足 / 不是 macOS 隐私保护」：数据目录的属主或权限不对，或者高级设置里填错了目录。开完全磁盘访问权限解决不了，要先修目录。
 3. 在 Amazon Quick 里重启连接器：Customize → Connectors → 把 Mcp Hub 的开关关掉再打开，点刷新。刚授完完全磁盘访问权限时，要**完全退出 Amazon Quick 再打开**，新授权才生效。
@@ -59,7 +59,7 @@ Mac 第一次运行未签名的 mcp-hub 会被 Gatekeeper 拦下，处理方法�
 ### Windows
 
 1. 安装或解压 mcp-hub。第一次运行可能弹 SmartScreen「已保护你的电脑」（程序没有代码签名），点「更多信息」→「仍要运行」。
-2. 双击 mcp-hub（或运行 `mcp-hub -ui`）打开配置页 → 内置渠道 →「本机邮件（只读）[不求管理员版]」→ 勾选「经典版 Outlook for Windows」和 / 或「新版 Outlook for Windows」→「测试并保存」。
+2. 双击 mcp-hub（或运行 `mcp-hub -ui`）打开配置页 → 内置渠道 →「本机邮件（只读）」→ 勾选「经典版 Outlook for Windows」和 / 或「新版 Outlook for Windows」→「测试并保存」。
 3. 用经典版来源时，读邮件前先完全退出经典版 Outlook。新版 Outlook 不用退出。
 4. 在 Amazon Quick 里重启连接器：Customize → Connectors → 把 Mcp Hub 的开关关掉再打开，点刷新。
 5. 在 Quick 里问「列一下我本机邮件的文件夹」验证。
