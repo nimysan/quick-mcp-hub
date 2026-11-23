@@ -5,7 +5,7 @@
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg?style=flat-square)](LICENSE)
 ![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey.svg?style=flat-square)
 <!-- ALL-CONTRIBUTORS-BADGE:START - Do not remove or modify this section -->
-[![All Contributors](https://img.shields.io/badge/all_contributors-2-orange.svg?style=flat-square)](#contributors-)
+[![All Contributors](https://img.shields.io/badge/all_contributors-4-orange.svg?style=flat-square)](#contributors-)
 <!-- ALL-CONTRIBUTORS-BADGE:END -->
 
 **把企业现有系统接入 [Amazon Quick](https://aws.amazon.com/cn/quick/desktop/)，以员工本人的身份访问。**
@@ -132,6 +132,8 @@ Claude Desktop、Cursor、Cline、Kiro 这类读 MCP 配置的客户端同样可
     <tr>
       <td align="center" valign="top" width="14.28%"><a href="https://github.com/nimysan"><img src="https://avatars.githubusercontent.com/u/55108?v=4&size=100" width="100px" height="100px" alt="Sean Ye"/><br /><sub><b>Sean Ye</b></sub></a><br /><a href="https://github.com/nimysan/quick-mcp-hub/commits?author=nimysan" title="Code">💻</a> <a href="https://github.com/nimysan/quick-mcp-hub/commits?author=nimysan" title="Documentation">📖</a> <a href="#infra-nimysan" title="Infrastructure (Hosting, Build-Tools, etc)">🚇</a></td>
       <td align="center" valign="top" width="14.28%"><a href="https://github.com/Jeremyforwork"><img src="https://avatars.githubusercontent.com/u/143385324?v=4&size=100" width="100px" height="100px" alt="Jeremy Zhong"/><br /><sub><b>Jeremy Zhong</b></sub></a><br /><a href="https://github.com/nimysan/quick-mcp-hub/commits?author=Jeremyforwork" title="Code">💻</a></td>
+      <td align="center" valign="top" width="14.28%"><a href="https://github.com/liangyimingcom"><img src="https://avatars.githubusercontent.com/u/32609181?v=4&size=100" width="100px" height="100px" alt="liangyimingcom"/><br /><sub><b>liangyimingcom</b></sub></a><br /><a href="https://github.com/nimysan/quick-mcp-hub/commits?author=liangyimingcom" title="Code">💻</a></td>
+      <td align="center" valign="top" width="14.28%"><a href="https://github.com/Wyifei"><img src="https://avatars.githubusercontent.com/u/65744961?v=4&size=100" width="100px" height="100px" alt="Wyifei"/><br /><sub><b>Wyifei</b></sub></a><br /><a href="https://github.com/nimysan/quick-mcp-hub/commits?author=Wyifei" title="Code">💻</a></td>
     </tr>
   </tbody>
 </table>
