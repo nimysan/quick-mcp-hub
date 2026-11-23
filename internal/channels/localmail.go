@@ -93,9 +93,9 @@ func localMailDescriptor() Descriptor {
 
 func localMailSummary(goos string) string {
 	if goos == "windows" {
-		return "直接读这台电脑上经典版 Outlook 的数据文件和新版 Outlook 的离线缓存 · 不联网、无需密码"
+		return "读这台电脑上 Outlook 已同步的本地缓存（经典版的 PST/OST、新版的离线缓存）· 只读、不联网、无需密码、不改动邮件 · 不用 IMAP 授权，也不用管理员开通"
 	}
-	return "直接读这台 Mac 上邮件 App 的本地数据 · 不联网、无需密码"
+	return "读这台 Mac 上邮件 App 已同步的本地数据（Apple Mail、Outlook）· 只读、不联网、无需密码、不改动邮件 · 不用 IMAP 授权，也不用管理员开通"
 }
 
 // LocalMailConfig 返回第一条已启用的本机邮件渠道的配置。没有时 ok 为 false。
