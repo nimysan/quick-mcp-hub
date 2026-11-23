@@ -54,7 +54,7 @@ Claude Desktop、Cursor、Cline、Kiro 这类读 MCP 配置的客户端同样可
 新增渠道只需增加一份渠道声明，不改程序。
 
 **本机邮件**直接读这台电脑上邮件 App 的本地数据，不连邮件服务器、不需要密码，
-也不会改动任何邮件文件。默认关闭，在配置页添加「本机邮件（只读）」并勾选来源后才注册工具
+也不会改动任何邮件文件。默认关闭，在配置页添加「本机邮件（只读）[不求管理员版]」并勾选来源后才注册工具
 （`localmail_list_folders` / `localmail_search` / `localmail_get`，用 `source` 参数选
 `apple_mail`、`outlook_legacy` 或 `outlook`（新版 Outlook）；Windows 上是 `outlook_classic_win`（经典 Outlook）和 `outlook_new_win`（新版 Outlook）。新版 Outlook 读不出已读状态和附件，部分文件夹名和收件人可能缺失，结果里用 `incomplete` 标出；Outlook 升级导致格式不认识时这个来源自动停用并提示，不影响其他来源）。读 Apple Mail 需要给 **Amazon Quick** 授「完全磁盘访问权限」
 （系统设置 → 隐私与安全性 → 完全磁盘访问权限），授权后完全退出并重开 Amazon Quick；
@@ -173,7 +173,7 @@ Claude Desktop、Cursor、Cline、Kiro 这类读 MCP 配置的客户端同样可
 | 看什么 | 去哪 |
 |---|---|
 | 下载、安装、配置、接入 Quick | [`docs/使用说明.md`](docs/使用说明.md) · [Word 版](docs/MCP-Hub-使用说明.docx) |
-| 本机邮件（只读）：来源、限制、安全设计、测试方法 | [`docs/localmail.md`](docs/localmail.md) |
+| 本机邮件（只读）[不求管理员版]：来源、限制、安全设计、测试方法 | [`docs/localmail.md`](docs/localmail.md) |
 | 发布包中提供给客户的版本 | [`packaging/快速开始.md`](packaging/快速开始.md) |
 | 构建方式与实现取舍 | [`docs/实现笔记.md`](docs/实现笔记.md) |
 | 第三方开源组件清单 | [`THIRD-PARTY-NOTICES.md`](THIRD-PARTY-NOTICES.md) |

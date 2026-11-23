@@ -23,12 +23,12 @@ const FeishuWebType = "feishu-web"
 func feishuWebDescriptor() Descriptor {
 	return Descriptor{
 		Type:    FeishuWebType,
-		Name:    "飞书网页文档（浏览器扩展）",
+		Name:    "飞书文档（只读 + 浏览器扩展）[不求管理员版]",
 		Icon:    "📄",
 		Kind:    KindBrowser,
 		Version: 1,
 		Tags:    []string{"office"},
-		Summary: "借你浏览器里已登录的飞书网页版读云文档 · 只读，禁止复制的文档不读 · 不用建应用",
+		Summary: "不用管理员建应用、不用开放平台授权：浏览器扩展借用你本机浏览器里已登录的飞书网页版，读你本来就能看到的页面内容 · 只读，禁止复制的文档不读",
 		// 配对 token 存在这个分段下（见 webui/feishuweb.go），不属于某条渠道实例。
 		Integration:  FeishuWebType,
 		AccountField: "name",

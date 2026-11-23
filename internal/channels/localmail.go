@@ -75,7 +75,7 @@ func localMailDescriptor() Descriptor {
 	}
 	return Descriptor{
 		Type:         localMailType,
-		Name:         "本机邮件（只读）",
+		Name:         "本机邮件（只读）[不求管理员版]",
 		Icon:         "🗂️",
 		Kind:         KindLocalMail,
 		Version:      1,
@@ -93,9 +93,9 @@ func localMailDescriptor() Descriptor {
 
 func localMailSummary(goos string) string {
 	if goos == "windows" {
-		return "直接读这台电脑上经典版 Outlook 的数据文件和新版 Outlook 的离线缓存 · 不联网、无需密码"
+		return "不用管理员开通、不用 IMAP 授权：邮件客户端已经把邮件同步到本机，这里只读这份本地缓存（经典版 Outlook 的 PST/OST、新版 Outlook 的离线缓存）· 不联网、无需密码、不改动邮件"
 	}
-	return "直接读这台 Mac 上邮件 App 的本地数据 · 不联网、无需密码"
+	return "不用管理员开通、不用 IMAP 授权：邮件 App 已经把邮件同步到本机，这里只读这份本地缓存（Apple Mail、Outlook 的本地数据库）· 不联网、无需密码、不改动邮件"
 }
 
 // LocalMailConfig 返回第一条已启用的本机邮件渠道的配置。没有时 ok 为 false。
