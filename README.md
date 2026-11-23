@@ -49,8 +49,18 @@ Claude Desktop、Cursor、Cline、Kiro 这类读 MCP 配置的客户端同样可
 | QQ（本机 NapCat） | 自动配置 | 5 项（群、好友、聊天记录） | 发群消息、发私聊 |
 | GitHub | 授权登录或个人令牌 | 5 项（仓库、Issue、搜索） | 新建 Issue |
 | Jira Cloud | 站点 + 邮箱 + API Token | 8 项（项目、JQL、详情、评论） | 建/改/指派/流转/评论 |
+| 本机邮件（macOS / Windows） | 勾选来源，无需密码 | 3 项（文件夹、搜索、读正文）；Mac：Apple Mail / 旧版 Outlook / 新版 Outlook；Windows：经典 Outlook / 新版 Outlook | 无写工具 |
+| 飞书网页文档（浏览器扩展，预览） | 装扩展 + 配对码，借浏览器里已登录的飞书网页版 | 3 项（读文档、最近文档、检索） | 无，这个渠道没有写操作 |
 
 新增渠道只需增加一份渠道声明，不改程序。
+
+**本机邮件**直接读这台电脑上邮件 App 的本地数据，不连邮件服务器、不需要密码，
+也不会改动任何邮件文件。默认关闭，在配置页添加「本机邮件（只读）」并勾选来源后才注册工具
+（`localmail_list_folders` / `localmail_search` / `localmail_get`，用 `source` 参数选
+`apple_mail`、`outlook_legacy` 或 `outlook`（新版 Outlook）；Windows 上是 `outlook_classic_win`（经典 Outlook）和 `outlook_new_win`（新版 Outlook）。新版 Outlook 读不出已读状态和附件，部分文件夹名和收件人可能缺失，结果里用 `incomplete` 标出；Outlook 升级导致格式不认识时这个来源自动停用并提示，不影响其他来源）。读 Apple Mail 需要给 **Amazon Quick** 授「完全磁盘访问权限」
+（系统设置 → 隐私与安全性 → 完全磁盘访问权限），授权后完全退出并重开 Amazon Quick；
+没授权时工具返回这段指引，服务和其他来源照常可用。正文长度上限（默认 32 KB）和每页条数上限（默认 50）
+可在「高级设置」里改。
 
 ---
 
@@ -75,6 +85,9 @@ Claude Desktop、Cursor、Cline、Kiro 这类读 MCP 配置的客户端同样可
 - **卸载不清除密码** —— 需在系统凭据管理器中删除 `mcp-hub` 开头的条目。
 - **无遥测、无数据回传、无服务端。**
 - **不代为下载第三方程序** —— QQ 渠道依赖的 NapCat 由使用者自行安装。
+- **飞书网页文档不碰登录态** —— 扩展只读页面里已经加载的文档内容，不读 cookie、
+  不调飞书内部接口；文档所有者禁止了复制或导出的一律不读，没有强制读取的开关。
+  见 [`docs/飞书网页文档.md`](docs/飞书网页文档.md)。
 
 **写操作默认关闭。** 发邮件、同意审批、发消息等不可逆动作默认不提供给模型，
 需逐个渠道、逐个账号手动开启。未开启的功能模型不可见。
@@ -165,6 +178,7 @@ Claude Desktop、Cursor、Cline、Kiro 这类读 MCP 配置的客户端同样可
 |---|---|
 | 每个版本改了什么 | [`CHANGELOG.md`](CHANGELOG.md) |
 | 下载、安装、配置、接入 Quick | [`docs/使用说明.md`](docs/使用说明.md) · [Word 版](docs/MCP-Hub-使用说明.docx) |
+| 本机邮件（只读）：来源、限制、安全设计、测试方法 | [`docs/localmail.md`](docs/localmail.md) |
 | 发布包中提供给客户的版本 | [`packaging/快速开始.md`](packaging/快速开始.md) |
 | 构建方式与实现取舍 | [`docs/实现笔记.md`](docs/实现笔记.md) |
 | 第三方开源组件清单 | [`THIRD-PARTY-NOTICES.md`](THIRD-PARTY-NOTICES.md) |

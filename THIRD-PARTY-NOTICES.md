@@ -19,8 +19,52 @@ mcp-hub 是单个静态可执行文件，下列组件被编译进程序本体，
 | golang.org/x/sys | v0.49.0 | BSD-3-Clause | 系统调用 |
 | golang.org/x/text | v0.43.0 | BSD-3-Clause | 字符编码 |
 | github.com/godbus/dbus/v5 | v5.2.2 | BSD-2-Clause | Linux Secret Service 后端 |
+| github.com/coder/websocket | v1.8.14 | ISC | 飞书网页文档：本机浏览器扩展桥接 |
+| modernc.org/sqlite | v1.62.0 | BSD-3-Clause（内含 SQLite 源码为 public domain） | 本机邮件：只读读取 Apple Mail、旧版 Outlook 的 SQLite |
+| modernc.org/libc | v1.80.1 | BSD-3-Clause（随附 musl 等上游声明，见其 LICENSE-3RD-PARTY.md） | sqlite 的运行时 |
+| modernc.org/mathutil | v1.7.1 | BSD-3-Clause | sqlite 间接依赖 |
+| modernc.org/memory | v1.12.1 | BSD-3-Clause | sqlite 间接依赖 |
+| github.com/pierrec/lz4/v4 | v4.1.33 | BSD-3-Clause | 本机邮件：新版 Outlook for Mac 数据块解压 |
+| github.com/dustin/go-humanize | v1.1.0 | MIT | sqlite 间接依赖 |
+| github.com/google/uuid | v1.6.0 | BSD-3-Clause | sqlite 间接依赖 |
+| github.com/mattn/go-isatty | v0.0.24 | MIT | sqlite 间接依赖 |
+| github.com/ncruces/go-strftime | v1.1.0 | MIT | sqlite 间接依赖 |
+| github.com/remyoudompheng/bigfft | v0.0.0-20230129092748-24d4a6f8daec | BSD-3-Clause | sqlite 间接依赖 |
 
 上述许可证**全部为宽松型**，均不含传染性（copyleft）条款。
+
+## 移植的代码
+
+`internal/feishuweb/convert.go`（飞书块树转 Markdown）和
+`internal/feishuweb/extension/extract.js`（块树读取点与懒加载判定）移植自
+[cloud-document-converter](https://github.com/whale4113/cloud-document-converter)
+（`packages/lark/src/docx.ts`，提交 ff52e8cc82），按 MIT 许可使用并有修改
+（去掉原始 HTML 输出、链接只保留 http/https/mailto、转义文字、增加长度上限）。
+其许可声明：
+
+```
+MIT License
+
+Copyright (c) 2024 - present Junji Lu
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```
 
 ## Apache-2.0 组件的随附声明
 
@@ -38,6 +82,7 @@ Copyright 2020-2023 wazero authors
 - Apache-2.0：<https://www.apache.org/licenses/LICENSE-2.0>（本仓库 `LICENSE` 即此文本）
 - MIT：<https://opensource.org/licenses/MIT>
 - BSD-3-Clause：<https://opensource.org/licenses/BSD-3-Clause>
+- ISC：<https://opensource.org/licenses/ISC>
 - BSD-2-Clause：<https://opensource.org/licenses/BSD-2-Clause>
 
 各组件的完整许可证文本随其源码分发，可在本机 Go 模块缓存中查看：

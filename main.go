@@ -39,7 +39,9 @@ import (
 	"github.com/nimysan/mcp-hub/internal/clientstat"
 	"github.com/nimysan/mcp-hub/internal/config"
 	"github.com/nimysan/mcp-hub/internal/credstore"
+	"github.com/nimysan/mcp-hub/internal/feishuweb"
 	"github.com/nimysan/mcp-hub/internal/httpchan"
+	"github.com/nimysan/mcp-hub/internal/localmail"
 	"github.com/nimysan/mcp-hub/internal/mailbox"
 	"github.com/nimysan/mcp-hub/internal/tools"
 	"github.com/nimysan/mcp-hub/internal/tray"
@@ -294,6 +296,36 @@ func main() {
 		}
 		log.Printf("%s 渠道：%d 个账号 [%s]，注册 %d 个工具",
 			g.Spec.Name, len(g.Runtimes), strings.Join(accounts, " "), n)
+	}
+
+	// 本机邮件渠道：只读本机邮件客户端的数据文件，没有凭据。来源惰性打开 ——
+	// 没授权的来源只在被调用时返回授权指引，不影响启动，也不影响别的来源。
+	localCfg, localOK, localIgnored, err := mgr.LocalMailConfig()
+	if err != nil {
+		log.Printf("读取本机邮件渠道配置失败: %v", err)
+	}
+	if len(localIgnored) > 0 {
+		log.Printf("本机邮件渠道只用第一条，已忽略：%s", strings.Join(localIgnored, " "))
+	}
+	if localOK {
+		hub := localmail.NewHub(localCfg)
+		defer hub.Close()
+		if n := tools.RegisterLocalMail(server, hub); n > 0 {
+			registered += n
+			log.Printf("本机邮件渠道（只读）：来源 [%s]，注册 %d 个工具",
+				strings.Join(hub.Enabled(), " "), n)
+		} else {
+			log.Printf("本机邮件渠道已添加，但一个来源都没打开，未注册工具")
+		}
+	}
+
+	// 飞书网页文档：工具调用经本机配置页面进程转给浏览器扩展。全部只读。
+	if on, err := mgr.BrowserEnabled(); err != nil {
+		log.Printf("读取飞书网页文档渠道配置失败: %v", err)
+	} else if on {
+		n := tools.RegisterFeishuWeb(server, feishuweb.NewClient())
+		registered += n
+		log.Printf("飞书网页文档渠道：注册 %d 个只读工具（经本机配置页面和浏览器扩展通信）", n)
 	}
 
 	if registered == 0 {

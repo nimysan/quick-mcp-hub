@@ -28,6 +28,7 @@ import (
 	"github.com/nimysan/mcp-hub/internal/clientstat"
 	"github.com/nimysan/mcp-hub/internal/config"
 	"github.com/nimysan/mcp-hub/internal/credstore"
+	"github.com/nimysan/mcp-hub/internal/feishuweb"
 	"github.com/nimysan/mcp-hub/internal/mailprovider"
 	"github.com/nimysan/mcp-hub/internal/webui/design"
 )
@@ -40,6 +41,9 @@ type Server struct {
 	mgr     *channels.Manager
 	mux     *http.ServeMux
 	version string
+
+	// bridge 是飞书网页文档渠道和浏览器扩展之间的桥（见 feishuweb.go）。
+	bridge *feishuweb.Bridge
 
 	// LogPath 是本次运行的日志文件，页面和托盘的「查看日志」要用它。
 	// 空表示这次没写日志文件，那两个入口就不显示——一个点了没反应的
@@ -82,6 +86,8 @@ func (s *Server) routes() {
 	api("/api/oauth/complete", s.handleOAuthComplete)
 	// NapCat 自动配置（见 napcat.go）。
 	s.napcatRoutes(api)
+	// 飞书网页文档：浏览器扩展桥接、配对、释放扩展（见 feishuweb.go）。
+	s.feishuWebRoutes(api)
 }
 
 // healthApp 是 /healthz 回的标记。端口被别的程序占着时，探测要能区分

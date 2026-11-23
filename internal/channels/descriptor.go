@@ -128,8 +128,10 @@ type Descriptor struct {
 	// LocalProgram 表示这个渠道连的不是某个网站，而是用户自己机器上另一个
 	// 程序开的本地接口（见 httpchan.Spec.Local）。这件事同样必须在点「添加」
 	// 之前看得见：它意味着「还要先去装一个别的东西」，而不是填完就能用。
-	LocalProgram bool    `json:"localProgram,omitempty"`
-	Fields       []Field `json:"fields"`
+	LocalProgram bool `json:"localProgram,omitempty"`
+	// Platform 是服务所在的平台（runtime.GOOS），只有文案随平台变的渠道（本机邮件）才填。
+	Platform string  `json:"platform,omitempty"`
+	Fields   []Field `json:"fields"`
 }
 
 // OAuthInfo 是页面渲染「连接」按钮要知道的事。
@@ -406,10 +408,12 @@ var planned = []Descriptor{}
 func All() []Descriptor {
 	specs := specs()
 	mans := pluginManifests()
-	out := make([]Descriptor, 0, len(mailprovider.All)+len(specs)+len(mans)+len(planned))
+	// +2：本机邮件、飞书网页文档各一张卡片。
+	out := make([]Descriptor, 0, len(mailprovider.All)+len(specs)+len(mans)+len(planned)+2)
 	for _, p := range mailprovider.All {
 		out = append(out, mailDescriptor(p))
 	}
+	out = append(out, localMailDescriptor())
 	for _, s := range specs {
 		out = append(out, httpDescriptor(s))
 	}
@@ -418,6 +422,7 @@ func All() []Descriptor {
 	for _, m := range mans {
 		out = append(out, pluginDescriptor(m))
 	}
+	out = append(out, feishuWebDescriptor())
 	return append(out, planned...)
 }
 

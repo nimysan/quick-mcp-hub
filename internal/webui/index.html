@@ -112,7 +112,8 @@ let DESCRIPTORS=[], CHANNELS=[], TAG="", EXEPATH="", LASTCLIENT=null, CFGPATH=""
 // 每个渠道用哪个图标：稿子里邮箱是 Mail、云之家是云、NapCat 是本机程序。
 // 没有对应的用 Plug 兜底 —— 新渠道加进来不会缺图标。
 const ICONS = {qqmail:"Mail", custommail:"Mail", github:"Blocks", jira:"ScrollText",
-  napcat:"Monitor", yunzhijia:"Laptop", ghwasm:"Blocks", baidupan:"HardDrive"};
+  napcat:"Monitor", yunzhijia:"Laptop", ghwasm:"Blocks", localmail:"Mail", baidupan:"HardDrive",
+  feishu:"Laptop", "feishu-web":"ScrollText"};
 const iconOf = t => ICONS[t] || "Plug";
 
 const TAG_LABELS = {email:"邮件", devtools:"开发", project:"项目", erp:"ERP",
@@ -213,6 +214,9 @@ function writeOn(d, inst){
 
 function activeTools(v){
   const d=v.descriptor, inst=v.instance;
+  // 本机邮件：一个来源都没开时服务不注册任何工具（开关字段就是 bool 字段，见 placeholderSteps）。
+  if(d.kind === "localmail" &&
+     !d.fields.some(f=>f.kind==="bool" && inst.settings?.[f.name] === "true")) return [];
   const write = new Set(d.writeTools||[]);
   const on = writeOn(d, inst);
   return (d.tools||[]).filter(t=>!write.has(t) || on);
@@ -584,6 +588,23 @@ async function openForm(type, account){
       <div class="help" style="color:var(--warn)">两件事要先知道：回环上走的是明文，同机的其他程序可能看到这里的令牌，所以别拿别处在用的密码来填；
         而这类网关用的是非官方协议，账号风险落在你自己的号上。</div>
     </div>` : "";
+  // 本机邮件：没有凭据，但有一件必须在保存前看到的事 —— macOS 的完全磁盘
+  // 访问权限要授给 Amazon Quick（真正拉起 MCP 服务的那个程序），而不是这个页面。
+  // Windows 上没有这层隐私授权，要提醒的是经典版 Outlook 运行时会锁住数据文件、新版 Outlook 只有离线缓存。
+  const localMailHTML = d.kind!=="localmail" ? "" : d.platform==="windows" ? `
+    <div class="risk">
+      <div class="risk-head">🗂️ 只读这台电脑上的 Outlook 数据文件</div>
+      <div class="help">直接读经典版 Outlook 存在本机的 .ost / .pst，和新版 Outlook 的离线缓存，不联网、不需要密码，也不会改动任何一封邮件。只有已经同步到这台电脑的邮件才读得到。</div>
+      <div class="help" style="color:var(--warn)">经典版 Outlook 运行时会锁住数据文件，这时读不到：请先完全退出经典版 Outlook（任务管理器里没有 OUTLOOK.EXE）再用。
+        新版 Outlook 开着也能读，但只有离线设置里选中的文件夹、离线天数内（默认 30 天）的邮件。</div>
+    </div>` : `
+    <div class="risk">
+      <div class="risk-head">🗂️ 只读这台 Mac 上的邮件文件</div>
+      <div class="help">直接读邮件 App 存在本机的数据，不联网、不需要密码，也不会改动任何一封邮件。只有已经同步到这台 Mac 的邮件才读得到。</div>
+      <div class="help" style="color:var(--warn)">读 Apple Mail 要先给 <b>Amazon Quick</b> 授权：系统设置 → 隐私与安全性 → 完全磁盘访问权限，
+        加入 Amazon Quick 并打开开关，然后完全退出 Amazon Quick 再打开。
+        这里的「测试」用的是本页面自己的权限，和 Amazon Quick 的不一样，所以这里没权限不会挡住保存。</div>
+    </div>`;
   // NapCat 自动配置。只对这个渠道出现：它是唯一一个要在本机改**另一个程序**
   // 配置的渠道，而那件事手工做要先找 6099 端口、从 webui.json 翻登录密钥、
   // 进页面新建 HTTP 服务器、自己想一个 token —— 全是实现细节。
@@ -608,12 +629,27 @@ async function openForm(type, account){
       <button id="ncbtn" style="margin-top:8px">检测</button>
       <div id="ncpanel"></div>
     </div>` : "";
+  // 飞书网页文档：要先装浏览器扩展并配对。三步都在这里做完，用户不必去找目录。
+  const fwHTML = (d.type==='feishu-web') ? `
+    <div class="risk">
+      <div class="risk-head">🧩 要先装一个浏览器扩展</div>
+      <div class="help">登录态在你自己的 Chrome / Edge 里，本程序不碰密码和 cookie。扩展只能访问飞书 / Lark 的域名和本机 127.0.0.1，
+        没有任何写操作；文档所有者禁止了复制或导出的，一律不读，也没有开关能强制读。</div>
+      <div class="help">① <button id="fwextract">释放扩展到本机目录</button> <span id="fwdir"></span></div>
+      <div class="help">② 在浏览器地址栏打开 <code>chrome://extensions</code>（Edge 是 <code>edge://extensions</code>），
+        打开「开发者模式」，点「加载已解压的扩展程序」，选上面那个目录</div>
+      <div class="help">③ <button id="fwpair">生成配对码</button> <code id="fwcode"></code>
+        复制后点浏览器工具栏里的扩展图标，粘进去保存。重新生成会让旧的配对码失效</div>
+      <div class="help" id="fwstatus"></div>
+    </div>` : "";
   $("#modal").innerHTML = `
     <h3>${d.icon} ${esc(d.name)}</h3>
-    ${oauthFirst?"":`<div class="tiny">密码类字段只存进系统密码管理器，不写配置文件、不进日志</div>`}
+    ${(oauthFirst||!d.secretField)?"":`<div class="tiny">密码类字段只存进系统密码管理器，不写配置文件、不进日志</div>`}
     ${riskHTML}
     ${localHTML}
+    ${localMailHTML}
     ${setupHTML}
+    ${fwHTML}
     ${oauthFirst?oauthHTML:""}
     ${formFields.map(fieldHTML).join("")}
     ${adv.length?`<div class="adv-toggle" id="advtoggle">▸ 高级设置（主机 / 端口）</div>
@@ -644,6 +680,7 @@ async function openForm(type, account){
   if(ob) ob.onclick = () => startOAuth(type, null, account || "");
   const ncb = $("#ncbtn");
   if(ncb) ncb.onclick = () => ncDetect();
+  if(d.type==='feishu-web') fwInit();
   const scopeToggle = $("#scopetoggle");
   if(scopeToggle) scopeToggle.onclick = () => $("#scopebox").classList.toggle("show");
   const appToggle = $("#apptoggle");
@@ -681,6 +718,54 @@ function collect(type){
     values[f.name] = f.kind==="bool" ? (el.checked?"true":"false") : el.value;
   });
   return {d,values};
+}
+
+// ── 飞书网页文档（浏览器扩展） ───────────────────────────────
+// 释放扩展、生成配对码、看连接状态和首次读取自检。自检里的几个标志是原值：
+// 用户随便打开一篇禁止复制的文档，就能在这里看到 copyable=false，复核拒读信号。
+const fwPost = (path) => api(path, {method:"POST", headers:{"Content-Type":"application/json"}, body:"{}"});
+let FW_TIMER = null;
+
+function fwInit(){
+  $("#fwextract").onclick = async () => {
+    const r = await fwPost("/api/feishu-web/extract");
+    $("#fwdir").innerHTML = r.error ? esc(r.error) : `已释放到 <code>${esc(r.dir)}</code>`;
+  };
+  $("#fwpair").onclick = async () => {
+    const r = await fwPost("/api/feishu-web/pair");
+    $("#fwcode").textContent = r.error || r.code;
+  };
+  clearInterval(FW_TIMER);
+  fwStatus();
+  FW_TIMER = setInterval(() => { if(!$("#fwstatus")){ clearInterval(FW_TIMER); return; } fwStatus(); }, 3000);
+}
+
+async function fwStatus(){
+  const r = await api("/api/feishu-web/status");
+  const el = $("#fwstatus"); if(!el) return;
+  const st = r.status || {};
+  const flag = v => v===true ? "true" : v===false ? "false" : "缺失";
+  const chk = (c, label) => !c ? "" : `<div>${label}：${esc(c.host||"")} · PageMain ${c.pageMain?"有":"没有"}
+    · copyable=${flag(c.flags&&c.flags.copyable)} · exportable=${flag(c.flags&&c.flags.exportable)}
+    · isForceSetSecurity=${flag(c.flags&&c.flags.isForceSetSecurity)} · 顶层块 ${Number(c.topChildren)||0}
+    · 未加载块 ${Number(c.pendingBefore)||0}→${Number(c.pendingAfter)||0} · 滚动 ${Number(c.scrollRounds)||0} 轮</div>`;
+  const conn = st.conn || {};
+  el.innerHTML = (st.connected
+      ? `✅ 扩展已连接（${esc(conn.version||"")}${conn.installType?" · "+esc(conn.installType):""}）`
+      : (r.paired ? "扩展还没连上：确认已加载扩展、填了配对码，并且浏览器开着" : "还没配对"))
+    + chk(st.firstCheck, "首次读取自检") + chk(st.lastCheck, "最近一次读取")
+    + schk(st.firstSearch, "首次检索自检") + schk(st.lastSearch, "最近一次检索");
+}
+
+// 检索自检：只有计数、路径和 class 名（认不出结果结构时用来排查），没有结果内容。
+function schk(c, label){
+  if(!c) return "";
+  return `<div>${label}：${esc(c.host||"")}${esc(c.path||"")} · ${c.login?"跳到了登录页":"已登录"}
+    · 选择器 ${esc(c.selectors||"default")} · 入口 ${esc(c.trigger||"没找到")}
+    · 弹层输入框 ${c.inputFound?`有（${esc(c.input||"")}）`:"没有"} · 弹层 ${esc(c.panel||"-")}${c.typed?" · 填过关键词":""}${c.enter?" · 按过回车":""}
+    · 填词前 ${Number(c.baseline)||0} 条 · 结果行 ${Number(c.rows)||0} · 策略 ${esc(c.strategy||"-")}
+    · 链接 ${Number(c.anchors)||0} · 结果 ${Number(c.candidates)||0}${c.emptyHint?" · 页面提示无结果":""}
+    · 等了 ${Number(c.waitedMs)||0} ms${(c.classes||[]).length?` · class 样本 <code>${esc(c.classes.join(" | "))}</code>`:""}</div>`;
 }
 
 // ── NapCat 自动配置 ───────────────────────────────────────────
@@ -1183,6 +1268,14 @@ function renderDetailMain(v, tab, st){
     // 稿子把服务器设置单独成一块并标「SSL / TLS 加密」—— 那是事实，保留。
     const basic = d.fields.filter(f=>!f.advanced && f.kind!=="bool");
     const adv   = d.fields.filter(f=>f.advanced);
+    // 本机邮件没有服务器也没有凭据：高级字段是数据目录和读取上限，文案单独给。
+    const local = d.kind === "localmail";
+    const advHead = local
+      ? `<h2>高级设置</h2><span class="meta">数据目录与读取上限，一般不用改</span>`
+      : `<h2>服务器设置</h2><span class="meta">${ic("LockKeyhole")} SSL / TLS 加密</span>`;
+    const saveNote = local
+      ? `${ic("HardDrive")} 不需要密码，配置只保存在本机`
+      : `${ic("LockKeyhole")} 凭据保存在本机，界面中保持隐藏`;
     box.innerHTML = `
       <section class="card pad24">
         <div class="sec-head"><h2>账号配置</h2>
@@ -1191,12 +1284,11 @@ function renderDetailMain(v, tab, st){
         ${adv.length?`
           <div class="hsep"></div>
           <div class="sec-head" style="margin-bottom:12px">
-            <h2>服务器设置</h2>
-            <span class="meta">${ic("LockKeyhole")} SSL / TLS 加密</span></div>
+            ${advHead}</div>
           <div class="dgrid">${adv.map(f=>detailField(f,i,d.accountField)).join("")}</div>`:""}
       </section>
       <div class="dsave">
-        <span class="tiny">${ic("LockKeyhole")} 凭据保存在本机，界面中保持隐藏</span>
+        <span class="tiny">${saveNote}</span>
         <button id="dcancel">取消</button>
         <button class="primary" id="dsave">保存配置</button>
         <span class="st" id="dst"></span>
@@ -1409,6 +1501,10 @@ function placeholderSteps(d){
   if(d.kind === "mail"){
     return [{label:"IMAP 服务可达性"},{label:"邮箱凭据验证"},{label:"SMTP 服务可达性"}];
   }
+  if(d.kind === "localmail"){
+    // 每个来源一条，和 CheckSteps 的结果一一对应（开关字段名就是来源标识）。
+    return d.fields.filter(f=>f.kind==="bool").map(f=>({label:f.label.replace(/^读取 /,"")+" 可读"}));
+  }
   return [{label:"连接与凭据验证"}];
 }
 
@@ -1430,6 +1526,19 @@ async function runCheck(type, account){
   route();
 }
 
+// keepOther 把这一页没有展示的设置原样带上。
+//
+// 「账号配置」页只有文本字段，「权限与工具」页只有开关；保存是整条覆盖，
+// 不带上另一页的值就等于把它们重置成默认 —— 本机邮件的来源开关会在改目录时
+// 全部被关掉，企业邮箱在切开关时会丢掉必填的主机。
+function keepOther(d, account, values, pick){
+  const inst = (CHANNELS.find(v=>v.descriptor.type===d.type && v.instance.account===account)||{}).instance;
+  d.fields.filter(pick).forEach(f=>{
+    const v = inst && inst.settings ? inst.settings[f.name] : undefined;
+    if(v !== undefined && !(f.name in values)) values[f.name] = v;
+  });
+}
+
 async function saveDetail(d, account){
   const st = $("#dst"); st.className="st"; st.textContent="测试连通中…";
   const values = {};
@@ -1439,6 +1548,7 @@ async function saveDetail(d, account){
   });
   // 账号字段不能改（它是凭据的键），但必须带上
   values[d.accountField] = account;
+  keepOther(d, account, values, f=>f.kind==="bool");
   const t = await api("/api/channels/test",{method:"POST",
     headers:{"Content-Type":"application/json"},
     body:JSON.stringify({type:d.type,account,values})});
@@ -1457,6 +1567,7 @@ async function saveSwitches(d, account){
   const values = {};
   $("#dmain").querySelectorAll("[data-sw]").forEach(cb=>{ values[cb.dataset.sw] = cb.checked ? "true" : "false"; });
   values[d.accountField] = account;
+  keepOther(d, account, values, f=>f.kind!=="bool" && f.kind!=="password");
   const r = await api("/api/channels",{method:"POST",
     headers:{"Content-Type":"application/json"},
     body:JSON.stringify({type:d.type,values})});

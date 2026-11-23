@@ -1,0 +1,26 @@
+{
+  "status": "ok",
+  "url": "https://x.feishu.cn/drive/home/",
+  "items": [
+    {
+      "title": "2026 周报 第 47 周",
+      "url": "https://x.feishu.cn/docx/AbCdEf1234567890"
+    },
+    {
+      "title": "知识库：周报模板",
+      "url": "https://x.feishu.cn/wiki/WikiTok12345678"
+    },
+    {
+      "title": "周报统计表",
+      "url": "https://x.feishu.cn/sheets/SheetTok1234567"
+    },
+    {
+      "title": "周报看板",
+      "url": "https://x.feishu.cn/base/BaseTok12345678"
+    },
+    {
+      "title": "[点我](javascript:alert(1))<img src=x onerror=alert(1)>",
+      "url": "https://x.feishu.cn/docx/Hostile000000001"
+    }
+  ]
+}
