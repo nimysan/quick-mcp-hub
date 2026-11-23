@@ -183,5 +183,6 @@ Claude Desktop、Cursor、Cline、Kiro 这类读 MCP 配置的客户端同样可
 | 下载、安装、配置、接入 Quick | [`docs/使用说明.md`](docs/使用说明.md) · [Word 版](docs/MCP-Hub-使用说明.docx) |
 | 本机邮件（只读）：来源、限制、安全设计、测试方法 | [`docs/localmail.md`](docs/localmail.md) |
 | 发布包中提供给客户的版本 | [`packaging/快速开始.md`](packaging/快速开始.md) |
+| 从源码构建并本地运行（含 Windows PowerShell 命令） | [`docs/本地运行快速启动.md`](docs/本地运行快速启动.md) |
 | 构建方式与实现取舍 | [`docs/实现笔记.md`](docs/实现笔记.md) |
 | 第三方开源组件清单 | [`THIRD-PARTY-NOTICES.md`](THIRD-PARTY-NOTICES.md) |
