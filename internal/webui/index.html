@@ -112,7 +112,8 @@ let DESCRIPTORS=[], CHANNELS=[], TAG="", EXEPATH="", LASTCLIENT=null, CFGPATH=""
 // 每个渠道用哪个图标：稿子里邮箱是 Mail、云之家是云、NapCat 是本机程序。
 // 没有对应的用 Plug 兜底 —— 新渠道加进来不会缺图标。
 const ICONS = {qqmail:"Mail", custommail:"Mail", github:"Blocks", jira:"ScrollText",
-  napcat:"Monitor", yunzhijia:"Laptop", ghwasm:"Blocks", localmail:"Mail", baidupan:"HardDrive"};
+  napcat:"Monitor", yunzhijia:"Laptop", ghwasm:"Blocks", localmail:"Mail", baidupan:"HardDrive",
+  feishu:"Laptop", "feishu-web":"ScrollText"};
 const iconOf = t => ICONS[t] || "Plug";
 
 const TAG_LABELS = {email:"邮件", devtools:"开发", project:"项目", erp:"ERP",
