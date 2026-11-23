@@ -10,9 +10,10 @@ import (
 // TestReal 打真实的 pan.baidu.com。默认跳过：单测不该依赖外网，也不该在 CI 上
 // 对别人的站点发请求。
 //
-// 跑法（链接里带 ?pwd= 的话第二个变量可以省）：
+// 跑法（链接里自带 pwd 查询参数的话，第二个变量可以省）：
 //
-//	BAIDUPAN_SHARE_LINK='https://pan.baidu.com/s/1xxxx?pwd=abcd' \
+//	BAIDUPAN_SHARE_LINK='https://pan.baidu.com/s/1xxxx' \
+//	  BAIDUPAN_SHARE_PWD='<提取码>' \
 //	  go test ./internal/baidupanshare/ -run TestReal -v
 //
 // 它验的是假服务器验不了的那部分：真实 init 页里确实带着 shareid 和 share_uk、

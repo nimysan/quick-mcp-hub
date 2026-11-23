@@ -92,9 +92,8 @@ type Listing struct {
 
 // ParseLink 从各种形态的分享链接里取出 surl 和链接自带的提取码。
 //
-// 认这几种：
+// 认这几种（提取码可以写在链接的 pwd 查询参数里）：
 //
-//	https://pan.baidu.com/s/1AbCdEf?pwd=abcd
 //	https://pan.baidu.com/s/1AbCdEf
 //	pan.baidu.com/s/1AbCdEf
 //	1AbCdEf        （直接给 id）

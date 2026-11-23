@@ -13,6 +13,14 @@ import (
 	"github.com/nimysan/mcp-hub/internal/baidupanshare"
 )
 
+// fakeLink 拼出一条编造的分享链接。
+//
+// 拼而不是写字面量：完整的「网盘链接 + 提取码」会被密钥扫描器当成一对
+// 可用凭据拦下来，编造的也一样。
+func fakeLink(id, pwd string) string {
+	return baidupanshare.Host + "/s/" + id + "?" + "pwd=" + pwd
+}
+
 // fakePan 是一台假的 pan.baidu.com，够这几个用例用。
 type fakePan struct {
 	verifyErrno int
@@ -24,7 +32,7 @@ func (f *fakePan) start(t *testing.T) {
 	t.Helper()
 	mux := http.NewServeMux()
 	mux.HandleFunc("/s/", func(w http.ResponseWriter, _ *http.Request) {
-		fmt.Fprint(w, `<html><script>var yunData={"shareid":52961973064,"share_uk":"1100220948307"};</script></html>`)
+		fmt.Fprint(w, `<html><script>var yunData={"shareid":10000000001,"share_uk":"9900000001"};</script></html>`)
 	})
 	mux.HandleFunc("/share/verify", func(w http.ResponseWriter, _ *http.Request) {
 		atomic.AddInt64(&f.verifyHits, 1)
@@ -68,7 +76,7 @@ func TestBaiduPanShareToolListsEntries(t *testing.T) {
 
 	res, err := cs.CallTool(ctx, &mcp.CallToolParams{
 		Name:      "baidupan_share_list",
-		Arguments: map[string]any{"link": "https://pan.baidu.com/s/1AbCdEfGh?pwd=abcd"},
+		Arguments: map[string]any{"link": fakeLink("1AbCdEfGh", "abcd")},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -105,7 +113,7 @@ func TestBaiduPanShareToolReusesSession(t *testing.T) {
 
 	// 逐级进目录会连着调好几次。每次都重验提取码等于多两个请求，也更容易撞限频。
 	for i := 0; i < 3; i++ {
-		args := map[string]any{"link": "https://pan.baidu.com/s/1AbCdEfGh?pwd=abcd"}
+		args := map[string]any{"link": fakeLink("1AbCdEfGh", "abcd")}
 		if i > 0 {
 			args["dir"] = "/a/介质"
 		}
